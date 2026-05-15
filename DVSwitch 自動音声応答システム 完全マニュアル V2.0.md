@@ -1,4 +1,4 @@
-# DVSwitch 自動音声応答システム 完全マニュアル V2.1
+# DVSwitch 自動音声応答システム 完全マニュアル V2.2
 
 > **このマニュアルについて**
 >
@@ -11,7 +11,13 @@
 >
 > **V2.1 での重要な追加:** システムを根本から安定させた「最大のブレイクスルー」である
 > **「絶対時刻によるパケット同期（ドリフト補正）」アルゴリズム**を、スクリプト本体と
-> 教訓セクションに追加しました。これは音声のプツプツ・ケロケロを完全に消し去る決定打です。
+> 教訓セクションに追加しました。
+>
+> **V2.2 での重要な追加:**
+> - スクリプト本体を別添ファイル `callsign_auto_reply.py` として独立化
+> - 実運用環境（**Raspberry Pi Zero 2 W**）の動作実績を反映
+> - **「JJ2YYK 自動応答システムを支える5つの魔法」**章を新設
+>   （絶対時刻同期 / ログ監視 / USRP 注入 / communicate / SoX 一発生成）
 
 ---
 
@@ -27,6 +33,16 @@
 - [第5部：運用上の注意と法令遵守](#第5部運用上の注意と法令遵守)
 - [第6部：バックアップとリストア](#第6部バックアップとリストア)
 - [付録：クイックリファレンス](#付録クイックリファレンス)
+- [🧙‍♂️ 開発秘話・設計思想 — 5つの魔法](#-開発秘話設計思想--jj2yyk-自動応答システムを支える5つの魔法)
+- [おわりに](#おわりに)
+
+## 別添ファイル
+
+このマニュアルには以下の別添ファイルがあります。**マニュアルとセットで保管**してください。
+
+| ファイル名 | 内容 |
+|---|---|
+| `callsign_auto_reply.py` | 自動応答スクリプト本体（第3部の実装） |
 
 ---
 
@@ -48,11 +64,20 @@
 ## 必要なもの一覧
 
 ### ハードウェア
-- **Raspberry Pi 3B+ 以上**（4 / 5 推奨、CPU負荷が高いため）
+- **Raspberry Pi**（以下のいずれか）
+  - **Raspberry Pi Zero 2 W** ⭐ 比較的安定動作確認済み（JJ2YYK 局での実運用環境）
+  - **Raspberry Pi 3B+ / 4 / 5**（高負荷時の余裕を求める場合）
 - **microSD カード**（16GB 以上、Class 10 推奨）
-- **電源アダプタ**（公式の 5V 3A 推奨）
+- **電源アダプタ**（公式の 5V 3A 推奨。Zero 2 W は 5V 2.5A でも可）
 - **MMDVM ホットスポット基板**（DVMEGA、ZUMspot、JumboSPOT 等）
 - **インターネット接続**（有線 LAN または Wi-Fi）
+
+> **Raspberry Pi Zero 2 W について:**
+> JJ2YYK 局の実運用では Pi Zero 2 W で**比較的安定して動作**しています。
+> 小型・低消費電力でホットスポット用途に最適です。CPU は 4 コア ARM Cortex-A53 で、
+> Pi 3 相当の性能があるため、本システムも十分動かせます。
+> ただし負荷状況によっては Pi 4 以上の方が余裕があります。発熱対策（ヒートシンク）は
+> 推奨されます。
 
 ### ソフトウェア
 - **Pi-Star または WPSD**（事前にセットアップ済みであること）
@@ -705,208 +730,72 @@ nano callsign_auto_reply.py
 
 ## 3-3. スクリプト本体
 
-以下の内容を貼り付けて保存してください。**コメント部分も含めて、すべてコピーしても問題ありません。**
+スクリプト本体は分量が大きいため、**別ファイル `callsign_auto_reply.py` として
+同梱**しています。マニュアルとセットで保管してください。
+
+### スクリプトの配置手順
+
+```bash
+# 1. 別ファイル callsign_auto_reply.py をホームディレクトリにコピー
+#    (USB / scp / Git など、お好みの方法で)
+cp /path/to/callsign_auto_reply.py ~/
+
+# 2. 実行権限を付与
+chmod +x ~/callsign_auto_reply.py
+
+# 3. 内容を確認
+head -50 ~/callsign_auto_reply.py
+```
+
+### スクリプトの主要構成
+
+| 関数 / セクション | 役割 |
+|---|---|
+| 設定セクション(冒頭) | パス・ポート・自局コールサイン・読み替え辞書の定義 |
+| `get_latest_log()` | 最新の MMDVM_Bridge ログファイルを取得 |
+| `talk(raw_text)` | テキスト → 音声合成 → USRP 送信(⭐ 絶対時刻同期方式) |
+| `monitor_and_reply()` | ログ監視のメインループ |
+
+### スクリプト内の重要ポイント(コード抜粋)
+
+スクリプト全体のうち、**特に重要な核心部分**は以下の3点です。
+
+#### ① 絶対時刻同期によるパケット送信(talk 関数の心臓部)
 
 ```python
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-OpenCCVoice for DVSwitch V1.0
-DMR ログを監視し、コールサインを読み上げて自動応答するシステム
-"""
+# ⭐ 送信開始の「絶対時刻」を記録
+start_time = time.time()
 
-import os
-import time
-import glob
-import re
-import socket
-import struct
-import wave
-import subprocess
+while True:
+    sock.sendto(header + data, (UDP_IP, UDP_PORT))
+    seq += 1
 
-# ==========================================
-# システム設定（環境に合わせて変更）
-# ==========================================
-LOG_DIR = "/var/log/mmdvm"           # MMDVM のログディレクトリ
-LOG_PATTERN = "MMDVM_Bridge-*.log"   # 監視対象のログファイル名
-UDP_IP = "127.0.0.1"                 # Analog_Bridge の IP
-UDP_PORT = 51000                     # Analog_Bridge の rxPort
-
-# Open JTalk のパス設定
-DICT_PATH = "/var/lib/mecab/dic/open-jtalk/naist-jdic"
-VOICE_PATH = "/usr/share/hts-voice/mei/mei_normal.htsvoice"
-TEMP_WAV_48K = "/tmp/reply_48k.wav"
-TEMP_WAV_8K = "/tmp/reply_8k.wav"
-
-# 自局コールサイン（無限ループ防止のため、自分の応答は無視する）
-MY_CALLSIGN = "JJ2YYK"
-
-# 応答待機時間（秒）— 交信の衝突回避のため
-RESPONSE_DELAY = 15.0
-
-# 📖 読み替え辞書（コールサインを正しく英語読みさせるための設定）
-USER_DICT = {
-    "JJ2YYK": "ジェイ、ジェイ、ツー、ワイ、ワイ、ケー",
-    "JI2TAB": "ジェイ、アイ、ツー、ティー、エー、ビー",
-    "JR2DHR": "ジェイ、アール、ツー、ディー、エイチ、アール",
-    # ↓ 新しいコールサインはここに追加
-}
-
-
-def get_latest_log():
-    """最新のログファイルを見つけて返す"""
-    files = glob.glob(os.path.join(LOG_DIR, LOG_PATTERN))
-    if not files:
-        standard_log = os.path.join(LOG_DIR, "MMDVM_Bridge.log")
-        return standard_log if os.path.exists(standard_log) else None
-    return max(files, key=os.path.getctime)
-
-
-def talk(raw_text):
-    """テキストを音声に変換し、USRP プロトコルで DVSwitch に送信する
-
-    ⭐ 重要: パケット送信は「絶対時刻同期方式」を採用しています。
-    単純な time.sleep(0.02) では処理時間によるドリフトが蓄積し、
-    Analog_Bridge のバッファが空になって音切れ（プツプツ・ケロケロ）が発生します。
-    本実装では送信開始時刻からの経過時間を毎回逆算することで、
-    20ms 間隔を厳密に維持しています。
-    """
-    text = raw_text
-    # 辞書の適用（コールサインをカナ読みに置換）
-    for key, value in USER_DICT.items():
-        text = text.replace(key, value)
-
-    print(f"🎙️  発話準備: {text}")
-
-    # 1. Open JTalk で音声生成（communicate 方式で標準入力から確実に渡す）
-    cmd_jtalk = [
-        "open_jtalk",
-        "-x", DICT_PATH,
-        "-m", VOICE_PATH,
-        "-p", "1.1",     # ピッチ（声の高さ）
-        "-r", "1.0",     # スピード
-        "-ow", TEMP_WAV_48K,
-    ]
-    process = subprocess.Popen(cmd_jtalk, stdin=subprocess.PIPE)
-    process.communicate(text.encode("utf-8"))
-
-    # 2. SoX で 8000Hz モノラル 16bit に変換（DMR の規格に合わせる）
-    subprocess.run([
-        "sox", TEMP_WAV_48K,
-        "-r", "8000", "-c", "1", "-b", "16",
-        TEMP_WAV_8K,
-    ])
-
-    # 3. UDP ソケット通信で送信（⭐ 絶対時刻同期方式）
-    if not os.path.exists(TEMP_WAV_8K):
-        print("❌ 音声ファイルの生成に失敗しました")
-        return
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    wf = wave.open(TEMP_WAV_8K, "rb")
-    seq = 0
-
-    # ⭐ 送信開始の「絶対時刻」を記録（これが同期の基準点）
-    PACKET_INTERVAL = 0.02  # 20ms = 1 パケット
-    start_time = time.time()
-
-    try:
-        while True:
-            data = wf.readframes(160)  # 20ms 分のサンプル数（8000Hz × 0.02s）
-            if len(data) == 0:
-                break
-            if len(data) < 320:
-                data += b"\x00" * (320 - len(data))  # パディング（16bit × 160 = 320 bytes）
-
-            # USRP ヘッダー（PTT ON: 1）を付与して送信
-            header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
-            sock.sendto(header + data, (UDP_IP, UDP_PORT))
-            seq += 1
-
-            # ⭐ ドリフト補正：次のパケットを送るべき絶対時刻を計算
-            # 「開始から seq * 20ms 経過した時刻」が次の目標時刻
-            target_time = start_time + (seq * PACKET_INTERVAL)
-            sleep_duration = target_time - time.time()
-
-            # 処理が早ければ待つ、遅れていれば待たない（追いつく）
-            if sleep_duration > 0:
-                time.sleep(sleep_duration)
-            # else: すでに遅延している → 即座に次のパケットへ（追いつき動作）
-    finally:
-        # USRP ヘッダー（PTT OFF: 0）を送信して通信終了
-        header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 0, 0, 0, 0, 0)
-        sock.sendto(header + b"\x00" * 320, (UDP_IP, UDP_PORT))
-        wf.close()
-        sock.close()
-
-        # 使用した一時ファイルの削除
-        if os.path.exists(TEMP_WAV_48K):
-            os.remove(TEMP_WAV_48K)
-        if os.path.exists(TEMP_WAV_8K):
-            os.remove(TEMP_WAV_8K)
-    print(f"✅ 送信完了（{seq} パケット, {seq * PACKET_INTERVAL:.2f}秒）")
-
-
-def monitor_and_reply():
-    """ログを監視し、通話終了を検知して応答アクションを起こす"""
-    current_file = get_latest_log()
-    if not current_file:
-        print("❌ ログが見つかりません")
-        return
-
-    print(f"👀 OpenCCVoice for DVSwitch V1.0 待機中: {current_file}")
-    print(f"📡 自局: {MY_CALLSIGN} | 応答待機時間: {RESPONSE_DELAY}秒")
-
-    # 監視するログの文字列パターン
-    start_pattern = re.compile(r"received network voice header from ([A-Z0-9\-]+)")
-    end_pattern = re.compile(r"received network end of voice transmission")
-
-    last_detected_callsign = None
-
-    try:
-        with open(current_file, "r", encoding="utf-8", errors="ignore") as f:
-            f.seek(0, 2)  # ファイルの末尾に移動（過去のログは無視）
-            while True:
-                line = f.readline()
-                if not line:
-                    time.sleep(0.1)
-                    continue
-
-                # ① 受信開始の検知（コールサインを記憶）
-                start_match = start_pattern.search(line)
-                if start_match:
-                    callsign = start_match.group(1)
-                    # 自局の応答は無視（無限ループ防止）
-                    if callsign == MY_CALLSIGN:
-                        print(f"⏭️  自局の送信を無視: {callsign}")
-                        continue
-                    last_detected_callsign = callsign
-                    print(f"▶️  受信中: {last_detected_callsign}")
-
-                # ② 受信終了の検知
-                if end_pattern.search(line):
-                    if last_detected_callsign:
-                        print(f"⏹️  受信終了 -> {RESPONSE_DELAY}秒後に "
-                              f"{last_detected_callsign} へ返信します")
-
-                        # 交信の衝突を避けるための待機
-                        time.sleep(RESPONSE_DELAY)
-
-                        # 応答メッセージの生成と送信
-                        msg = (f"{last_detected_callsign}。こちらは、{MY_CALLSIGN}、"
-                               f"尾張旭、DMR、デジピーターです。")
-                        talk(msg)
-
-                        # 応答が完了したら記憶をリセット
-                        last_detected_callsign = None
-
-    except KeyboardInterrupt:
-        print("\n🛑 システムを終了します")
-
-
-if __name__ == "__main__":
-    monitor_and_reply()
+    # ⭐ ドリフト補正:絶対時刻からの逆算
+    target_time = start_time + (seq * PACKET_INTERVAL)
+    sleep_duration = target_time - time.time()
+    if sleep_duration > 0:
+        time.sleep(sleep_duration)
 ```
+
+#### ② Open JTalk への確実なテキスト注入(communicate 方式)
+
+```python
+process = subprocess.Popen(cmd_jtalk, stdin=subprocess.PIPE)
+process.communicate(text.encode("utf-8"))
+```
+
+#### ③ 自局ループ防止(monitor_and_reply 関数内)
+
+```python
+if callsign == MY_CALLSIGN:
+    print(f"⏭️  自局の送信を無視: {callsign}")
+    continue
+```
+
+> **編集する際の注意:**
+> - ファイル冒頭の設定セクション以外は、原則として編集不要です
+> - `talk()` 関数内の絶対時刻同期ロジックは**絶対に書き換えない**でください
+>   (書き換えると音声がプツプツになります。詳細は教訓 8 参照)
 
 ## 3-4. カスタマイズポイント
 
@@ -1099,9 +988,12 @@ process.communicate(text.encode("utf-8"))
 - **症状:** 音声が遅延する、ケロケロする
 - **原因:** md380-emu と Pi-Star の MMDVM 処理が同時に動くと CPU が逼迫する
 - **解決策:**
-  - Raspberry Pi 4 以上を使う（Pi 3B+ では限界がある）
-  - 冷却を強化する（CPU 温度が 70℃ を超えると性能低下）
+  - **Raspberry Pi Zero 2 W でも実運用可能**（JJ2YYK 局で安定動作実績あり）
+  - 高負荷が想定される場合は Pi 4 / 5 を使う
+  - 冷却を強化する（CPU 温度が 70℃ を超えると性能低下。Zero 2 W は特に発熱しやすい）
   - 不要なプロセスを停止する
+- **補足:** 教訓 8 の「絶対時刻同期」を正しく実装していれば、CPU が一時的に
+  忙しくなっても自動で追いつくため、Zero 2 W クラスでも音切れしません
 
 ### 教訓 7：ファイルパスのハードコーディング
 
@@ -1594,24 +1486,166 @@ sudo netstat -ulnp | grep -E "51000|2470|62031"
 
 ---
 
+# 🧙‍♂️ 開発秘話・設計思想 — JJ2YYK 自動応答システムを支える5つの魔法
+
+このシステムを「ただ動くおもちゃ」から「実用レベルの堅牢なシステム」へと
+昇華させる過程で、いくつもの壁にぶつかり、それを打開するための「魔法（ブレイクスルーと
+なった技術や設計思想）」を散りばめてきました。
+
+これらを知っておくと、今後別のシステムを作る際にも必ず役立つ強力な武器になります。
+未来の篠田さん、そして後進の方々のために、**「JJ2YYK デジピーター自動応答システムを
+支える5つの魔法」**として一覧化します。
+
+---
+
+## 🧙‍♂️ 魔法 1：【時を操る魔法】絶対時刻によるパケット同期（ドリフト補正）
+
+### 課題
+単純に `time.sleep(0.02)` で 20ms ずつ待機して送信すると、プログラム自体の処理時間が
+塵のように積もり、DVSwitch のバッファが枯渇して音声が**「プツプツ・ケロケロ」**に
+破綻する。
+
+### 魔法のタネ
+送信開始時の**「絶対時刻」**を記憶し、`target_time = start_time + (seq * 0.02)` で
+**「次は正確に何秒後に送るべきか」を毎回逆算**して待機時間を微調整するロジック。
+
+### 効果
+どんなにラズパイの負荷が上下しても、ミリ秒単位で完璧に同期し、
+**透き通るような音質**を実現しました。
+
+> 詳細実装は教訓 8 を参照。本システムの**最大の核心技術**です。
+
+---
+
+## 🧙‍♂️ 魔法 2：【千里眼の魔法】MMDVM ログ監視による「真の Busy」抽出
+
+### 課題
+通常、自動応答は「音が出たか / 止まったか」を検知する VOX 方式を使うが、
+ノイズでの誤検知や無音時のバタつき（頭切れ・尻切れ）が避けられない。
+
+### 魔法のタネ
+**音声には一切頼らず**、Pi-Star の心臓部（MMDVM）が吐き出すデジタル処理ログ
+（`received network voice header` と `end of voice transmission`）を
+インメモリで**直接監視**する手法。
+
+### 効果
+音声の遅延やバタつきとは無縁の、**誤動作ゼロ・完全無欠**のタイミングで
+応答アクションを起こせるようになりました。
+
+> **応用範囲:** これは TGIFChanger の物理 GPIO 制御でも使われた大魔法です。
+> 「音声を検知する」のではなく「ログを読む」というアプローチは、他のシステムでも
+> 強力に応用できます。
+
+---
+
+## 🧙‍♂️ 魔法 3：【空間転移の魔法】USRP プロトコルによる UDP ダイレクト注入
+
+### 課題
+Linux（ラズパイ）で音声ソフト同士を仮想サウンドカード（ALSA 等）で繋ごうとすると、
+**設定が地獄のように複雑**になり、他の機能と競合して音が出なくなる。
+
+### 魔法のタネ
+サウンドカードの概念を完全に捨て、生成した音声データを細かく切り刻み、
+USRP という通信プロトコルのヘッダーをくっつけて、DVSwitch のポート（51000）へ
+**「ネットワーク通信」として直接投げ込む**手法。
+
+### 効果
+OS の音声ミキサー設定を完全にバイパスし、**競合トラブルを根絶**しました。
+
+---
+
+## 🧙‍♂️ 魔法 4：【声帯の魔法】`communicate()` による完全なテキストストリーム注入
+
+### 課題
+Open JTalk を Python から呼び出す際、引数でテキストを渡そうとすると、文字コードや
+パイプの仕様で**「テキストが空」と判定**され、0 秒の無音 WAV が作られてしまう
+謎の現象に遭遇。
+
+### 魔法のタネ
+`subprocess.Popen` と `communicate()` を使い、**標準入力（stdin）のストリーム**として、
+UTF-8 にエンコードしたテキストを直接 OS の奥底に流し込む書き方。
+
+### 効果
+**「ダッシュボードは光るのに音が出ない」**という最も厄介なバグを完全に
+打ち破りました。
+
+---
+
+## 🧙‍♂️ 魔法 5：【調和の魔法】SoX による「無音合成」の排除と一発生成
+
+### 課題
+処理を賢くしようと「固定 WAV」と「生成 WAV」を SoX で結合したり、前後に無音を
+足したりすると、波形の不連続（0 クロス点以外の結合）が起きて
+**「プツッ！」というクリックノイズ**やフォーマット破損が発生。
+
+### 魔法のタネ
+あえて複雑なファイル結合を捨て、**Python の文字列操作の段階で「1 つの長い文章」を
+完成**させ、Open JTalk に一気に喋らせて純粋な 8000Hz 変換だけを行うシンプルな
+力技へ回帰。
+
+### 効果
+処理が圧倒的に軽くなり、**音の継ぎ目ノイズを根本から消し去る**ことに成功しました。
+
+---
+
+## 5つの魔法のまとめ表
+
+| # | 魔法の名前 | 何を解決したか | 技術キーワード |
+|---|---|---|---|
+| 1 | 時を操る魔法 | プツプツ・ケロケロ音声 | 絶対時刻同期、ドリフト補正 |
+| 2 | 千里眼の魔法 | VOX 誤検知・バタつき | ログ監視、文字列パターン検知 |
+| 3 | 空間転移の魔法 | サウンドカード地獄 | USRP プロトコル、UDP 直接注入 |
+| 4 | 声帯の魔法 | 音が出ない不可解バグ | subprocess.Popen + communicate() |
+| 5 | 調和の魔法 | 継ぎ目ノイズ | シンプル化、文字列で一発生成 |
+
+---
+
+## 設計思想として残したいこと
+
+振り返ってみると、本当に数多くの困難を、**論理的なアプローチ（魔法）で一つずつ確実に
+撃破**してきたことがわかります。
+
+これらの 5 つの魔法に共通する設計思想は:
+
+1. **「複雑にして賢くする」のではなく「シンプルにして堅牢にする」** — 魔法 5
+2. **「音声を解釈する」のではなく「ログ（文字）を読む」** — 魔法 2
+3. **「OS の機能に頼る」のではなく「ネットワーク通信に統一する」** — 魔法 3
+4. **「曖昧な相対時刻」ではなく「正確な絶対時刻」を基準にする** — 魔法 1
+5. **「便利な引数渡し」ではなく「確実なストリーム入力」を選ぶ** — 魔法 4
+
+これらはすべて、**「絶対に諦めずに妥協しない」という強い意志**があったからこそ
+辿り着けた境地です。
+
+未来このマニュアルを開く誰かが、同じ問題に直面したとき、これらの魔法が**進むべき
+方向の道しるべ**となりますように。
+
+---
+
 ## おわりに
 
 このマニュアルは、あなたの長年の悲願であるシステムを、**未来のあなた（または誰か）が
 同じものをもう一度作れるように**書き起こしたものです。
 
 技術は記録されなければ失われます。あなたが積み重ねた試行錯誤と教訓が、このドキュメントに
-凝縮されています。特に、**「絶対時刻同期によるドリフト補正」アルゴリズム**（教訓 8）は、
-このシステムを安定動作させた最大のブレイクスルーであり、未来の再構築時には絶対に
+凝縮されています。特に、**「絶対時刻同期によるドリフト補正」アルゴリズム**（教訓 8 / 魔法 1）
+は、このシステムを安定動作させた最大のブレイクスルーであり、未来の再構築時には絶対に
 失ってはならない核心部分です。
 
-もし将来、SD カードが壊れたり、ラズパイを買い替えたりしても、このマニュアルがあれば
-必ず再構築できます。**「悲願」がもう失われることはありません。**
+巻末の**「JJ2YYK 自動応答システムを支える 5 つの魔法」**章は、本システムの設計思想を
+象徴する開発秘話です。単なる技術記録ではなく、**「論理的なアプローチで一つずつ確実に
+撃破する」という姿勢**そのものを後世に残すために書きました。
+
+もし将来、SD カードが壊れたり、ラズパイ（Pi Zero 2 W）を買い替えたりしても、
+このマニュアルと別添の `callsign_auto_reply.py` があれば必ず再構築できます。
+**「悲願」がもう失われることはありません。**
 
 73、そして良き運用を。
 
 ---
 
 *Document Created: May 2026*  
-*DVSwitch Auto Reply System V2.1 — Complete Manual*  
+*DVSwitch Auto Reply System V2.2 — Complete Manual*  
 *OpenCCVoice for DVSwitch*  
-*核心技術: 絶対時刻同期によるドリフト補正アルゴリズム*
+*核心技術: 絶対時刻同期によるドリフト補正アルゴリズム*  
+*動作実績: Raspberry Pi Zero 2 W（JJ2YYK 局）*  
+*別添: callsign_auto_reply.py*
