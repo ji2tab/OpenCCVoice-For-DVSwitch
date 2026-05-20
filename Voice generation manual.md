@@ -139,7 +139,7 @@ sox /tmp/001_raw.wav \
 ## ⑤ 002.wav (定時メッセージ 2)
 
 ```bash
-echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。TGIF168と、XLX834 モジュールZに インターネット接続しています。" | \
+echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。ＴＧＩＦ１６８と、ＸＬＸ８３４モジュールＺに インターネット接続しています。" | \
   open_jtalk \
     -x /var/lib/mecab/dic/open-jtalk/naist-jdic \
     -m /usr/share/hts-voice/mei/mei_normal.htsvoice \
