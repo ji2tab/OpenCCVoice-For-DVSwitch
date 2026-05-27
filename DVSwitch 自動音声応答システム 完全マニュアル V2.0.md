@@ -262,7 +262,7 @@ DMR のネットワークに音声を流すには、**「8000Hz, モノラル, 1
 
 1. **Open JTalk**: 外部インターネット（API）に依存せず、Raspberry Pi 等のローカル内で
    瞬時にテキストを音声化します。
-2. **SoX**: Open JTalk が作った高品質な音声（48000Hz）を、DMR の規格（8000Hz）に
+2. **SoX**: Open JTalk が作った高品質な音声（48000Hz）を、**Analog_Bridge（USRP プロトコル）の入力仕様**（8000Hz, モノラル, 16bit PCM）に
    劣化なく、かつ一瞬で正確に変換するために必須のツールです。
 
 > **初心者向け解説:** 「外部 API を使わない」のは、インターネット遅延や障害の影響を
@@ -386,7 +386,8 @@ ls -la /tmp/test.wav
 cd /tmp
 
 # MMDAgent のサンプルデータをダウンロード
-wget https://sourceforge.net/projects/mmdagent/files/MMDAgent_Example/MMDAgent_Example-1.8/MMDAgent_Example-1.8.zip
+wget -L --content-disposition https://sourceforge.net/projects/mmdagent/files/MMDAgent_Example/MMDAgent_Example-1.8/MMDAgent_Example-1.8.zip
+# ※ SourceForge はリダイレクトが発生するため -L オプションが必要です。ダウンロードに失敗する場合は --no-check-certificate を追加してみてください。
 
 # 解凍
 unzip MMDAgent_Example-1.8.zip
@@ -475,9 +476,8 @@ address = 127.0.0.1
 
 ### ⚠️ DVSwitch v1.6.4 系における致命的なバグの回避
 
-**これは最重要の注意点です。** 特定バージョンの Analog_Bridge では、設定ファイルに以下の
-パラメータが残っていると起動時にクラッシュ（Fatal Parse Error）します。
-**必ず先頭に `;` を付けてコメントアウト**してください。
+**これは最重要の注意点です。** DVSwitch v1.6.4 系の特定バージョンの Analog_Bridge では、これらのパラメータが**コメントアウトされずに有効な状態で**残っていると起動時にクラッシュ（Fatal Parse Error）します。
+**設定ファイルにこれらの行がコメントアウトされていない場合のみ**、先頭に `;` を付けてコメントアウトしてください（すでに `;` が付いている場合は対処不要です）。
 
 ```ini
 ;jitterQueueSize = 30
@@ -537,6 +537,7 @@ Raspberry Pi の CPU を使って**ソフトウェアで強引に行う**エミ�
 - **通信ポート:** 内部で **UDP 2470 番** を使用して Analog_Bridge とだけ会話
 - **特徴:** 変換中は非常に CPU パワーを使う。これが停止していると、
   「送信状態にはなる（ダッシュボードは光る）が、無音になる」という現象が起きる
+  （なお Raspberry Pi Zero 2 W でも実運用可能な負荷量です。詳細は教訓 6 参照）
 
 ### サービス管理コマンド
 
@@ -588,8 +589,9 @@ sudo nano /opt/MMDVM_Bridge/MMDVM_Bridge.ini
 Address=127.0.0.1
 ```
 
-自動応答システムの音声は `Analog_Bridge`（51000 番ポート）へ直接投げるため、
-ここのポート番号は変更しなくても大丈夫です。
+> **この `Address` は、MMDVM_Bridge が Analog_Bridge と通信する際の接続先アドレスです。**
+> 同一ラズパイ上で動作している場合は `127.0.0.1` のままで問題ありません。
+> **注意:** このセクションにポート番号の設定はありません。自動応答スクリプトが Analog_Bridge に音声を投げる際に使うポート（51000）は、`Analog_Bridge.ini` の **`[USRP]` セクション**（`rxPort = 51000`）で設定します。
 
 ### [DMR Network] セクション（最重要）
 
@@ -894,7 +896,7 @@ sudo nano /etc/systemd/system/callsign-bot.service
 [Unit]
 Description=DVSwitch Callsign Auto Reply Bot (OpenCCVoice)
 After=network.target Analog_Bridge.service MMDVM_Bridge.service md380-emu.service
-Wants=Analog_Bridge.service MMDVM_Bridge.service
+Wants=Analog_Bridge.service MMDVM_Bridge.service md380-emu.service
 
 [Service]
 Type=simple
@@ -980,8 +982,9 @@ process.communicate(text.encode("utf-8"))
 - **原因:** MMDVM_Bridge のログは日付ごとに別ファイルになる（例:
   `MMDVM_Bridge-2026-05-15.log`）。古いファイルを監視し続けると更新されない
 - **解決策:** `get_latest_log()` で最新ファイルを毎回取得する設計にする
-  （本スクリプトに実装済み）。ただし、**起動中に日付が変わった場合**は再起動が必要。
-  対策として `cron` で毎日深夜にサービスを再起動するのも有効。
+  （本スクリプトに実装済み）。ただし、**これは起動時に一度だけ最新ファイルを取得する設計**のため、
+  起動中に日付が変わり新しいログファイルに切り替わった場合は監視対象が古いままになります（本実装の制約）。
+  対策として `cron` で毎日深夜にサービスを再起動してください（詳細は **6-5 参照**）。
 
 ### 教訓 6：CPU 負荷の管理
 
@@ -1161,6 +1164,7 @@ file /tmp/test_8k.wav
 
 ```bash
 # 受信側（別ターミナルで実行）
+# ※ ループバック(lo)でキャプチャできない場合は -i any を試してください
 sudo tcpdump -i lo -n udp port 51000
 ```
 
@@ -1302,8 +1306,13 @@ SD カードが壊れても、これがあれば再構築できます。
 # SD カードのデバイス名を確認（例: /dev/sdb）
 sudo fdisk -l
 
+# ⚠️ 重要: 必ず fdisk -l でデバイス名を確認してください。
+# 環境によって /dev/mmcblk0 や /dev/sdc など異なります。
+# 誤ったデバイスを指定すると他のディスクのデータが完全消失します。
+
 # イメージ化（数十分かかる）
 sudo dd if=/dev/sdb of=~/pistar_backup_$(date +%Y%m%d).img bs=4M status=progress
+# ※ /dev/sdb は例です。fdisk -l で確認した実際のデバイス名に置き換えてください。
 
 # 圧縮
 gzip ~/pistar_backup_*.img
@@ -1390,7 +1399,7 @@ while ...:
 | ポート | 用途 | プロトコル |
 |---|---|---|
 | 51000 | Python → Analog_Bridge（USRP 受信） | UDP |
-| 51001 | Analog_Bridge → Python（USRP 送信） | UDP |
+| 51001 | Analog_Bridge からの出力ポート（`txPort`）。本システムでは Python スクリプトは一方向送信のみのため通常は使用しない | UDP |
 | 2470 | Analog_Bridge ⇔ md380-emu（AMBE） | UDP |
 | 62031 | MMDVM_Bridge → MMDVMHost（DMR） | UDP |
 
