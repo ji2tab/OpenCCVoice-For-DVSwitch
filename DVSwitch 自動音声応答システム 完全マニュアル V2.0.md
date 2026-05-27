@@ -1,4 +1,4 @@
-# DVSwitch 自動音声応答システム 完全マニュアル V2.2
+# DVSwitch 自動音声応答システム 完全マニュアル V2.3
 
 > **このマニュアルについて**
 >
@@ -18,6 +18,14 @@
 > - 実運用環境（**Raspberry Pi Zero 2 W**）の動作実績を反映
 > - **「JJ2YYK 自動応答システムを支える5つの魔法」**章を新設
 >   （絶対時刻同期 / ログ監視 / USRP 注入 / communicate / SoX 一発生成）
+
+**V2.3 での重要な更新:**
+
+> - スクリプト本体を **`dvswitch_bot158.py`（V1.58安定版）** に移行
+> - カーチャンク自動応答・毎正時時報・定時アナウンス機能を統合
+> - ログローテーション自動追従・Graceful Shutdown・マルチスレッド対応
+> - 固定WAVファイル（`/opt/dvswitch_bot/`）による高品質応答を実現
+> - 第3部を `dvswitch_bot158.py` の実装手順に全面更新
 
 ---
 
@@ -42,7 +50,7 @@
 
 | ファイル名 | 内容 |
 |---|---|
-| `callsign_auto_reply.py` | 自動応答スクリプト本体（第3部の実装） |
+| `dvswitch_bot158.py` | DVSwitch ログ監視・自動音声応答システム V1.58（安定版・第3部の実装） |
 
 ---
 
@@ -52,14 +60,14 @@
 
 このシステムを構築すると、以下のことが自動で行えます。
 
-1. DMR ネットワーク上で誰かが交信を行う
-2. 交信が終わると、システムが自動で検知
-3. 15 秒待機（交信の衝突回避）
-4. 「**JA1XXX、こちらは JJ2YYK、尾張旭、DMR デジピーターです**」のように
-   相手のコールサインを呼びかけて応答する
+1. **カーチャンク自動応答** — 短時間の PTT 操作（カーチャンク）を検知し、「JJ2YYK 局からのアクセスを確認しました」と自動応答
+2. **毎正時の時報送信** — 毎時 00 分に「こちらは JJ2YYK、〇〇時です」と自動時報
+3. **定時アナウンス** — 1 時間あたり指定回数の定時メッセージ（001.wav / 002.wav）を自動ローテーション送信
+4. **重複応答防止** — 応答後の一定時間（デフォルト 15 秒）は再応答を抑制
+5. **ログローテーション追従** — MMDVM_Bridge ログの日付切り替えを自動検出して監視対象を自動切替
 
-これは**ハム無線界における「電子的な応答機」**であり、デジピーター（自動中継局）
-としての存在証明にもなります。
+これは**ハム無線界における「電子的なデジピーター（自動中継局）」**であり、
+カーチャンクへの応答から定期放送まで、24時間無人で動作します。
 
 ## 必要なもの一覧
 
@@ -190,7 +198,7 @@ sudo apt-get install -y dvswitch
 ```
 ┌─────────────────────┐
 │ Python スクリプト   │  ← テキストを音声合成
-│ (callsign_auto_reply)│
+│ (dvswitch_bot158)    │
 └──────────┬──────────┘
            │ USRP プロトコル (UDP 51000)
            ▼
@@ -693,214 +701,229 @@ sudo journalctl -u MMDVM_Bridge -f
 
 ---
 
-# 第3部：ソフトウェア編 — OpenCCVoice for DVSwitch
+# 第3部：ソフトウェア編 — dvswitch_bot158.py（V1.58 安定版）
 
-DVSwitch のログをリアルタイム監視し、受信したコールサインを正確に読み上げて自動応答する
+DVSwitch のログをリアルタイム監視し、カーチャンク自動応答・時報・定時アナウンスを行う
 システム「**OpenCCVoice for DVSwitch**」の実装手順です。
+安定版スクリプト **`dvswitch_bot158.py`** を使用します。
 
 ## 3-1. システムの動作概要
 
+### カーチャンク自動応答フロー
+
 ```
-1. ログファイルを開いて末尾で待機
+1. MMDVM_Bridge ログを末尾で待機
    ↓
-2. "received network voice header from XXXXX" を検知
-   → コールサイン XXXXX を記憶
+2. "received network voice header from XXXXX" を検知 → コールサインと受信開始時刻を記憶
    ↓
-3. "received network end of voice transmission" を検知
-   → 受信終了を確認
+3. "received network end of voice transmission" を検知 → 受信時間を計算
    ↓
-4. 15秒待機（交信の衝突回避）
+4. 最小受信時間 ≤ 受信時間 ≤ 最大受信時間 であれば「カーチャンク」と判定
    ↓
-5. 「XXXXX。こちらは、JJ2YYK、尾張旭、DMR、デジピーターです。」を生成
+5. 固定イントロ WAV（fixed_intro.wav）＋ コールサイン動的合成 ＋ 固定アウトロ WAV（fixed_outro.wav）を連結送信
    ↓
-6. Open JTalk でテキストを WAV 化（48000Hz）
-   ↓
-7. SoX で 8000Hz / モノラル / 16bit に変換
-   ↓
-8. USRP プロトコル（UDP 51000）で Analog_Bridge に送信
-   ↓
-9. 記憶をリセットして 1 に戻る
+6. SUPPRESS_DURATION_SEC（15秒）の間、重複応答を抑制
 ```
+
+### 時報フロー（毎正時 00 分）
+
+```
+1. 毎正時に自動起動
+   ↓
+2. 固定イントロ WAV（time_intro.wav）を送信
+   ↓
+3. Open JTalk で「〇〇時です」を動的合成して送信（V1.58 では時報アウトロは動的合成に統合）
+```
+
+### 定時アナウンスフロー
+
+```
+1. 1時間あたり ANNOUNCE_FREQ 回（起動時に対話設定）の定時送信
+2. 毎正時の時報との重複を避けてスケジューリング
+3. 001.wav / 002.wav を交互ローテーション送信
+```
+
+各コンポーネントの役割は変わりません（第1部の全体像を参照）。
 
 ## 3-2. スクリプトの配置
 
-```bash
-# ホームディレクトリに作成
-cd ~
-nano callsign_auto_reply.py
-```
-
-## 3-3. スクリプト本体
-
-スクリプト本体は分量が大きいため、**別ファイル `callsign_auto_reply.py` として
-同梱**しています。マニュアルとセットで保管してください。
-
-### スクリプトの配置手順
+### ディレクトリ作成と配置
 
 ```bash
-# 1. 別ファイル callsign_auto_reply.py をホームディレクトリにコピー
-#    (USB / scp / Git など、お好みの方法で)
-cp /path/to/callsign_auto_reply.py ~/
+# ボット用ディレクトリ作成（初回のみ）
+sudo mkdir -p /opt/dvswitch_bot
+sudo chown pi-star:pi-star /opt/dvswitch_bot
 
-# 2. 実行権限を付与
-chmod +x ~/callsign_auto_reply.py
+# スクリプトをホームディレクトリにコピー
+# (USB / scp / Git など、お好みの方法で)
+cp /path/to/dvswitch_bot158.py ~/dvswitch_bot158.py
 
-# 3. 内容を確認
-head -50 ~/callsign_auto_reply.py
+# 実行権限を付与
+chmod +x ~/dvswitch_bot158.py
 ```
 
-### スクリプトの主要構成
+> **配置先について:** スクリプト本体はホームディレクトリ（`~/`）に置きます。
+> 固定 WAV ファイルは `/opt/dvswitch_bot/` に置きます（3-4 参照）。
+
+## 3-3. 固定 WAV ファイルの準備
+
+`dvswitch_bot158.py` は、以下の固定 WAV ファイルを事前に用意しておく必要があります。
+詳細な作成コマンドは **「音声ソース作成.md」** を参照してください。
+
+| ファイル | 配置先 | 用途 |
+|---|---|---|
+| `fixed_intro.wav` | `/opt/dvswitch_bot/` | カーチャンク応答のイントロ |
+| `fixed_outro.wav` | `/opt/dvswitch_bot/` | カーチャンク応答のアウトロ |
+| `time_intro.wav` | `/opt/dvswitch_bot/` | 時報のイントロ（後ろに動的合成「〇〇時です」が続く） |
+| `001.wav` | `/opt/dvswitch_bot/` | 定時メッセージ1 |
+| `002.wav` | `/opt/dvswitch_bot/` | 定時メッセージ2 |
+
+> **注意:** `time_outro.wav` は V1.58 では不要になりました（動的合成に統合）。定数定義は将来の再利用のため残置されています。
+
+### 共通仕様
+
+- 出力フォーマット: **8000Hz / モノラル / 16bit PCM WAV**
+- 出力先: `/opt/dvswitch_bot/`
+- 音声合成エンジン: Open JTalk（声: メイ・標準）
+
+### 確認コマンド
+
+```bash
+# ファイルが揃っているか確認
+ls -la /opt/dvswitch_bot/
+
+# 各ファイルのフォーマット確認（8000Hz/1ch/16bitであること）
+soxi /opt/dvswitch_bot/fixed_intro.wav
+soxi /opt/dvswitch_bot/fixed_outro.wav
+soxi /opt/dvswitch_bot/time_intro.wav
+```
+
+## 3-4. スクリプトの主要構成
 
 | 関数 / セクション | 役割 |
 |---|---|
-| 設定セクション(冒頭) | パス・ポート・自局コールサイン・読み替え辞書の定義 |
-| `get_latest_log()` | 最新の MMDVM_Bridge ログファイルを取得 |
-| `talk(raw_text)` | テキスト → 音声合成 → USRP 送信(⭐ 絶対時刻同期方式) |
-| `monitor_and_reply()` | ログ監視のメインループ |
+| 設定セクション（冒頭） | パス・ポート・コールサイン・タイミング等の定数定義 |
+| `send_usrp_wav_with_padding()` | WAV を USRP プロトコルで送信（⭐ 絶対時刻同期方式） |
+| `_generate_hybrid()` | 固定 WAV ＋ 動的合成 WAV を結合してハイブリッド音声を生成 |
+| `_reply_executor()` | カーチャンク応答の実行（マルチスレッド）|
+| `_announcement_scheduler()` | 時報・定時アナウンスのスケジューラー |
+| `monitor_and_reply()` | ログ監視のメインループ（ログローテーション自動追従） |
+| `_interactive_setup()` | 起動時の対話設定（最小/最大受信時間・放送回数） |
 
-### スクリプト内の重要ポイント(コード抜粋)
+### スクリプト内の重要ポイント
 
-スクリプト全体のうち、**特に重要な核心部分**は以下の3点です。
-
-#### ① 絶対時刻同期によるパケット送信(talk 関数の心臓部)
+#### ① 絶対時刻同期による USRP パケット送信（send_usrp_wav_with_padding）
 
 ```python
-# ⭐ 送信開始の「絶対時刻」を記録
-start_time = time.time()
-
-while True:
-    sock.sendto(header + data, (UDP_IP, UDP_PORT))
-    seq += 1
-
-    # ⭐ ドリフト補正:絶対時刻からの逆算
-    target_time = start_time + (seq * PACKET_INTERVAL)
-    sleep_duration = target_time - time.time()
+# time.monotonic() ベースで next_send_time を毎回 20ms ずつ進める
+next_send_time = time.monotonic()
+while ...:
+    sock.sendto(packet, addr)
+    next_send_time += PACKET_INTERVAL        # 絶対時刻を 20ms 進める
+    sleep_duration = next_send_time - time.monotonic()
     if sleep_duration > 0:
         time.sleep(sleep_duration)
 ```
 
-#### ② Open JTalk への確実なテキスト注入(communicate 方式)
+> **なぜ time.monotonic() か:** `time.time()` はシステム時刻調整で巻き戻る可能性がありますが、`time.monotonic()` は単調増加が保証されており、より堅牢です。
+
+#### ② ログローテーション自動追従（monitor_and_reply）
 
 ```python
-process = subprocess.Popen(cmd_jtalk, stdin=subprocess.PIPE)
-process.communicate(text.encode("utf-8"))
+# ROTATION_CHECK_INTERVAL（5秒）ごとに最新ログファイルを確認
+# inode 変更・ファイル置換・日付変更のいずれも自動検出して切替
 ```
 
-#### ③ 自局ループ防止(monitor_and_reply 関数内)
+> V1.58 では `get_latest_log()` を定期的に再呼び出しする設計に改善されています（旧 `callsign_auto_reply.py` の制約を解消）。
+
+#### ③ 自局ループ防止
 
 ```python
 if callsign == MY_CALLSIGN:
-    print(f"⏭️  自局の送信を無視: {callsign}")
+    logger.info("自局の送信を無視: %s", callsign)
     continue
 ```
 
-> **編集する際の注意:**
-> - ファイル冒頭の設定セクション以外は、原則として編集不要です
-> - `talk()` 関数内の絶対時刻同期ロジックは**絶対に書き換えない**でください
->   (書き換えると音声がプツプツになります。詳細は教訓 8 参照)
-
-## 3-4. カスタマイズポイント
-
-### ① 読み替え辞書（USER_DICT）の追加
-
-新しいコールサインを正しく読ませるには、`USER_DICT` に追加します。
+#### ④ Graceful Shutdown（シグナルハンドラ）
 
 ```python
-USER_DICT = {
-    "JJ2YYK": "ジェイ、ジェイ、ツー、ワイ、ワイ、ケー",
-    "JI2TAB": "ジェイ、アイ、ツー、ティー、エー、ビー",
-    "JR2DHR": "ジェイ、アール、ツー、ディー、エイチ、アール",
-    "JA1XXX": "ジェイ、エー、ワン、エックス、エックス、エックス",  # 追加例
-}
+# SIGTERM / SIGINT を受け取ると should_exit = True にセットし、
+# ループを安全に抜けて PTT OFF を送信してから終了する
 ```
 
-> **コツ:** 読点（、）を間に入れることで、音声合成エンジンが「区切って」読んでくれます。
-> 区切らないと「ジジツーワイワイケー」と早口になってしまいます。
+### 編集する際の注意
 
-### ② 応答メッセージのカスタマイズ
+- スクリプト冒頭の **設定セクション**（定数群）以外は原則として編集不要です
+- `send_usrp_wav_with_padding()` 内の絶対時刻同期ロジックは**絶対に書き換えないでください**（書き換えると音声がプツプツになります。詳細は教訓 8 参照）
 
-`monitor_and_reply()` 関数内の以下の行を編集します。
+## 3-5. カスタマイズポイント
 
-```python
-msg = (f"{last_detected_callsign}。こちらは、{MY_CALLSIGN}、"
-       f"尾張旭、DMR、デジピーターです。")
-```
+### ① 起動時の対話設定
 
-例:
-```python
-# よりフォーマルに
-msg = (f"{last_detected_callsign}局、応答ありがとうございます。"
-       f"こちらは{MY_CALLSIGN}、尾張旭の自動応答機です。")
+スクリプト起動時に以下を対話形式で設定できます（Enter でデフォルト値を使用）。
 
-# 時刻を入れる
-import datetime
-now = datetime.datetime.now().strftime("%H時%M分")
-msg = (f"{last_detected_callsign}。こちらは{MY_CALLSIGN}、"
-       f"現在の時刻は{now}です。")
-```
+| 設定項目 | デフォルト値 | 説明 |
+|---|---|---|
+| 最小受信時間 | 0.1 秒 | これより短い送信はカーチャンクと判定しない |
+| 最大受信時間 | 設定値 | これより長い送信は通常交信とみなしてカーチャンクと判定しない |
+| 1時間あたりの定時放送回数 | 1 回 | 0 で定時放送無効 |
 
-### ③ 応答待機時間の調整
+### ② コールサインの読み方カスタマイズ
 
-```python
-RESPONSE_DELAY = 15.0  # 必要に応じて 10.0 ～ 20.0 で調整
-```
+スクリプト冒頭の `CHAR_TO_KANA` 辞書で各文字のカナ読みを定義しています。
+コールサインは自動的に 1 文字ずつ分解して読み上げられます。
 
-| 待機時間 | 用途 |
-|---|---|
-| 5 ～ 10 秒 | 即応性重視（衝突リスクあり） |
-| 15 秒 | バランス型（推奨） |
-| 20 ～ 30 秒 | 衝突回避優先 |
+### ③ 応答メッセージのカスタマイズ
 
-### ④ 音声パラメータの調整
+`_reply_executor()` 関数内の `_generate_hybrid()` 呼び出し部分を編集します。
 
-`talk()` 関数内の Open JTalk コマンドで調整可能です。
+### ④ タイミングの調整
 
-| パラメータ | 意味 | 推奨範囲 | 例 |
-|---|---|---|---|
-| `-p 1.1` | ピッチ（声の高さ） | 0.8 ～ 1.3 | `-p 1.2` で少し高め |
-| `-r 1.0` | スピード | 0.85 ～ 1.2 | `-r 0.9` でゆっくり |
-| `-fm 0` | 抑揚 | -1.0 ～ 1.5 | `-fm 1.5` で抑揚強め |
-| `-jf 1.0` | 音量倍率 | 0.5 ～ 2.0 | `-jf 1.5` で大きめ |
+スクリプト冒頭の定数で調整できます。
 
-## 3-5. 実行方法
+| 定数 | デフォルト | 説明 |
+|---|---|---|
+| `SUPPRESS_DURATION_SEC` | 15.0 秒 | 応答後の重複応答抑制時間 |
+| `GAP_AFTER_INTRO_SEC` | 0.5 秒 | イントロとコールサインの間の無音 |
+| `PRE_POST_PADDING_PACKETS` | 75 パケット | 送信前後の無音パディング（75×20ms=1.5秒） |
+
+## 3-6. 実行方法
 
 ### 手動起動（テスト用）
 
 ```bash
-python3 ~/callsign_auto_reply.py
+python3 ~/dvswitch_bot158.py
 ```
 
-画面にログが表示されます。無線機で実際に交信を行ってテストできます。
+起動時に対話設定が表示されます。設定後、ログ監視が開始されます。
 
 ### 終了方法
 
-```
+```bash
 Ctrl + C
 ```
 
+シグナルハンドラにより、PTT OFF を送信してから安全に終了します。
+
 ### 常駐起動（systemd 化）
 
-長期運用する場合は、systemd サービスとして登録します。これにより:
-
-- ラズパイ起動時に自動で開始
-- エラー時に自動再起動
-- バックグラウンドで動作
+長期運用する場合は、systemd サービスとして登録します。
 
 ```bash
-sudo nano /etc/systemd/system/callsign-bot.service
+sudo nano /etc/systemd/system/dvswitch-bot.service
 ```
 
-以下の内容を貼り付け。
+以下の内容を貼り付け:
 
 ```ini
 [Unit]
-Description=DVSwitch Callsign Auto Reply Bot (OpenCCVoice)
+Description=DVSwitch Bot V1.58 (OpenCCVoice)
 After=network.target Analog_Bridge.service MMDVM_Bridge.service md380-emu.service
 Wants=Analog_Bridge.service MMDVM_Bridge.service md380-emu.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/pi-star/callsign_auto_reply.py
+ExecStart=/usr/bin/python3 /home/pi-star/dvswitch_bot158.py
 Restart=on-failure
 RestartSec=10
 User=pi-star
@@ -911,215 +934,86 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-> **注意:** `User=pi-star` と `ExecStart=` のパス（`/home/pi-star/...`）は、
-> 実際のユーザー名に合わせて変更してください。WPSD では `WPSD` 等の場合があります。
+> **注意:** `User=pi-star` と `ExecStart=` のパスは実際のユーザー名に合わせてください。
 
 有効化と起動:
 
 ```bash
-# systemd に変更を読み込ませる
 sudo systemctl daemon-reload
-
-# 自動起動を有効化（起動時に開始する）
-sudo systemctl enable callsign-bot
-
-# 今すぐ起動
-sudo systemctl start callsign-bot
-
-# 状態確認
-sudo systemctl status callsign-bot
-
-# ログを見る
-sudo journalctl -u callsign-bot -f
+sudo systemctl enable dvswitch-bot
+sudo systemctl start dvswitch-bot
+sudo systemctl status dvswitch-bot
+sudo journalctl -u dvswitch-bot -f
 ```
 
-## 3-6. 開発中の教訓（重要・必読）
+## 3-7. 開発中の教訓（重要・必読）
 
-### 教訓 1：Open JTalk への文字列の渡し方
+> V1.58 では旧バージョン（callsign_auto_reply.py）から多くの教訓を継承・解決しています。
+> 以下の教訓は現バージョンにも関連する重要な知識です。
+
+### 教訓 1：Open JTalk へのテキストの渡し方
 
 - **症状:** 音声が出ない（送信時間 0.0 秒になる）
-- **原因:** `subprocess.run(input=...)` でテキストを渡そうとした際、処理がすっぽ抜けて
-  「空のテキスト」が渡り、0 バイトの WAV ファイルが作られた
-- **解決策:** `subprocess.Popen` と `communicate()` を使い、標準入力ストリームとして
-  直接テキストを確実に流し込む方式（本スクリプトの方式）を厳守すること
+- **解決策:** `subprocess.Popen` と `communicate()` を使い、標準入力ストリームとしてテキストを流し込む方式を厳守（本スクリプトに実装済み）
 
-```python
-# ❌ 動かないパターン
-subprocess.run(["open_jtalk", ...], input=text.encode("utf-8"))
-
-# ✅ 動くパターン（本スクリプトの方式）
-process = subprocess.Popen(["open_jtalk", ...], stdin=subprocess.PIPE)
-process.communicate(text.encode("utf-8"))
-```
-
-### 教訓 2：SoX による変換は段階的に行う
+### 教訓 2：SoX による変換はシンプルに
 
 - **症状:** ファイルフォーマットが破損する
-- **原因:** 変換と無音追加を同時に 1 行のコマンドで行おうとした
-- **教訓:** システムを安定稼働させるためには、スクリプトの処理は極力シンプルにする
-  （純粋な音声化とフォーマット変換のみ行う）のが鉄則
+- **解決策:** 変換・無音追加・結合は段階的に行い、一行に詰め込まない（本スクリプトに実装済み）
 
-### 教訓 3：UDP 送信は 20ms ごとに「絶対時刻同期」でペーシングする
+### 教訓 3：UDP 送信は絶対時刻同期でペーシングする
 
 - **症状:** 音声がケロケロしたりブツ切れになる
-- **原因:** 一気にデータを流し込むと Analog_Bridge がパンクする。
-  また、単純な `time.sleep(0.02)` ではスクリプトの処理時間（1～2ms）が
-  毎回上乗せされて**ドリフト（時刻のズレ）**が蓄積する
-- **解決策:** **絶対時刻からの逆算によるドリフト補正**を行う
-  （詳細は次の **教訓 8** で図解付きで解説）
+- **解決策:** `time.monotonic()` ベースの絶対時刻同期方式（本スクリプトに実装済み。詳細は教訓 8 参照）
 
 ### 教訓 4：自局のループ送信に注意
 
-- **症状:** 一度応答すると、無限に応答し続ける
-- **原因:** 自分の応答音声が DMR ネットワークを経由して再び自分のログに記録され、
-  それを「新しい交信」として再応答してしまう
-- **解決策:** `MY_CALLSIGN` 定数を設定し、自局からの送信は無視する処理を入れる
-  （本スクリプトに実装済み）
+- **症状:** 一度応答すると無限に応答し続ける
+- **解決策:** `MY_CALLSIGN` を設定し、自局からの送信を無視する（本スクリプトに実装済み）
 
-### 教訓 5：ログファイルのローテーション
+### 教訓 5：ログファイルのローテーション ⭐ V1.58 で解決済み
 
-- **症状:** 数日後に動かなくなる
-- **原因:** MMDVM_Bridge のログは日付ごとに別ファイルになる（例:
-  `MMDVM_Bridge-2026-05-15.log`）。古いファイルを監視し続けると更新されない
-- **解決策:** `get_latest_log()` で最新ファイルを毎回取得する設計にする
-  （本スクリプトに実装済み）。ただし、**これは起動時に一度だけ最新ファイルを取得する設計**のため、
-  起動中に日付が変わり新しいログファイルに切り替わった場合は監視対象が古いままになります（本実装の制約）。
-  対策として `cron` で毎日深夜にサービスを再起動してください（詳細は **6-5 参照**）。
+- **旧バージョンの問題:** 起動時に一度だけ最新ファイルを取得する設計のため、日付が変わると監視が止まった
+- **V1.58 での解決:** `ROTATION_CHECK_INTERVAL`（5秒）ごとにログファイルの inode / パスを確認し、変化があれば自動切替。**cron での再起動は不要になりました。**
 
 ### 教訓 6：CPU 負荷の管理
 
-- **症状:** 音声が遅延する、ケロケロする
-- **原因:** md380-emu と Pi-Star の MMDVM 処理が同時に動くと CPU が逼迫する
-- **解決策:**
-  - **Raspberry Pi Zero 2 W でも実運用可能**（JJ2YYK 局で安定動作実績あり）
-  - 高負荷が想定される場合は Pi 4 / 5 を使う
-  - 冷却を強化する（CPU 温度が 70℃ を超えると性能低下。Zero 2 W は特に発熱しやすい）
-  - 不要なプロセスを停止する
-- **補足:** 教訓 8 の「絶対時刻同期」を正しく実装していれば、CPU が一時的に
-  忙しくなっても自動で追いつくため、Zero 2 W クラスでも音切れしません
+- **解決策:** Raspberry Pi Zero 2 W でも実運用可能（JJ2YYK 局で安定動作実績あり）。絶対時刻同期が正しく実装されていれば CPU が忙しくなっても自動で追いつく
 
-### 教訓 7：ファイルパスのハードコーディング
+### 教訓 7：一時ファイルの書き込み先
 
-- **症状:** 別のラズパイに移したら動かない
-- **原因:** ユーザー名（pi-star / WPSD）やパスが環境によって異なる
-- **解決策:** スクリプト上部の設定セクションで一元管理し、移植時はそこだけ変更すれば
-  済むようにする（本スクリプトもそのように設計）
+- **V1.58 での改善:** 一時ファイルを `/tmp` から `/dev/shm`（RAM ディスク）に変更。SD カードへの書き込み回数を削減し、寿命を延長
 
 ### 教訓 8：⭐ 絶対時刻によるパケット同期（ドリフト補正）— 最大のブレイクスルー
 
-**この教訓はシステム全体の安定性を決める最重要事項です。** これを忘れると、
-どれだけ他を正しく作っても音声が必ずプツプツします。
+この教訓はシステム全体の安定性を決める最重要事項です。
+これを忘れると、どれだけ他を正しく作っても音声が必ずプツプツします。
 
-#### 問題の本質
+**問題の本質:** DMR は「20ms に 1 パケット、1 秒間に厳密に 50 パケット」という時間規格で動いています。単純な `time.sleep(0.02)` では処理時間が毎回上乗せされてドリフトが蓄積します。
 
-DMR は **「20ms に 1 パケット、1 秒間に厳密に 50 パケット」** という時間規格で
-動いています。これは交渉の余地がない物理的なリズムです。
-
-ところが、Python スクリプトは:
-
-```
-WAV 読込 (約 0.5ms)
-  ↓
-USRP パケット作成 (約 0.5ms)
-  ↓
-ソケット送信 (約 1ms)
-  ↓
-time.sleep(0.02) で 20ms 休む
-```
-
-という流れで動くため、**1 周あたり 20ms より長くなります**（実測で 21～22ms）。
-
-#### ドリフトの蓄積
-
-```
-パケット番号   理想送信時刻    実際の送信時刻    ズレ
-   #1          20ms           22ms          +2ms
-   #2          40ms           44ms          +4ms
-   #3          60ms           66ms          +6ms
-   ...
-   #100      2000ms         2200ms        +200ms ← 致命的
-```
-
-100 パケット送る頃には **200ms（0.2秒）も遅延**します。Analog_Bridge は
-「20ms ごとにパケットが届く」前提でバッファを管理しているため:
-
-1. 最初は順調に処理
-2. パケットの到着が徐々に遅れる
-3. バッファが空になる
-4. **音切れ（プツプツ・ケロケロ）が発生**
-
-#### 解決策：絶対時刻からの逆算
-
-**「前のパケットから 20ms 休む」** のではなく、
-**「開始時刻から数えて、今は何 ms 経過しているべきか」** を毎回計算します。
+**解決策：絶対時刻からの逆算**
 
 ```python
 # ❌ 動かない（ドリフトが蓄積する）
 while ...:
     送信()
-    time.sleep(0.02)  # ← 処理時間が上乗せされる
+    time.sleep(0.02)   # ← 処理時間が上乗せされる
 
-# ✅ 正しい（絶対時刻に同期する）
-start_time = time.time()
-seq = 0
+# ✅ 正しい（絶対時刻に同期する） ※V1.58 では time.monotonic() を使用
+next_send_time = time.monotonic()
 while ...:
     送信()
-    seq += 1
-    # 「開始から seq * 20ms 経過した時刻」が目標
-    target_time = start_time + (seq * 0.02)
-    sleep_duration = target_time - time.time()
+    next_send_time += 0.02              # 絶対時刻を 20ms 進める
+    sleep_duration = next_send_time - time.monotonic()
     if sleep_duration > 0:
-        time.sleep(sleep_duration)
-    # 処理が遅れていた場合は待たずに次へ（自動的に追いつく）
+        time.sleep(sleep_duration)      # 処理が遅れていた場合は待たずに次へ
 ```
 
-#### 動作のイメージ図
+> **V1.58 での改善点:** 旧バージョン（`callsign_auto_reply.py`）では `time.time()` を使用していましたが、V1.58 では `time.monotonic()` に変更しています。`time.monotonic()` は単調増加が保証されており、システム時刻の調整（NTP など）による巻き戻りの影響を受けません。
 
-```
-時刻軸:  0ms      20ms     40ms     60ms     80ms     100ms
-理想:    ★────────★────────★────────★────────★────────★
-         送信     送信     送信     送信     送信     送信
-
-【単純Sleep】処理時間2msが毎回上乗せされる
-実際:    ★──────────★──────────★──────────★──────────★
-         0ms        22ms       44ms       66ms       88ms
-         → どんどん遅れる → バッファが空に → プツプツ ❌
-
-【絶対時刻同期】処理が早ければ長く待ち、遅ければ即時送信
-実際:    ★────────★────────★────────★────────★────────★
-         0ms      20ms     40ms     60ms     80ms     100ms
-         → 理想時刻にピタリ一致 → バッファ安定 → 完璧 ✅
-```
-
-#### このアルゴリズムが効く理由
-
-| 観点 | 単純 Sleep | 絶対時刻同期 |
-|---|---|---|
-| 基準点 | 直前のパケット | 送信開始時刻 |
-| 誤差の累積 | 蓄積する（毎回上乗せ） | 蓄積しない（毎回リセット） |
-| 処理が早かった時 | 早く送ってしまう | きちんと待つ |
-| 処理が遅れた時 | さらに遅れる | 待たずに追いつく |
-| Analog_Bridge のバッファ | 空になりやすい | 常に安定 |
-| 音質 | プツプツ・ケロケロ | クリア・安定 |
-
-#### 実装上の注意点
-
-1. **`start_time = time.time()` は必ず送信ループの直前に置く**
-   （音声生成より前に置くとズレる）
-2. **`seq` のインクリメントは送信直後に行う**
-   （目標時刻計算は「次のパケット」のために行うため）
-3. **`sleep_duration < 0` の場合は待たない**
-   （遅延を取り戻す動作。`time.sleep()` に負数を渡すと例外が出るので必ずチェック）
-4. **Python の `time.time()` は単調増加ではない**ため、厳密性を極めるなら
-   `time.monotonic()` を使う選択肢もある（通常用途では `time.time()` で十分）
-
-> **これが、DMR という厳しいデジタル規格の波に乗せるための最大のブレイクスルーでした。**
-> 単純な `time.sleep(0.02)` から `target_time` ベースの逆算方式への変更こそが、
+> 単純な `time.sleep(0.02)` から `next_send_time` ベースの逆算方式への変更こそが、
 > プツプツを完全に消し去った「魔法」です。未来の再構築時には、絶対にこの方式を
 > 採用してください。
-
----
-
 # 第4部：動作確認とテスト手順
 
 実装後、以下の順序で動作確認を行います。**焦らず、1 段階ずつ確認してください。**
@@ -1183,19 +1077,18 @@ tail -f /var/log/mmdvm/MMDVM_Bridge-*.log
 ## ステップ 6: スクリプトを手動起動してテスト
 
 ```bash
-python3 ~/callsign_auto_reply.py
+python3 ~/dvswitch_bot158.py
 ```
 
-画面に `👀 OpenCCVoice for DVSwitch V1.0 待機中` と出れば起動成功。
+起動時に最小/最大受信時間・定時放送回数の対話設定が表示されます。設定後、ログ監視が開始されます。
 
-別の DMR 局が交信を終了すると:
-1. `▶️ 受信中: XXXXX`
-2. `⏹️ 受信終了 -> 15秒後に XXXXX へ返信します`
-3. （15 秒経過）
-4. `🎙️ 発話準備: ...`
-5. `✅ 送信完了`
+カーチャンクが検知されると、ログに以下のように記録され、Pi-Star ダッシュボードに「TX」が表示されます。
 
-の順で表示され、Pi-Star ダッシュボードに「TX」が表示されます。
+```
+[INFO] カーチャンク検知: XXXXX (受信時間 x.xs)
+[INFO] 応答送信開始: XXXXX
+[INFO] 送信完了
+```
 
 ## ステップ 7: 別の DMR 端末で受信確認
 
@@ -1272,10 +1165,10 @@ sudo cp /opt/MMDVM_Bridge/MMDVM_Bridge.ini ./
 sudo cp /etc/mmdvmhost ./ 2>/dev/null || true  # Pi-Star 設定（環境による）
 
 # 自動応答スクリプトのコピー
-cp ~/callsign_auto_reply.py ./
+cp ~/dvswitch_bot158.py ./
 
 # systemd サービス定義のコピー
-sudo cp /etc/systemd/system/callsign-bot.service ./ 2>/dev/null || true
+sudo cp /etc/systemd/system/dvswitch-bot.service ./ 2>/dev/null || true
 
 # 所有権をユーザーに戻す
 sudo chown -R $USER:$USER ~/dvswitch_backup
@@ -1336,14 +1229,14 @@ tar xzf dvswitch_backup_YYYYMMDD.tar.gz
 # 設定ファイルを戻す
 sudo cp ~/dvswitch_backup/Analog_Bridge.ini /opt/Analog_Bridge/
 sudo cp ~/dvswitch_backup/MMDVM_Bridge.ini /opt/MMDVM_Bridge/
-cp ~/dvswitch_backup/callsign_auto_reply.py ~/
-sudo cp ~/dvswitch_backup/callsign-bot.service /etc/systemd/system/
+cp ~/dvswitch_backup/dvswitch_bot158.py ~/
+sudo cp ~/dvswitch_backup/dvswitch-bot.service /etc/systemd/system/
 
 # サービス再起動
 sudo systemctl daemon-reload
 sudo systemctl restart Analog_Bridge MMDVM_Bridge md380-emu
-sudo systemctl enable callsign-bot
-sudo systemctl start callsign-bot
+sudo systemctl enable dvswitch-bot
+sudo systemctl start dvswitch-bot
 ```
 
 5. 第4部の動作確認手順を実施
@@ -1360,7 +1253,7 @@ crontab -e
 
 ```cron
 # 毎週日曜 3:00 に DVSwitch 設定をバックアップ
-0 3 * * 0 tar czf /home/pi-star/dvswitch_backup_$(date +\%Y\%m\%d).tar.gz /opt/Analog_Bridge/Analog_Bridge.ini /opt/MMDVM_Bridge/MMDVM_Bridge.ini /home/pi-star/callsign_auto_reply.py
+0 3 * * 0 tar czf /home/pi-star/dvswitch_backup_$(date +\%Y\%m\%d).tar.gz /opt/Analog_Bridge/Analog_Bridge.ini /opt/MMDVM_Bridge/MMDVM_Bridge.ini /home/pi-star/dvswitch_bot158.py
 ```
 
 ---
@@ -1412,8 +1305,8 @@ while ...:
 | `/var/log/mmdvm/MMDVM_Bridge-*.log` | ログファイル（監視対象） |
 | `/usr/share/hts-voice/mei/mei_normal.htsvoice` | メイの音声モデル |
 | `/var/lib/mecab/dic/open-jtalk/naist-jdic` | Open JTalk 辞書 |
-| `~/callsign_auto_reply.py` | 自動応答スクリプト本体 |
-| `/etc/systemd/system/callsign-bot.service` | systemd サービス定義 |
+| `~/dvswitch_bot158.py` | 自動応答スクリプト本体（V1.58 安定版） |
+| `/etc/systemd/system/dvswitch-bot.service` | systemd サービス定義 |
 
 ## サービス管理コマンド一覧
 
@@ -1431,11 +1324,11 @@ sudo systemctl restart MMDVM_Bridge
 sudo systemctl status MMDVM_Bridge
 
 # 自動応答ボット（systemd 化した場合）
-sudo systemctl restart callsign-bot
-sudo systemctl status callsign-bot
+sudo systemctl restart dvswitch-bot
+sudo systemctl status dvswitch-bot
 
 # 全部まとめて再起動
-sudo systemctl restart Analog_Bridge md380-emu MMDVM_Bridge callsign-bot
+sudo systemctl restart Analog_Bridge md380-emu MMDVM_Bridge dvswitch-bot
 ```
 
 ## モード切り替えコマンド
@@ -1453,10 +1346,10 @@ tail -f /var/log/mmdvm/MMDVM_Bridge-*.log
 
 # systemd ログ（リアルタイム）
 sudo journalctl -u Analog_Bridge -f
-sudo journalctl -u callsign-bot -f
+sudo journalctl -u dvswitch-bot -f
 
 # 直近 100 行
-sudo journalctl -u callsign-bot -n 100
+sudo journalctl -u dvswitch-bot -n 100
 ```
 
 ## CPU・メモリ確認
@@ -1481,7 +1374,7 @@ free -h
 
 ```bash
 # 1. 全サービスの状態確認
-sudo systemctl status Analog_Bridge MMDVM_Bridge md380-emu callsign-bot
+sudo systemctl status Analog_Bridge MMDVM_Bridge md380-emu dvswitch-bot
 
 # 2. 全部再起動
 sudo systemctl restart Analog_Bridge MMDVM_Bridge md380-emu
@@ -1645,7 +1538,7 @@ UTF-8 にエンコードしたテキストを直接 OS の奥底に流し込む�
 撃破する」という姿勢**そのものを後世に残すために書きました。
 
 もし将来、SD カードが壊れたり、ラズパイ（Pi Zero 2 W）を買い替えたりしても、
-このマニュアルと別添の `callsign_auto_reply.py` があれば必ず再構築できます。
+このマニュアルと別添の `dvswitch_bot158.py` があれば必ず再構築できます。
 **「悲願」がもう失われることはありません。**
 
 73、そして良き運用を。
@@ -1657,4 +1550,4 @@ UTF-8 にエンコードしたテキストを直接 OS の奥底に流し込む�
 *OpenCCVoice for DVSwitch*  
 *核心技術: 絶対時刻同期によるドリフト補正アルゴリズム*  
 *動作実績: Raspberry Pi Zero 2 W（JJ2YYK 局）*  
-*別添: callsign_auto_reply.py*
+*別添: dvswitch_bot158.py*
