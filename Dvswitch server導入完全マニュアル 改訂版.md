@@ -133,6 +133,8 @@ sudo su -
 cd /tmp
 ```
 
+> ⚠️ **補足（セキュリティ）**：`sudo su -` でrootシェルを取得する方法は動作しますが、`sudo apt install ...` のように各コマンドに `sudo` を付ける方が操作ログが残り、より安全です。Raspberry Pi OS の慣例として `sudo su -` も広く使われているため実用上は問題ありません。
+
 事前に本体を最新化します（公式ガイドが推奨）。
 
 ```bash
@@ -187,7 +189,7 @@ cat /etc/apt/sources.list.d/dvswitch.list
 deb [signed-by=/usr/share/keyrings/dvswitch-keyring.gpg] http://dvswitch.org/DVSwitch_Repository buster hamradio
 ```
 
-> 🔶 **要検証（行末の codename）**：行末が `buster hamradio` であるべき、というのは元ブログの記述に基づきます。`./buster` スクリプトが実際に書き込む codename・コンポーネント名・キーリングパスは、スクリプトのバージョンで異なる可能性があります。`./buster` 実行後に実ファイルを `cat` し、その内容を**正**としてください（スクリプトが書いた値を手で変えると不整合になります）。手修正が必要なのは、誤って別 codename のスクリプトを実行した場合の救済時のみです（[別記](#第i部別記実際に起きたことbookworm-経由--buster-修復ログ)参照）。
+> 🔶 **要検証（行末の codename・キーリングパス）**：行末が `buster hamradio` であるべき、というのは元ブログの記述に基づきます。`./buster` スクリプトが実際に書き込む codename・コンポーネント名・キーリングパスは、スクリプトのバージョンで異なる可能性があります。特に `signed-by=` のパスが `/usr/share/keyrings/dvswitch-keyring.gpg` ではなく `/etc/apt/trusted.gpg.d/` になっている場合もあります（古いバージョンのスクリプトは後者を使うものが多い）。`./buster` 実行後に実ファイルを `cat` し、その内容を**正**としてください（スクリプトが書いた値を手で変えると不整合になります）。手修正が必要なのは、誤って別 codename のスクリプトを実行した場合の救済時のみです（[別記](#第i部別記実際に起きたことbookworm-経由--buster-修復ログ)参照）。
 
 ### I-6. WebUI へのアクセス
 
@@ -259,7 +261,7 @@ apt install dvswitch-server analog-reflector stfu -y
 
 ### この別記に対する技術的コメント
 
-- 📝 **実ログ**：`cd /usr/local/dvs` → `./dvs` は、bookworm スクリプトが一度通って `dvs` メニュー環境ができていたために可能になった操作です。**クリーン構築では `/usr/local/dvs` はまだ存在しません**。だからこそ推奨手順（第I部）は最初から `buster` 一本で通します。
+- 📝 **実ログ**：`cd /usr/local/dvs` → `./dvs` は、bookworm スクリプトが一度通って `dvs` メニュー環境ができていたために可能になった操作です。**クリーン構築では `/usr/local/dvs` はまだ存在しません**。だからこそ推奨手順（第I部）は最初から `buster` 一本で通します。なお、修復目的であれば `./dvs` の実行は必須ではなく、直接 `wget http://dvswitch.org/buster` から始めることができます。`./dvs` はブログ筆者が既存の dvs メニュー環境を経由したという実作業の記録です。
 - 🔶 **要検証**：手修正で行末を `bookworm` → `buster` に変えると同じ結果になる、というのは元ブログの主張です。スクリプトが配置するキーリングや署名情報が bookworm 実行時のもののまま残っていると、署名検証で別エラーが出る可能性があります。確実なのは、誤実行に気づいた時点で `dvswitch.list` と関連キーリングを削除し、正しい `buster` スクリプトを実行し直して**スクリプトに再生成させる**ことです。手修正は最後の手段と考えてください。
 
 ---
@@ -270,7 +272,7 @@ Bookworm（Debian 12）は DVSwitch が正規対応する世代で、`bookworm` 
 
 ### II-0. Bookworm の固定 IP について
 
-> 🔶 **要検証 / 補足（元ブログに記載なし）**：Bookworm は **NetworkManager** がデフォルトです。第I部の `dhcpcd.conf` 方式は Bookworm では標準で効きません。Bookworm で固定 IP にする場合は `nmtui`（テキスト UI）または `nmcli` で接続プロファイルに静的アドレスを設定するのが標準的です。元ブログは Bookworm 側の固定 IP 手順を扱っていないため、本書では方式の違いの指摘に留めます。実際の設定値は環境に合わせて確定してください。
+> 🔶 **要検証 / 補足（元ブログに記載なし）**：Bookworm は **NetworkManager** がデフォルトです。第I部の `dhcpcd.conf` 方式は Bookworm では標準で効きません。Bookworm で固定 IP にする場合は `nmtui`（テキスト UI）または `nmcli` で接続プロファイルに静的アドレスを設定するのが標準的です。`raspi-config` → "System Options" → "Wireless LAN" 経由での設定や、`/etc/NetworkManager/system-connections/` 配下の接続ファイルを直接編集する方法も利用できます。元ブログは Bookworm 側の固定 IP 手順を扱っていないため、本書では方式の違いの指摘に留めます。実際の設定値は環境に合わせて確定してください。
 
 ### II-1. 標準導入手順
 
@@ -572,6 +574,7 @@ sudo systemctl restart lighttpd
 | dash 非互換 | 本スクリプトは POSIX 互換のため dash でも動作。旧版に bash 専用構文が残っていないか確認 |
 | ブラウザキャッシュ | `Ctrl + F5` でハードリロード |
 | Device Tree 読めない | `cat /proc/device-tree/model` が読めるか、`www-data` で読めるかを確認 |
+| AppArmor/SELinux | Raspberry Pi OS Lite は標準で無効だが、カスタム環境では `/proc/device-tree/model` へのアクセスが制限されることがある。`aa-status` または `sestatus` で確認 |
 
 ### V-3. WebUI にアクセスできない
 
@@ -596,7 +599,7 @@ sudo systemctl restart lighttpd
 |---|---|---|---|
 | 1 | Bullseye で buster 流用が依存解決できるか | `apt install dvswitch-server analog-reflector stfu` がエラーなく完了するか | §3、I-3 |
 | 2 | `./buster` 後の順序（`apt update` で Release 変更エラーが出るか） | `./buster` 後に `apt update` を実行し挙動を確認 | I-3 |
-| 3 | `dvswitch.list` の実際の codename・コンポーネント・キーリングパス | `cat /etc/apt/sources.list.d/dvswitch.list` | I-5 |
+| 3 | `dvswitch.list` の実際の codename・コンポーネント・キーリングパス（`signed-by=` のパスが `/usr/share/keyrings/` か `/etc/apt/trusted.gpg.d/` かも必ず確認） | `cat /etc/apt/sources.list.d/dvswitch.list` | I-5 |
 | 4 | ダッシュボードの実リッスンポート（80 か 2812 か他か） | `sudo ss -tlnp \| grep -E ':(80\|443\|2812)'` | I-6、V-3 |
 | 5 | Web UI の実配置ディレクトリ | `ls /usr/share/dvswitch`（無ければ `/var/www/html` 等を確認） | III-1、III-2 |
 | 6 | Apache サイト定義の実ファイル名 | `ls /etc/apache2/sites-enabled/` | III-2、V-4 |
