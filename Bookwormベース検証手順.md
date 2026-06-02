@@ -104,18 +104,7 @@ sudo systemctl list-units --all | grep -E "analog|mmdvm|md380|bridge|dvswitch|we
 
 `dvswitch-server` という単体ユニットは**存在しない**（メタパッケージのため）。実体は `analog_bridge` / `mmdvm_bridge` / `md380-emu` / `webproxy` などのユニット群。
 
-### 3-2. 🔴 md380-emu の実行ビット付与 ✅
-
-インストール直後、`md380-emu` バイナリに実行ビットが立っておらず
-`Permission denied` で起動失敗する（パッケージ側の不備）。
-
-```bash
-ls -la /opt/md380-emu/md380-emu        # -rw-r--r-- になっていたら↓
-sudo chmod +x /opt/md380-emu/md380-emu
-sudo systemctl restart md380-emu
-```
-
-### 3-3. 🔴🔴 md380-emu の SEGV と qemu ダウングレード ✅
+### 3-2. 🔴🔴 md380-emu の SEGV と qemu ダウングレード ✅
 
 **症状:** TGIF 等から実際に信号が入り AMBE デコードが走った瞬間、
 `md380-emu.service: Main process exited, code=killed, status=11/SEGV` を吐いて
@@ -137,16 +126,28 @@ sudo dpkg -i /tmp/qemu52.deb
 # apt upgrade で 7.2 に戻らないよう固定する
 sudo apt-mark hold qemu-user-static
 
+# 念のためバイナリの実行権限を確認（立っていなければ付与）
+ls -la /opt/md380-emu/md380-emu
+sudo chmod +x /opt/md380-emu/md380-emu
+
 sudo systemctl restart md380-emu
 sudo systemctl status md380-emu --no-pager   # active (running) を確認
-```
 
-**確認方法:** TGIF 側から実際に音声を送り、`status=11/SEGV` が**出ないこと**を確認する。
-（起動直後の running 表示だけでは不十分。デコードを走らせて初めて確証が得られる。）
-
-```bash
 qemu-arm-static --version    # qemu-arm version 5.2.x になっていること
 ```
+
+> ⚠️ **この段階での running 表示は「起動できた」ことの確認に過ぎない。**
+> SEGV は実際に AMBE デコードが走ったときに発生するため、`status=11/SEGV`
+> が**出ないことの最終確認は、経路が開通する第8部の送信テスト後に行う**
+> （本手順書の実作業でも、SEGV が発覚したのは TGIF 接続後だった）。
+
+> **【手順外・ドツボ記録】md380-emu の実行ビット欠落について**
+> 本検証では、qemu の問題に気づく前段階で、インストール直後の
+> `md380-emu` バイナリに実行ビットが立っておらず `Permission denied` で
+> 起動失敗する事象に遭遇した（パッケージ側の不備と思われる）。
+> ただし上記ダウングレード手順内で `chmod +x` を実施するため、
+> 独立した手順としては不要。`Permission denied` が出た場合の
+> 切り分け情報として記録に残す。
 
 ---
 
@@ -209,6 +210,15 @@ sox /tmp/test.wav -r 8000 -c 1 -b 16 /tmp/test_8k.wav && echo OK
 
 `OK` が出れば成功。`Cannot open ... naist-jdic` が出る場合はパスが誤り。
 
+> **なぜ `open-jtalk/` を挟むのか（エラーの原因）**
+> Debian/Raspbian の `open-jtalk-mecab-naist-jdic` パッケージ（本検証では 1.11-3）は、
+> 辞書を **`/var/lib/mecab/dic/open-jtalk/naist-jdic/`** に配置する（`sys.dic` 等がここにある）。
+> 配布ドキュメントの `/var/lib/mecab/dic/naist-jdic`（`open-jtalk/` なし）は、
+> ソースからの自前ビルドや別系統の配置を前提にした記述で、本パッケージの実配置とは
+> 一階層ずれている。このため当該パスでは辞書が見つからず `Cannot open ...` となる。
+> パッケージで導入する限りパスは `open-jtalk/` 入りで固定なので、実体が不明なときは
+> `find /var/lib/mecab -name "sys.dic"` で確認するのが確実。
+
 ---
 
 ## 第6部：ボット本体と固定 WAV
@@ -248,26 +258,38 @@ grep -n "UDP_IP\|UDP_PORT\|DICT_PATH" dvswitch_bot158.py
 sed -i 's/UDP_PORT = 31001/UDP_PORT = 51000/' dvswitch_bot158.py
 ```
 
-### 6-4. 固定 WAV 作成 ✅
+### 6-4. 固定 WAV 作成（対話式スクリプト） ✅
 
-辞書パス・音声モデルは第5部と同じ。各ファイルは 8kHz / mono / 16bit PCM で生成する。
+固定 WAV は GitHub の対話式スクリプトで生成する。コールサイン・地名・
+定時メッセージを対話入力すると、英数字を自動でカナ変換し、5本＋
+`time_outro.wav`（V1.58 未使用・無害）を一括生成する。辞書パス・音声モデル・
+SoX の使い分け（単純変換／前後トリム）はスクリプト内に正しく実装されている。
 
 ```bash
-# fixed_intro.wav（カーチャンク応答イントロ）
-echo "こちらは、ジェイジェイツーワイワイケー、おわりあさひ ディーエムアール デジピーターです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_intro.wav && sudo sox /tmp/temp_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_intro.wav
-
-# fixed_outro.wav（カーチャンク応答アウトロ）
-echo "カーチャンクです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_outro.wav && sudo sox /tmp/temp_outro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_outro.wav
-
-# time_intro.wav（時報イントロ・前後トリム）
-echo "こちらは、ジェイジェイツーワイワイケー、" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/time_intro.wav && sox /tmp/time_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/time_intro.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
-
-# 001.wav（定時メッセージ1・前後トリム）
-echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。オープン、シーシーヴォイス、フォー、ディーブイスイッチからの音声です。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/001_raw.wav && sox /tmp/001_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/001.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
-
-# 002.wav（定時メッセージ2・前後トリム）
-echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。ティージーアイエフ、ヨンヨンハチサンサンと、インターネット接続しています。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/002_raw.wav && sox /tmp/002_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/002.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+cd ~
+# ※リポジトリ上のファイル名が "reate_wav.sh" のため URL に注意（先頭 c 欠落の表記）
+wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/reate_wav.sh -O create_wav.sh
+chmod +x create_wav.sh
+sudo ./create_wav.sh
 ```
+
+対話入力の流れ:
+
+1. コールサイン（例 `JJ2YYK`）→ 自動カナ変換結果を確認・修正（`ジェイジェイツーワイワイケー`）
+2. 設置場所の地名（例 `おわりあさひ`。漢字を入れると Open JTalk の読みに依存するため、確実に読ませたい場合はひらがな推奨）
+3. 定時メッセージ1 → カナ確認・修正
+4. 定時メッセージ2 → カナ確認・修正
+5. 確認プロンプトで `Y`
+
+> **生成される文面について（検証範囲の注記）**
+> このセッションで TGIF 送信成功まで確認したのは、後述の「個別コマンド版」で
+> 作った WAV である。スクリプト版は 001/002 が
+> `こちらは、(コールサイン)、(地名) ディーエムアール デジピーターです。(メッセージ)`
+> という固定構造で組み立てられ、読点やカナが個別コマンド版と完全一致はしない。
+> 音声フォーマット（8kHz/mono/16bit）と経路は同一なので動作に支障はないが、
+> 読み上げの「文面」は入力値で変わる点に留意する。
+> 「TGIF44833」のような英数字は自動変換で読点が入らないため、確認プロンプトの
+> `read -i` 編集で読点（例: `ヨンヨンハチサンサン`）を整えるとよい。
 
 確認:
 
@@ -276,9 +298,11 @@ ls -la /opt/dvswitch_bot/
 soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確認
 ```
 
-> **SoX 2パターンの使い分け**
-> - **単純変換**（`fixed_intro` / `fixed_outro`）: 他音声と連結されるため末尾無音は許容。ボット側で 0.5 秒の無音を別途付加する。
+> **SoX 2パターンの使い分け（スクリプト内の実装）**
+> - **単純変換**（`fixed_intro` / `fixed_outro` / `time_outro`）: 他音声と連結されるため末尾無音は許容。ボット側で 0.5 秒の無音を別途付加する。
 > - **前後トリム**（`time_intro` / `001` / `002`）: `silence 1 0.1 1% reverse` を 2 回適用し前後無音を除去。単独再生・動的合成連結時の「間」を一定にする。
+
+> 個別コマンドで手動生成する方法（このセッションで TGIF 送信まで検証した文面）は **付録C** に掲載。
 
 ---
 
@@ -336,12 +360,17 @@ sudo systemctl restart analog_bridge mmdvm_bridge
 
 ## 第8部：送信テスト
 
-### 8-1. テスト送信ツール配置 ✅
+### 8-1. テスト送信ツール取得 ✅
 
-`~/test_send.py` を作成（GitHub の音声ソース作成ドキュメント由来）。
-USRP プロトコルで前後 1.5 秒パディングを付けて単発送信する。
+`test_send.py` を GitHub から取得する。USRP プロトコルで前後 1.5 秒パディングを
+付けて WAV を単発送信するツール。
 
-主要パラメータ:
+```bash
+cd ~
+wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/test_send.py
+```
+
+主要パラメータ（取得後に確認。本検証時点では既定で正しかった）:
 
 ```python
 UDP_IP = "127.0.0.1"
@@ -361,6 +390,20 @@ python3 ~/test_send.py /opt/dvswitch_bot/001.wav
 TGIF TG 44833 で音声が出れば**経路開通**。本検証ではここまで成功を確認した。
 
 > bot 本体が常駐している場合は二重送信になるため、テスト時は bot を停止する。
+
+### 8-3. 🔴 md380-emu SEGV の最終確認 ✅
+
+第3-3部でダウングレードした qemu の効果を、ここで**実際のデコードを走らせて確定**する。
+この送信テスト（および TGIF から実信号を受けたとき）に
+`md380-emu.service: ... status=11/SEGV` が**出ないこと**を確認する。
+
+```bash
+sudo journalctl -u md380-emu -n 20 --no-pager   # SEGV が出ていないこと
+sudo systemctl status md380-emu --no-pager       # active (running) のまま
+```
+
+SEGV が再発する場合は qemu が 7.2 に戻っていないか確認する
+（`qemu-arm-static --version` が 5.2.x、`apt-mark` で hold 済みか）。
 
 ---
 
@@ -413,7 +456,7 @@ sudo systemctl status dvswitch-bot
 | USRP txPort | 51001 / 31001 混在 | 51001 | ⚠️ |
 | ボット UDP_PORT | 51000 | 51000 | ✅ |
 | Open JTalk 辞書 | /var/lib/mecab/dic/naist-jdic | /var/lib/mecab/dic/open-jtalk/naist-jdic | ⚠️ |
-| md380-emu 実行権限 | （記載なし） | chmod +x 必須 | 🔴 |
+| md380-emu 実行権限 | （記載なし） | chmod +x（ダウングレード手順に統合） | ⚠️ |
 | qemu-user-static | （記載なし） | 5.2 へダウングレード＋hold | 🔴 |
 | Apache DocumentRoot | （記載なし） | /usr/share/dvswitch | ⚠️ |
 | 送信 TG | （環境依存） | txTg / exportTG = 44833 | 🔴 |
@@ -428,6 +471,39 @@ sudo systemctl status dvswitch-bot
 | `http://<IP>/` が Apache 既定ページ | DocumentRoot 未変更 | `/usr/share/dvswitch` に変更 |
 | 音声は出るが TG が 4000 に戻る | TGIF 側 Static 未設定 | TGIF ダッシュボードで 44833 を Static 登録 |
 | ボット音声が無音 | md380-emu 停止 or Analog_Bridge 設定 | md380-emu 稼働確認、USRP ポート確認 |
+
+## 付録C：固定 WAV の個別コマンド生成（検証済み文面）
+
+第6-4部は対話式スクリプト（`create_wav.sh`）での生成を本手順とした。
+ここでは、スクリプトを使わず手動で作る場合、または**このセッションで
+TGIF 送信まで検証した文面**をそのまま再現したい場合のコマンドを掲載する。
+
+辞書パス・音声モデルは第5部と同じ。各ファイルは 8kHz / mono / 16bit PCM。
+`fixed_*` は単純変換、`time_intro` / `001` / `002` は前後トリム付き。
+
+```bash
+# fixed_intro.wav（カーチャンク応答イントロ）
+echo "こちらは、ジェイジェイツーワイワイケー、おわりあさひ ディーエムアール デジピーターです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_intro.wav && sudo sox /tmp/temp_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_intro.wav
+
+# fixed_outro.wav（カーチャンク応答アウトロ）
+echo "カーチャンクです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_outro.wav && sudo sox /tmp/temp_outro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_outro.wav
+
+# time_intro.wav（時報イントロ・前後トリム）
+echo "こちらは、ジェイジェイツーワイワイケー、" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/time_intro.wav && sox /tmp/time_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/time_intro.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+
+# 001.wav（定時メッセージ1・前後トリム）
+echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。オープン、シーシーヴォイス、フォー、ディーブイスイッチからの音声です。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/001_raw.wav && sox /tmp/001_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/001.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+
+# 002.wav（定時メッセージ2・前後トリム）
+echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。ティージーアイエフ、ヨンヨンハチサンサンと、インターネット接続しています。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/002_raw.wav && sox /tmp/002_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/002.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+```
+
+確認:
+
+```bash
+ls -la /opt/dvswitch_bot/
+soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確認
+```
 
 ---
 
