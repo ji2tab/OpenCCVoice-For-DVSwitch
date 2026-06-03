@@ -1,11 +1,11 @@
-# DVSwitch + OpenCCVoice 自動音声応答システム 構築手順書（検証済み版）
+# DVSwitch + OpenCCVoice 自動音声応答システム 構築手順書（検証済み版 v2）
 
 **対象機:** Raspberry Pi Zero 2W
 **OS:** Raspberry Pi OS (Legacy, 32-bit) Lite — Debian Bookworm ベース
 **ホスト名:** OCV / **ユーザー:** ocv
 **コールサイン:** JJ2YYK（DMR ID 440239652）
 **接続先:** TGIF Network TG 44833
-**検証日:** 2026-06-02
+**初版検証日:** 2026-06-02 / **v2 追記日:** 2026-06-03
 
 ---
 
@@ -19,9 +19,19 @@
 
 ユーザー名は、配布ドキュメントでは `pi-star` だが、本機は `ocv` である。以下すべて `ocv` で記載する。別ユーザーで構築する場合は読み替えること。
 
+> **v2 での主な追記（2026-06-03 のトレースで判明）**
+> - **第4.5部** を新設：Quantar_Bridge ほかが Web ダッシュボードで「Does not exist」と
+>   表示される問題と、その対処（monit の httpd 設定有効化＋サービス起動）を追加した。
+>   これは OS 世代（Bookworm / trixie）に関係なく、DVSwitch インストール直後の素の状態で
+>   発生する。trixie のせいではない点に注意。
+> - **第1部** に、OS を Bookworm に固定するための sources.list 確認手順を追記した
+>   （誤って trixie へ上げないため）。
+> - **第1-1部** に、OS イメージ（bookworm 版）の直リンク（複数ミラー）と
+>   リンク切れ時の探し方、SHA256 照合手順を追記した。
+
 ---
 
-## 第0部：今回の構築で判明した「決定的な3点」
+## 第0部：今回の構築で判明した「決定的な点」
 
 後続の手順で詳述するが、再現時に必ず意識すべき急所を先に挙げる。
 
@@ -36,6 +46,16 @@
 3. ⚠️ **Open JTalk の辞書パスは `/var/lib/mecab/dic/open-jtalk/naist-jdic`。**
    配布ドキュメントの `/var/lib/mecab/dic/naist-jdic` では辞書が開けずエラーになる。
 
+4. ⚠️ **Web ダッシュボードの「Does not exist」は monit の httpd 無効が主因。**（v2 追記）
+   Quantar_Bridge などが「Does not exist」と出るのは、サービス未起動に加えて、
+   **monit の httpd（port 2812）がデフォルトでコメントアウト**されており、
+   monit のステータス問い合わせ自体が機能していないことが背景にある。第4.5部で対処する。
+
+5. ⚠️ **OS は Bookworm に固定する。**（v2 追記）
+   `apt upgrade` 自体ではディストリは上がらないが、sources.list が trixie を指していると
+   trixie に上がってしまい、monit などの挙動が手順書（Bookworm 前提）と食い違う。
+   第1部で sources.list が bookworm であることを必ず確認する。
+
 ---
 
 ## 第1部：OS 準備
@@ -44,19 +64,86 @@
 
 Raspberry Pi OS (Legacy, 32-bit) Lite を書き込み、起動。SSH 等で接続する。
 
+Raspberry Pi Imager では **「Raspberry Pi OS Lite (Legacy, 32-bit)」**
+（"A port of Debian Bookworm ..." と表示されるもの）を選ぶ。"Legacy" の付かない
+最新版は trixie の可能性があるため注意。
+
+#### OS イメージ直リンク（v2 追記）
+
+Pi Imager のラインナップから取れなくなった場合に備え、イメージの直リンクを控えておく。
+本検証で使用したのは **`2025-05-13-raspios-bookworm-armhf-lite.img.xz`**（約 493MB）。
+**ファイル名に `bookworm` が含まれるもの**を必ず選ぶこと（`trixie` 版は手順書とズレる）。
+
+ミラー（いずれか到達できるものを使う。JAIST は国内で高速）:
+
+```
+# JAIST（北陸先端大）ミラー — 国内・高速
+https://ftp.jaist.ac.jp/pub/raspberrypi/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz
+
+# 山形大ミラー
+https://ftp.yz.yamagata-u.ac.jp/pub/linux/raspberrypi/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz
+
+# 公式（Raspberry Pi 財団）
+https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz
+```
+
+チェックサム（同ディレクトリの `.sha256` ファイル）:
+
+```
+# JAIST
+https://ftp.jaist.ac.jp/pub/raspberrypi/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz.sha256
+```
+
+> **【リンク切れ時の探し方】** 上記の固定リンクは将来失効しうる。その場合は
+> 各ミラーの **`raspios_lite_armhf/images/`** 配下に入り、日付フォルダの中から
+> **ファイル名に `bookworm` を含む** `...-armhf-lite.img.xz` を選ぶ。
+> - `raspios_lite_armhf/` … stable（時期により bookworm → 将来 trixie に変わりうる）
+> - `raspios_oldstable_lite_armhf/` … oldstable（現状 bullseye）
+> 「Legacy=Bookworm」が欲しいので、**stable 側に bookworm がある間はそちら**、
+> stable が trixie に切り替わった後は **oldstable 側で bookworm を探す**ことになる。
+
+ダウンロード後（任意だが推奨）、SHA256 を照合してから書き込む:
+
+```bash
+# 例（Linux/Mac）。.sha256 ファイルと同じ場所で実行
+sha256sum -c 2025-05-13-raspios-bookworm-armhf-lite.img.xz.sha256
+# Windows: certutil -hashfile 2025-05-13-raspios-bookworm-armhf-lite.img.xz SHA256
+```
+
 ```bash
 uname -a
 # Linux OCV 6.12.x+rpt-rpi-v7 ... armv7l を確認
 ```
 
-### 1-2. システム更新 ✅
+### 1-2. 🔴 sources.list が bookworm であることを確認（v2 追記） ✅
+
+`apt upgrade` の前に、リポジトリが bookworm を指していることを確認する。
+ここが trixie になっていると、後続のアップグレードで OS 世代が上がってしまう。
+
+```bash
+grep -rE "bookworm|trixie" /etc/apt/sources.list /etc/apt/sources.list.d/
+```
+
+出力がすべて `bookworm` であること（`trixie` が一つも無いこと）を確認する。
+併せて OS コードネームも確認しておく:
+
+```bash
+cat /etc/os-release | grep VERSION_CODENAME    # bookworm であること
+```
+
+### 1-3. システム更新 ✅
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo reboot
 ```
 
-再起動後、カーネルが更新版（本検証では 6.12.87）で立ち上がることを確認する。
+再起動後、カーネルが更新版（本検証では 6.12.87）で立ち上がること、
+`apt update` の出力に **bookworm のみ**が出て **trixie が出ない**ことを確認する。
+
+```bash
+uname -a && cat /etc/os-release | grep VERSION_CODENAME
+```
 
 ---
 
@@ -110,7 +197,7 @@ sudo systemctl list-units --all | grep -E "analog|mmdvm|md380|bridge|dvswitch|we
 
 **症状:** TGIF 等から実際に信号が入り AMBE デコードが走った瞬間、
 `md380-emu.service: Main process exited, code=killed, status=11/SEGV` を吐いて
-auto-restart を無限に繰り返す。
+auto-restart を無限に繰り返す。インストール直後は `activating (auto-restart)` の表示になる。
 
 **原因:** Bookworm 標準の **qemu-user-static 7.2.x** が md380-emu の ARM バイナリと非互換。
 Bullseye の **qemu 5.2.x** では正常動作する（同一 Zero 2W の Bullseye 実機で実績あり）。
@@ -137,6 +224,12 @@ sudo systemctl restart md380-emu
 sudo systemctl status md380-emu --no-pager   # active (running) を確認
 
 qemu-arm-static --version    # qemu-arm version 5.2.x になっていること
+```
+
+一括版（トレースで実際に通したワンライナー）:
+
+```bash
+wget http://archive.raspbian.org/raspbian/pool/main/q/qemu/qemu-user-static_5.2+dfsg-11+deb11u5_armhf.deb -O /tmp/qemu52.deb && sudo systemctl stop md380-emu && sudo dpkg -i /tmp/qemu52.deb && sudo apt-mark hold qemu-user-static && sudo chmod +x /opt/md380-emu/md380-emu && sudo systemctl restart md380-emu && sleep 3 && sudo systemctl status md380-emu --no-pager && qemu-arm-static --version
 ```
 
 > 🔴 **この節の「必須操作」は 2 つある。両方やらないと md380-emu は動かない。**
@@ -174,6 +267,133 @@ sudo systemctl restart apache2
 Monit 監視画面は `http://<IP>:2812/`。
 
 > **補足:** Zero 2W + SDカードでは初回表示が重い。`top` で `wa`(I/O待ち) が高い場合は SD のランダムアクセス遅延が主因。サービスを止めるより、まず全サービスを正常稼働させてから判断する。
+
+---
+
+## 第4.5部：Web ダッシュボードの「Does not exist」対処（v2 新設）
+
+### 4.5-0. 症状と背景
+
+DVSwitch ダッシュボード（`http://<IP>/` および `:2812`）で、特定のプロセス
+（典型的には **Quantar_Bridge**）が **「Does not exist」**（赤字）と表示される。
+
+この症状には **2 つの独立した原因**が重なっている。**OS 世代（Bookworm でも trixie でも）に
+関係なく、DVSwitch インストール直後の素の状態で発生する**。
+
+1. 🔴 **monit の httpd（port 2812）がデフォルトで無効。**
+   `/etc/monit/monitrc` の httpd 設定ブロック（おおむね 159〜162 行）が
+   コメントアウトされている。このため `sudo monit status` を実行すると
+   **`Error receiving data -- Connection reset by peer`** となり、monit への
+   ステータス問い合わせ自体が成立しない。ダッシュボードの表示元もここなので
+   「Does not exist」のままになる。
+
+2. ⚠️ **当該サービスが disabled・未起動。**
+   `quantar-bridge` パッケージはインストールされていても、`quantar_bridge.service` が
+   `disabled` かつ未起動のことがある。プロセスが存在しないので、当然「Does not exist」になる。
+
+> **【誤解の整理】** v1 検証時は trixie に上がった環境で初めてこの症状に気づいたため
+> 「trixie のせい」と疑ったが、Bookworm のクリーン環境でも**同様に発生**することを
+> 2026-06-03 のトレースで確認した。原因は OS 世代ではなく、上記 2 点である。
+
+### 4.5-1. monit のステータス確認（症状の確認） ✅
+
+```bash
+sudo monit status
+```
+
+`Error receiving data -- Connection reset by peer` が出れば、httpd が無効。
+次節で有効化する。
+
+### 4.5-2. 🔴 monit httpd 設定の有効化 ✅
+
+まず現状の該当行を確認する（行番号は環境で多少前後する）:
+
+```bash
+sudo grep -nE "set httpd|use address|allow localhost|allow admin" /etc/monit/monitrc
+```
+
+標準状態では以下のように 4 行ともコメントアウトされている:
+
+```
+159:#set httpd port 2812 and
+160:#    use address localhost  # only accept connection from localhost ...
+161:#    allow localhost        # allow localhost to connect to the server and
+162:#    allow admin:monit      # require user 'admin' with password 'monit'
+```
+
+この 4 行を、**LAN 内からパスワードなしでアクセスできる**設定に置き換える。
+行番号指定でまとめて書き換えるのが確実（`grep` で確認した実際の行番号に合わせること）:
+
+```bash
+sudo sed -i '159,162c\
+set httpd port 2812 and\
+    use address 0.0.0.0\
+    allow localhost\
+    allow 192.168.1.0/24' /etc/monit/monitrc
+```
+
+書き換え結果を確認:
+
+```bash
+sudo sed -n '159,162p' /etc/monit/monitrc
+```
+
+期待する内容:
+
+```
+set httpd port 2812 and
+    use address 0.0.0.0
+    allow localhost
+    allow 192.168.1.0/24
+```
+
+> ⚠️ **`use address localhost` のままにしない。**
+> `use address localhost` だと monit は **127.0.0.1 のみで listen** するため、
+> 外部 IP（例 `http://192.168.1.74:2812/`）からアクセスできなくなる。
+> 全インターフェースで受けるには **`use address 0.0.0.0`** にする。
+
+> ⚠️ **`allow` 行の意味。**
+> - `allow localhost` … ローカルからの接続許可。
+> - `allow 192.168.1.0/24` … LAN セグメントからの接続許可（**パスワードなし**）。
+> - `allow admin:monit` … Basic 認証（ユーザー admin / パスワード monit）を要求。
+> パスワード認証を残したい場合は、`allow 192.168.1.0/24` を入れず
+> `allow admin:monit` を有効にする。セキュリティ的にはこちらが本来望ましい。
+> 本手順は LAN 内運用を前提にパスワードなし（`allow 192.168.1.0/24`）を採用している。
+> LAN セグメントが 192.168.1.0/24 でない場合は自環境に合わせて変更すること。
+
+### 4.5-3. 🔴 サービスの起動＋自動起動有効化 ✅
+
+「Does not exist」だったサービスを起動し、再起動後も自動で上がるようにする。
+（Quantar_Bridge の例。他サービスも同様に systemd ユニット名で指定する）
+
+```bash
+sudo systemctl enable --now quantar_bridge
+```
+
+### 4.5-4. monit 再起動・reload・確認 ✅
+
+monit を再起動し、設定を reload してからステータスを確認する。
+**monit はデータ収集に少し時間がかかる**ため、`reload` 後に十数秒待ってから確認する
+（待たずに見ると、起動済みでも一時的に「Does not exist」と出ることがある）。
+
+```bash
+sudo systemctl restart monit && sleep 8 && sudo monit reload && sleep 12 && sudo monit status Quantar_Bridge
+```
+
+`status  OK` と表示されれば成功。ダッシュボード（`http://<IP>:2812/`）でも
+当該プロセスが緑の「OK」になり、パスワードなしで開けるようになる。
+
+> **【トレース時のハマりどころ】**
+> - `monit reload` 直後は `data collected` の時刻が古いまま「Does not exist」に
+>   見えることがある。十数秒待って再度 `monit status` すると `OK` になる。
+> - `use address localhost` を有効にしてしまうと `:2812` が外部から見えなくなる。
+>   この場合は `use address 0.0.0.0` に直して `sudo monit reload`。
+
+### 4.5-5. （任意）他プロセスが「Does not exist」の場合
+
+Quantar_Bridge 以外（例えば未使用モードのゲートウェイ）が「Does not exist」でも、
+**使う予定がなければ無害**。ただし「動いていなくてよい」と片付けず、必要なものは
+本節と同じ手順（サービス `enable --now` ＋ monit reload）で確実に起動・監視下に置く。
 
 ---
 
@@ -399,7 +619,7 @@ TGIF TG 44833 で音声が出れば**経路開通**。本検証ではここま�
 
 ### 8-3. 🔴 md380-emu SEGV の最終確認 ✅
 
-第3-3部でダウングレードした qemu の効果を、ここで**実際のデコードを走らせて確定**する。
+第3-2部でダウングレードした qemu の効果を、ここで**実際のデコードを走らせて確定**する。
 この送信テスト（および TGIF から実信号を受けたとき）に
 `md380-emu.service: ... status=11/SEGV` が**出ないこと**を確認する。
 
@@ -466,6 +686,9 @@ sudo systemctl status dvswitch-bot
 | qemu-user-static | （記載なし） | 5.2 へダウングレード＋hold | 🔴 |
 | Apache DocumentRoot | （記載なし） | /usr/share/dvswitch | ⚠️ |
 | 送信 TG | （環境依存） | txTg / exportTG = 44833 | 🔴 |
+| **monit httpd（:2812）** | **（記載なし）** | **デフォルト無効。有効化が必要（第4.5部）** | **🔴**（v2追記） |
+| **Quantar_Bridge 等のサービス** | **（記載なし）** | **disabled・未起動。`enable --now` が必要（第4.5部）** | **🔴**（v2追記） |
+| **OS 世代** | **（記載なし）** | **bookworm に固定。sources.list 確認（第1部）** | **⚠️**（v2追記） |
 
 ## 付録B：トラブルシューティング早見表
 
@@ -477,6 +700,10 @@ sudo systemctl status dvswitch-bot
 | `http://<IP>/` が Apache 既定ページ | DocumentRoot 未変更 | `/usr/share/dvswitch` に変更 |
 | 音声は出るが TG が 4000 に戻る | TGIF 側 Static 未設定 | TGIF ダッシュボードで 44833 を Static 登録 |
 | ボット音声が無音 | md380-emu 停止 or Analog_Bridge 設定 | md380-emu 稼働確認、USRP ポート確認 |
+| **ダッシュボードで Quantar_Bridge 等が「Does not exist」** | **monit httpd 無効＋サービス未起動** | **第4.5部：monitrc の httpd 有効化＋`systemctl enable --now`＋`monit reload`** |
+| **`sudo monit status` が `Connection reset by peer`** | **monit httpd（:2812）がコメントアウト** | **monitrc の httpd ブロックを有効化（第4.5-2）** |
+| **`:2812` が外部 IP から開けない** | **`use address localhost` になっている** | **`use address 0.0.0.0` に変更して `sudo monit reload`** |
+| **`monit reload` 後も「Does not exist」のまま** | **monit のデータ収集待ち** | **十数秒待って再度 `sudo monit status`** |
 
 ## 付録C：固定 WAV の個別コマンド生成（検証済み文面）
 
@@ -513,167 +740,5 @@ soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確�
 
 ---
 
-*作成: 2026-06-02 / 対応 bot: dvswitch_bot158.py V1.58 / 実機: OCV (Zero 2W, Bookworm 32-bit)*
-
-
-
-
-# 別資料：公式マニュアル（DVSwitch_install.pdf）との差分
-
-> 🔒 **取り扱い注意：本資料は公開しない（個人検証用）。**
-> md380-emu のソース／ファームウェアに関する記述を含み、ライセンス上の懸念があるため。
-
-**対象:** 公式 `DVSwitch_install.pdf` の **Appendix E: Installing DVSwitch on an existing Linux installation**
-**今回の環境:** Raspberry Pi Zero 2W / Raspberry Pi OS (Legacy, 32-bit) Lite — **Debian Bookworm** ベース
-**主旨:** 本手順書が公式マニュアルと異なる箇所と、その**根本原因**を整理する。
-
----
-
-## 結論：差分の本質は「OS が Bookworm である」こと
-
-公式 Appendix E は **Buster（Debian 10）** を前提に書かれている。
-本手順は **Bookworm（Debian 12）** で実施したため、インストーラ名・互換性対応で差が出た。
-差分のほとんどは Bookworm 世代に由来する。
-
----
-
-## 公式 Appendix E の手順（原文の要旨）
-
-```bash
-wget http://dvswitch.org/buster
-sudo chmod +x buster
-sudo ./buster
-sudo apt-get update
-sudo apt-get install dvswitch-server
-# インストール完了後 reboot
-# ターミナルで "dvs" を実行して設定メニューへ
-```
-
----
-
-## 差分一覧
-
-| 項目 | 公式 Appendix E（Buster 前提） | 今回（Bookworm） | 根本原因 |
-|---|---|---|---|
-| インストーラ名 | `wget http://dvswitch.org/buster` | `wget http://dvswitch.org/bookworm` | OS 世代の違い。Bookworm 機に `buster` を使うと Buster 前提のリポジトリ設定が入り不整合の恐れ |
-| 実行ビット付与 | `sudo chmod +x buster` | `chmod +x bookworm` | 同一（ファイル名のみ差） |
-| インストーラ実行 | `sudo ./buster` | `sudo ./bookworm` | 同一（ファイル名のみ差） |
-| パッケージ導入 | `sudo apt-get install dvswitch-server` | `sudo apt install dvswitch-server -y` | 実質同一 |
-| 設定メニュー起動 | `dvs`（PATH 前提） | `/usr/local/dvs/dvs`（フルパス） | 本環境では `dvs` 単体が `command not found`。PATH 未通のためフルパスで実行 |
-| md380-emu の qemu | **記載なし**（Buster の qemu 5.2 で問題が出ない） | qemu 5.2 へ**ダウングレード＋hold が必須** | 🔴 Bookworm 標準の qemu 7.2 が md380-emu と非互換で SEGV |
-
----
-
-## なぜ公式には qemu 対策が載っていないのか
-
-公式 Appendix E は Buster 環境を想定している。
-**Buster 標準の qemu-user-static は 5.2 系**であり、md380-emu の ARM バイナリと問題なく動く。
-そのため公式手順には qemu に関する記述が一切ない。
-
-一方 **Bookworm の qemu-user-static は 7.2 系**で、md380-emu が実際の AMBE デコード時に
-`status=11/SEGV` でクラッシュする。これは公式マニュアルが**想定していない世代差**から生じた
-トラブルであり、本手順書が独自に対策（5.2 へダウングロード＋`apt-mark hold`）を加えた最大の理由。
-
-> 同一の Zero 2W でも、Bullseye（Debian 11, qemu 5.2）で動作していた実機があった事実が、
-> 「qemu のバージョンが原因」という切り分けの決め手になった。
-
-### 技術的根拠（Debian バグ報告で裏付け）
-
-この現象は本案件固有の偶発事故ではなく、**Debian の既知の不具合**として複数報告されている。
-
-- **Debian Bug #1014177**（qemu-user-static: QEMU aarch64 user mode emulation always segfaults）
-  「QEMU のユーザーモードエミュレーションは Bullseye の qemu 5.2 では正常動作するが、
-  bookworm 系（qemu 7.2）では segfault する」という趣旨の報告。今回の
-  「5.2 で動く／7.2 で SEGV」という観察と一致する。
-
-- **Debian Bug #1053101**（qemu-user-static: segfault when running ... certain static binaries / qemu 7.2+dfsg-7+deb12u2）
-  より具体的な原因分析。**完全に静的リンクされた qemu エミュレータ自身が `0x00040000`
-  にマップされ、ターゲット側の静的実行ファイルが同じ `0x00040000` にマップしようとした際、
-  qemu がそのアドレスを変換しないため SIGSEGV が発生する**と報告。原因は
-  **PIE（位置独立実行ファイル）の扱い**にあると見られている。
-
-**なぜ md380-emu がこれを踏むのか:**
-md380-emu は travisgoodspeed/md380tools 由来で、**MD380 ファームウェアを特定アドレスの
-メモリにリンクした静的 32bit ARM 実行ファイル**であり、binfmt 経由で qemu 上で動く
-（公式 Wiki の記述より）。すなわち「固定アドレスにマップする静的 ARM バイナリを qemu で動かす」
-という、#1053101 が指摘するアドレス衝突パターンそのものに該当する。
-
-**結論:**
-SEGV は md380-emu のビルド不良が単独原因ではなく、**qemu 7.2 系ユーザーモードの
-静的バイナリ／PIE アドレスマッピングの問題が主因**で、md380-emu の「固定アドレスに
-マップする静的 ARM バイナリ」という性質がそれを顕在化させた、両者の組み合わせ問題。
-Buster/Bullseye の qemu 5.2 系ではこの問題が顕在化しないため、5.2 へのダウングレードが
-有効な回避策となる。
-
-> 一次情報を辿る場合は Debian BTS で上記バグ番号（#1014177 / #1053101）を参照。
-> 将来 qemu 側で修正版が bookworm に入れば、ダウングレードは不要になる可能性がある。
-
----
-
-## 設定メニュー `dvs` について
-
-公式は `dvs`（引数なし）で起動と記載。これは PATH が通っている、または
-ダッシュボード導入時にリンクが張られる前提と思われる。
-本環境では `sudo dvs` が `command not found` になったため、実体のフルパス
-**`/usr/local/dvs/dvs`** を直接実行した。機能は同一。
-
----
-
-## md380-emu のソースと「環境に合わせた再ビルド」について
-
-### ⚠️ 取り扱い注意（公開禁止）
-
-本節および本資料・関連成果物は **公開しない**。
-md380-emu は **TYT MD380 ハンディ機のファームウェアを内部に取り込んでビルド**される
-性質上、ファームウェア由来コードの再配布にライセンス上の懸念があるためである。
-ビルド成果物・ファームウェアイメージを含むものは外部に出さず、個人の検証範囲に留める。
-
-### ソースのありか
-
-- ソースは **`travisgoodspeed/md380tools`** リポジトリの `emulator/` 配下
-  （`md380-emu.c` / `ambe.c` ほか）。これが大元。
-- DVSwitch が deb で配るバイナリ（OCV に入った 2025-09-09 版など）は、
-  この大元ソースを DVSwitch 側がビルドして
-  `dvswitch.org/ASL_Repository/...` 等で配布しているもの。
-- ロジックは 2018 年頃から本質的に変わっておらず、「新しくなって qemu 7.2 問題が
-  解消された版」は本調査時点（2026-06）では確認できなかった。
-
-### ソースだけではビルドできない
-
-Makefile は、コンパイル済みオブジェクトに加えて
-**MD380 ファームウェアイメージ（D002.032）とコアダンプ（d02032-core）を
-`objcopy` で固定アドレスに焼き込んでリンク**する構造になっている。
-すなわち AMBE コーデックの実体はファームウェア内にあり、ソースはそれを呼び出す殻に近い。
-したがって再ビルドには **MD380 ファームウェア本体の入手・展開**が前提になる
-（ここがライセンス上の懸念点でもある）。
-ビルド環境も古く、公式 Wiki は **gcc-6-arm-linux-gnueabi**（Bookworm 標準には無い）と
-qemu を備えた Debian/Testing を指定している。
-
-### 🔴 再ビルドしても qemu 7.2 問題は解決しない見込み
-
-最重要点。md380-emu は設計上、ファームウェアを `0x0800C000`、SRAM を `0x20000000` という
-**固定アドレスにマップ**する（`md380-emu.c` の `mapimage()`）。
-これは前述の Debian Bug #1053101 が指摘する「静的バイナリの固定アドレス衝突」を
-踏みやすい構造そのもの。**同じソースを環境に合わせて再ビルドしても、この固定アドレス設計が
-変わらない限り qemu 7.2 では同じ SEGV を踏む公算が大きい。**
-よって「環境に合わせた再ビルド」は qemu 7.2 問題の解決策にはならない。
-
-### 現実的な選択肢
-
-1. **qemu 5.2 へダウングレード（今回採用）** — 最も確実。ソースもファームも触らない。
-2. ハードウェア AMBE ドングル（ThumbDV / DV3000 等）へ移行 — qemu を介さない。別途コストと設定。
-3. 別系統のソフトデコーダ（mbelib 系）へ移行 — ライセンス・音質の論点が別途発生。
-
----
-
-## まとめ
-
-- 公式 Appendix E は **Buster 前提**。Bookworm で実施する場合、インストーラ名は **`bookworm`** を使う。
-- 公式が触れていない **qemu 7.2 → 5.2 ダウングレード** が Bookworm では事実上必須（md380-emu の SEGV 回避）。
-- md380-emu の**再ビルドは qemu 7.2 問題の解にならない**（固定アドレス設計のため）。ソース／ファームはライセンス上の懸念があり**公開しない**。
-- 設定メニューは公式の `dvs` ＝本環境の `/usr/local/dvs/dvs`。PATH の差。
-- それ以外（chmod、apt install、reboot の流れ）は公式と実質同一。
-
----
-
-*作成: 2026-06-02 / 本体手順書「DVSwitch_OpenCCVoice_構築手順書.md」の補足資料 / 実機: OCV (Zero 2W, Bookworm 32-bit)*
+*初版作成: 2026-06-02 / v2 更新: 2026-06-03（第4.5部 Quantar_Bridge 対処、第1部 OS固定確認を追記）*
+*対応 bot: dvswitch_bot158.py V1.58 / 実機: OCV (Zero 2W, Bookworm 32-bit)*
