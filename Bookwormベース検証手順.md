@@ -5,7 +5,7 @@
 **ホスト名:** OCV / **ユーザー:** ocv
 **コールサイン:** JJ2YYK（DMR ID 440239652）
 **接続先:** TGIF Network TG 44833
-**初版検証日:** 2026-06-02 / **v2 追記日:** 2026-06-03
+**初版検証日:** 2026-06-02 / **v2 追記日:** 2026-06-03 / **v3 追記日:** 2026-06-04
 
 ---
 
@@ -28,6 +28,14 @@
 >   （誤って trixie へ上げないため）。
 > - **第1-1部** に、OS イメージ（bookworm 版）の直リンク（複数ミラー）と
 >   リンク切れ時の探し方、SHA256 照合手順を追記した。
+>
+> **v3 での主な変更（2026-06-04 のトレースで判明）**
+> - **第7部** を `dvs_config.sh`（対話設定ツール）による一括設定に置き換えた。
+>   従来の手動 ini 編集は **付録 D** に移動した。TGIF ログイン確認手順も追加。
+> - **第6-4部** の `create_wav.sh` の取得 URL を修正（旧 `reate_wav.sh` は 404。
+>   リポジトリ側で `create_wav.sh` にリネームされた）。
+> - リポジトリに **`dvswitch_bot160.py`（V1.60）** が追加されていることを確認
+>   （本手順書は引き続き V1.58 を対象とする）。
 
 ---
 
@@ -493,11 +501,17 @@ SoX の使い分け（単純変換／前後トリム）はスクリプト内に�
 
 ```bash
 cd ~
-# ※リポジトリ上のファイル名が "reate_wav.sh" のため URL に注意（先頭 c 欠落の表記）
-wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/reate_wav.sh -O create_wav.sh
+wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/create_wav.sh -O create_wav.sh
 chmod +x create_wav.sh
 sudo ./create_wav.sh
 ```
+
+> ⚠️ **【v3 修正】ファイル名は `create_wav.sh`。**
+> 初版検証時はリポジトリ上のファイル名が `reate_wav.sh`（先頭 c 欠落）だったが、
+> 2026-06-04 のトレース時点で **`create_wav.sh` にリネーム**されていた。
+> 旧 URL（`reate_wav.sh`）は **404** になる。最新のファイル名はリポジトリ直下で
+> `curl -s https://api.github.com/repos/ji2tab/OpenCCVoice-For-DVSwitch/contents/ | grep '"name"'`
+> で確認できる。
 
 対話入力の流れ:
 
@@ -532,54 +546,95 @@ soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確�
 
 ---
 
-## 第7部：DVSwitch 側の経路・TG 設定
+## 第7部：DVSwitch 側の経路・TG 設定（`dvs_config.sh` で実施）
 
 音声の流れ:
 **ボット → (USRP 51000) → Analog_Bridge → (TLV) → MMDVM_Bridge → TGIF**
 
-### 7-1. ⚠️ Analog_Bridge.ini（USRP / 送信 TG） ✅
+DVSwitch 側の設定（コールサイン／DMR ID／TGIF パスワード／送信 TG／USRP ポート等）は、
+GitHub の対話ツール **`dvs_config.sh`** で一括設定する。
+**従来の手動 ini 編集は付録 D に移した**（手動で行いたい場合や、スクリプトが想定外の
+ini 構成に当たった場合の参照用）。
 
-`/opt/Analog_Bridge/Analog_Bridge.ini`
+### 7-1. 🔴 dvs_config.sh の取得と実行 ✅
 
-```ini
-[USRP]
-address = 127.0.0.1
-txPort = 51001        ; Analog_Bridge → 外部（USRP送信）
-rxPort = 51000        ; 外部 → Analog_Bridge（ボットはここへ送る）
+```bash
+cd ~
+wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_config.sh
+chmod +x dvs_config.sh
+cat dvs_config.sh    # 中身を確認してから実行する
+sudo ./dvs_config.sh
 ```
 
-🔴 `[AMBE_AUDIO]` セクションの送信 TG:
+このツールがすること:
 
-```ini
-[AMBE_AUDIO]
-txTg = 44833          ; ★ボット音声が乗る DMR TG（最重要）
-txTs = 2
-colorCode = 1
+- 編集前に **`/opt/bak/YYMMDDHHMMSS/`** へ 3 つの ini を自動バックアップ
+  （`MMDVM_Bridge.ini` / `DVSwitch.ini` / `Analog_Bridge.ini`）
+- 対話入力 5 項目：`callsign` / `dmrid(7桁)` / `essid(2桁)` / `tgifpassword` / `txtgif`
+- 固定セット：
+  - MMDVM `[DMR] Enable=1`、`[DMR Network] Enable=1`、`Address=tgif.network`
+  - Analog `[USRP] txPort=51001` / `rxPort=51000` / `usrpAudio=AUDIO_USE_GAIN` / `tlvAudio=AUDIO_USE_GAIN`
+- `Id`（MMDVM）と `repeaterID`（Analog）は **dmrid(7桁) + essid(2桁)** で組み立てる
+- `gatewayDmrId`（Analog）は dmrid(7桁) をセット
+
+オプション:
+
+```bash
+sudo ./dvs_config.sh -r     # バックアップから復元（日付フォルダを選択）
+sudo ./dvs_config.sh -d     # /opt/bak/ 配下のバックアップを全削除
+sudo ./dvs_config.sh -h     # ヘルプ
 ```
 
-> **補足（未反映・要検討）:** `gatewayDmrId` / `repeaterID` がデフォルト値
-> （4401378 / 440137811）のままだった。JJ2YYK 運用に厳密に合わせるなら
-> 4402396 / 440239652 への変更を検討する。本検証では変更せず送信成功している。
+### 7-2. 対話入力の値（本トレースの実績値）
 
-### 7-2. DVSwitch.ini（DMR exportTG） ✅
+| 項目 | 入力例（本トレース） | 備考 |
+|---|---|---|
+| Callsign | `JI2TAB` | 自局コールサイン |
+| DMR ID(7桁) | `4401378` | |
+| ESSID(2桁) | `11` | |
+| TGIF Password | （TGIF アカウントの値） | TGIF サイトで発行したもの |
+| 送信 TG（txTg） | `44833` | ボット音声が乗る DMR TG |
 
-`/opt/MMDVM_Bridge/DVSwitch.ini` の `[DMR]`:
+確認画面で内容を確認し、`y` で保存。`/opt/bak/...` にバックアップが取られ、
+3 ファイルに値が書き込まれる。
 
-```ini
-[DMR]
-address = 127.0.0.1
-exportTG = 44833      ; ★エクスポート TG を 44833 に
-```
-
-### 7-3. 設定反映 ✅
+### 7-3. 🔴 設定反映（サービス再起動）と TGIF ログイン確認 ✅
 
 ```bash
 sudo systemctl restart analog_bridge mmdvm_bridge
 ```
 
+TGIF への DMR ログインが成功したかをログで確認する。**MMDVM_Bridge のログは
+journal ではなく日付別ログファイル**（`/var/log/mmdvm/MMDVM_Bridge-YYYY-MM-DD.log`）
+に出る点に注意:
+
+```bash
+sudo tail -40 /var/log/mmdvm/MMDVM_Bridge-$(date +%Y-%m-%d).log
+```
+
+末尾付近に次の行が出ていればログイン成功:
+
+```
+DMR, Logged into the master successfully: tgif.network:62031
+```
+
+### 7-4. ⚠️ dvs_config.sh が触らない項目（要手動確認）
+
+`dvs_config.sh` は **`DVSwitch.ini` を変更しない**（バックアップのみ）。
+手順書初版（付録 D）で設定していた `DVSwitch.ini` の `exportTG` は、必要に応じて
+別途確認する:
+
+```bash
+grep -i "exportTG" /opt/MMDVM_Bridge/DVSwitch.ini
+```
+
+本トレースでは `txTg=44833`（Analog 側）で送信経路が確立し、ログインも成功している。
+`exportTG` の扱いは送信経路に直接影響しなかったが、受信や TG の扱いを厳密にしたい場合は
+付録 D の記述を参照して確認する。
+
 > **TGIF が 4000 に戻る件:** TGIF Network 側のダッシュボードで TG を指定しても、
 > Static 設定がないと一定時間でデフォルト（4000）へ戻る。
-> 送信側（ローカル）の TG は `txTg` / `exportTG` = 44833 で決まる。
+> 送信側（ローカル）の TG は `txTg` = 44833 で決まる。
 > 受信を継続したい場合は TGIF ダッシュボードで 44833 を Static 登録すること。
 
 ---
@@ -689,6 +744,8 @@ sudo systemctl status dvswitch-bot
 | **monit httpd（:2812）** | **（記載なし）** | **デフォルト無効。有効化が必要（第4.5部）** | **🔴**（v2追記） |
 | **Quantar_Bridge 等のサービス** | **（記載なし）** | **disabled・未起動。`enable --now` が必要（第4.5部）** | **🔴**（v2追記） |
 | **OS 世代** | **（記載なし）** | **bookworm に固定。sources.list 確認（第1部）** | **⚠️**（v2追記） |
+| **DVSwitch 側設定** | **手動 ini 編集** | **`dvs_config.sh` で一括設定（第7部）。手動は付録D** | **⚠️**（v3変更） |
+| **create_wav.sh の URL** | **`reate_wav.sh`** | **`create_wav.sh` にリネーム（旧URLは404）** | **⚠️**（v3修正） |
 
 ## 付録B：トラブルシューティング早見表
 
@@ -740,5 +797,76 @@ soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確�
 
 ---
 
-*初版作成: 2026-06-02 / v2 更新: 2026-06-03（第4.5部 Quantar_Bridge 対処、第1部 OS固定確認を追記）*
-*対応 bot: dvswitch_bot158.py V1.58 / 実機: OCV (Zero 2W, Bookworm 32-bit)*
+## 付録D：DVSwitch 側 ini の手動編集（旧第7部・参照用）
+
+第7部は `dvs_config.sh` による一括設定を本手順とした。
+ここでは、スクリプトを使わず手動で ini を編集する場合、またはスクリプトが
+想定外の ini 構成に当たって `[WARN] キー ... が見つからず変更できません` を出した
+場合の参照用に、初版で行っていた手動設定を残す。
+
+各値は環境に合わせて読み替えること（本例では送信 TG = 44833）。
+
+### D-1. Analog_Bridge.ini（USRP / 送信 TG）
+
+`/opt/Analog_Bridge/Analog_Bridge.ini`
+
+```ini
+[USRP]
+address = 127.0.0.1
+txPort = 51001        ; Analog_Bridge → 外部（USRP送信）
+rxPort = 51000        ; 外部 → Analog_Bridge（ボットはここへ送る）
+```
+
+`[AMBE_AUDIO]` セクションの送信 TG:
+
+```ini
+[AMBE_AUDIO]
+txTg = 44833          ; ★ボット音声が乗る DMR TG（最重要）
+txTs = 2
+colorCode = 1
+```
+
+> **補足:** `gatewayDmrId` / `repeaterID` は運用するコールサイン／DMR ID に合わせる。
+> `dvs_config.sh` はこの 2 つを dmrid(7桁) / dmrid+essid で自動設定する。
+
+### D-2. DVSwitch.ini（DMR exportTG）
+
+`/opt/MMDVM_Bridge/DVSwitch.ini` の `[DMR]`:
+
+```ini
+[DMR]
+address = 127.0.0.1
+exportTG = 44833      ; ★エクスポート TG
+```
+
+> ⚠️ **`dvs_config.sh` はこの `DVSwitch.ini` を変更しない**（バックアップのみ）。
+> exportTG を明示的に設定したい場合は、この付録に従って手動で編集する。
+
+### D-3. MMDVM_Bridge.ini（TGIF 接続）
+
+`dvs_config.sh` を使わない場合、TGIF への DMR 接続情報も手動で設定する:
+
+```ini
+[DMR]
+Enable=1
+
+[DMR Network]
+Enable=1
+Address=tgif.network
+Password=（TGIF のパスワード）
+```
+
+`[General]` の `Callsign` と `Id`（dmrid + essid）も自局の値にする。
+
+### D-4. 設定反映
+
+```bash
+sudo systemctl restart analog_bridge mmdvm_bridge
+```
+
+---
+
+*初版作成: 2026-06-02*
+*v2 更新: 2026-06-03（第4.5部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
+*v3 更新: 2026-06-04（第7部を dvs_config.sh ベースに変更し手動編集を付録Dへ移動、create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加）*
+*対応 bot: dvswitch_bot158.py V1.58（リポジトリに V1.60=dvswitch_bot160.py も存在）/ 実機: OCV (Zero 2W, Bookworm 32-bit)*
