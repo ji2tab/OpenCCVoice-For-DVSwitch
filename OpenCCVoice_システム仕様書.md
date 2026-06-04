@@ -48,37 +48,37 @@
 
 電波が入ってから音声で応答が返るまで、データは次のように流れます。
 
-```
-┌─────────────┐   電波(DMR)
-│  無線機・他局     │ ───────────┐
-└─────────────┘            │
-                              ▼
-                    ┌──────────────────┐
-                    │ TGIF ネットワーク (インターネット) │
-                    └──────────────────┘
-                              │ DMR (UDP 62031)
-                              ▼
-        ┌──────────────────────────────────┐
-        │            Raspberry Pi (ホスト名 OCV)             │
-        │                                                    │
-        │  ┌────────────┐    ┌─────────────┐    │
-        │  │ MMDVM_Bridge   │◀──▶│ Analog_Bridge   │    │
-        │  │ (DMR ⇔ 内部)    │TLV │ (内部 ⇔ 音声)    │    │
-        │  └────────────┘    └─────────────┘    │
-        │        │ ログ出力              ▲   ▲           │
-        │        │ /var/log/mmdvm       │   │ USRP      │
-        │        ▼                      │   │ (UDP      │
-        │  ┌────────────┐            │   │  51000)   │
-        │  │ dvswitch_bot.py │────────────┘   │           │
-        │  │ (ログ監視 → 応答) │  音声を生成して注入        │
-        │  └────────────┘                │           │
-        │        │ 音声合成                    │           │
-        │        ▼                            │           │
-        │  ┌────────────┐    ┌─────────────┐    │
-        │  │ Open JTalk+SoX │    │ md380-emu       │    │
-        │  │ (テキスト→音声)  │    │ (AMBE 音声符号化) │    │
-        │  └────────────┘    └─────────────┘    │
-        └──────────────────────────────────┘
+```mermaid
+flowchart TB
+    radio["📻 無線機・他局"]
+    tgif["☁️ TGIF ネットワーク<br/>(インターネット)"]
+
+    subgraph pi["Raspberry Pi (ホスト名 OCV)"]
+        direction TB
+        mmdvm["MMDVM_Bridge<br/>(DMR ⇔ 内部)"]
+        analog["Analog_Bridge<br/>(内部 ⇔ 音声)"]
+        bot["dvswitch_bot.py<br/>(ログ監視 → 応答)"]
+        jtalk["Open JTalk + SoX<br/>(テキスト → 音声)"]
+        md380["md380-emu<br/>(AMBE 音声符号化)"]
+        log[("ログ<br/>/var/log/mmdvm")]
+    end
+
+    radio <-->|"電波 (DMR)"| tgif
+    tgif <-->|"DMR (UDP 62031)"| mmdvm
+    mmdvm <-->|"TLV"| analog
+    mmdvm -->|"通信開始/終了を記録"| log
+    log -->|"リアルタイム監視"| bot
+    bot -->|"音声合成"| jtalk
+    jtalk -->|"WAV"| bot
+    bot -->|"USRP (UDP 51000)<br/>音声を注入"| analog
+    analog <-->|"AMBE (UDP 2470)"| md380
+
+    classDef ext fill:#e8f0fe,stroke:#4285f4,color:#000
+    classDef core fill:#fff3e0,stroke:#fb8c00,color:#000
+    classDef data fill:#f1f3f4,stroke:#9aa0a6,color:#000
+    class radio,tgif ext
+    class bot core
+    class log data
 ```
 
 **流れを言葉で説明すると:**
