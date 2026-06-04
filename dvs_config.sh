@@ -52,6 +52,23 @@ if [ "$EUID" -ne 0 ]; then
   exec sudo "$0" "$@"
 fi
 
+# サービス再起動（y/N 確認つき）。do_edit / do_restore から呼ぶ。
+restart_services() {
+  echo ""
+  read -ep "analog_bridge と mmdvm_bridge を今すぐ再起動しますか？ (y/N): " RST
+  if [[ "${RST,,}" == "y" ]]; then
+    echo "[INFO] サービスを再起動します..."
+    systemctl restart analog_bridge mmdvm_bridge
+    sleep 3
+    echo "[INFO] 状態:"
+    systemctl is-active analog_bridge mmdvm_bridge
+    echo "[完了] 再起動しました。"
+  else
+    echo "再起動はスキップしました。手動で有効化してください:"
+    echo "   sudo systemctl restart analog_bridge mmdvm_bridge"
+  fi
+}
+
 show_help() {
   cat <<'EOF'
 DVSwitch 設定対話ツール dvs_config.sh （TGIF 接続前提）
@@ -71,6 +88,8 @@ DVSwitch 設定対話ツール dvs_config.sh （TGIF 接続前提）
 
 バックアップ先:
   /opt/bak/YYMMDDHHMMSS/ に 3つの ini をまとめて保存します。
+
+編集／復元の最後に、サービス再起動を y/N で確認します。
 
 既知の制約（注意）:
   - 値の置換は「既存のキー行」が対象です。コメントアウト行は対象外。
@@ -236,8 +255,8 @@ do_edit() {
   set_section_key "$ANALOG_INI" "[USRP]" "tlvAudio"  "$FIX_TLV_AUDIO"
 
   echo ""
-  echo "[完了] 反映しました。サービス再起動で有効化してください:"
-  echo "   sudo systemctl restart analog_bridge mmdvm_bridge"
+  echo "[完了] 反映しました。"
+  restart_services
 }
 
 do_restore() {
@@ -291,8 +310,8 @@ do_restore() {
   done
 
   echo ""
-  echo "[完了] 復元しました。サービス再起動で有効化してください:"
-  echo "   sudo systemctl restart analog_bridge mmdvm_bridge"
+  echo "[完了] 復元しました。"
+  restart_services
 }
 
 do_delete() {
