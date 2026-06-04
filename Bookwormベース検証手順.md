@@ -20,7 +20,7 @@
 ユーザー名は、配布ドキュメントでは `pi-star` だが、本機は `ocv` である。以下すべて `ocv` で記載する。別ユーザーで構築する場合は読み替えること。
 
 > **v2 での主な追記（2026-06-03 のトレースで判明）**
-> - **第6部** を新設：Quantar_Bridge ほかが Web ダッシュボードで「Does not exist」と
+> - **第5部** を新設：Quantar_Bridge ほかが Monit Service Manager（:2812）で「Does not exist」と
 >   表示される問題と、その対処（monit の httpd 設定有効化＋サービス起動）を追加した。
 >   これは OS 世代（Bookworm / trixie）に関係なく、DVSwitch インストール直後の素の状態で
 >   発生する。trixie のせいではない点に注意。
@@ -68,10 +68,10 @@
 - [**第4部：サービスの起動確認と修正**](#第4部サービスの起動確認と修正)
   - 4-1. サービス一覧の確認
   - 4-2. 🔴 md380-emu の SEGV と qemu ダウングレード
-- [**第5部：Web ダッシュボード**](#第5部web-ダッシュボード)
-  - 5-1. DocumentRoot の変更
-- [**第6部：ダッシュボードの赤字「Does not exist」を消す**](#第6部ダッシュボードの赤字does-not-existを消すv2-新設)
+- [**第5部：Monit Service Manager（:2812）の赤字「Does not exist」を消す**](#第5部monit-service-manager2812の赤字does-not-existを消すv2-新設)
   - ステップ1〜4（症状確認 → monit Web 開通 → サービス起動 → OK 確認）
+- [**第6部：DVSwitch Dashboard（:80）の表示設定**](#第6部dvswitch-dashboard80の表示設定)
+  - 6-1. DocumentRoot の変更（:80 で DVSwitch Dashboard を表示）
 - [**第7部：音声合成環境（Open JTalk + SoX）**](#第7部音声合成環境open-jtalk-sox)
   - 7-1. パッケージ導入 / 7-2. 音声「メイ」導入 / 7-3. 動作確認
 - [**第8部：ボット本体と固定 WAV**](#第8部ボット本体と固定-wav)
@@ -114,7 +114,7 @@
 4. ⚠️ **Web ダッシュボードの「Does not exist」は monit の httpd 無効が主因。**（v2 追記）
    Quantar_Bridge などが「Does not exist」と出るのは、サービス未起動に加えて、
    **monit の httpd（port 2812）がデフォルトでコメントアウト**されており、
-   monit のステータス問い合わせ自体が機能していないことが背景にある。第6部で対処する。
+   monit のステータス問い合わせ自体が機能していないことが背景にある。第5部で対処する。
 
 5. ⚠️ **OS は Bookworm に固定する。**（v2 追記）
    `apt upgrade` 自体ではディストリは上がらないが、sources.list が trixie を指していると
@@ -493,32 +493,15 @@ wget http://archive.raspbian.org/raspbian/pool/main/q/qemu/qemu-user-static_5.2+
 
 ---
 
-## 第5部：Web ダッシュボード
-
-### 5-1. ⚠️ DocumentRoot の変更 ✅
-
-初期状態では `http://<IP>/` が Apache のデフォルトページを表示する。
-DVSwitch ダッシュボードの実体は **`/usr/share/dvswitch`**。
-
-```bash
-sudo sed -i 's|DocumentRoot /var/www/html|DocumentRoot /usr/share/dvswitch|' \
-  /etc/apache2/sites-enabled/000-default.conf
-sudo systemctl restart apache2
-```
-
-`http://<IP>/` で「DVSwitch Dashboard」が表示されれば成功。
-Monit 監視画面は `http://<IP>:2812/`。
-
-> **補足:** Zero 2W + SDカードでは初回表示が重い。`top` で `wa`(I/O待ち) が高い場合は SD のランダムアクセス遅延が主因。サービスを止めるより、まず全サービスを正常稼働させてから判断する。
-
----
-
-## 第6部：ダッシュボードの赤字「Does not exist」を消す（v2 新設）
+## 第5部：Monit Service Manager（:2812）の赤字「Does not exist」を消す（v2 新設）
 
 ### この部で何をするか（対象と目的）
 
-**対象:** DVSwitch ダッシュボード（`http://<IP>/` と `http://<IP>:2812/`）。
-**目的:** ダッシュボード上で赤字「Does not exist」と出ているプロセス
+**対象:** **Monit Service Manager**（サービス監視画面・`http://<IP>:2812/`）。
+> これは DVSwitch 本体の画面（DVSwitch Dashboard・通常ポート :80、第6部で設定）とは
+> **別物**。:2812 は各サービスの稼働状態を監視・表示する monit の画面である。
+
+**目的:** Monit Service Manager 上で赤字「Does not exist」と出ているプロセス
 （典型は **Quantar_Bridge**）を、緑の「OK」にする。
 
 **この部の作業を一言でいうと:**
@@ -527,9 +510,9 @@ Monit 監視画面は `http://<IP>:2812/`。
 3. **monit に状態を取り直させて、ダッシュボードを「OK」にする**
 
 ```
-[現状] ダッシュボード ──見られない──▶ monit(:2812 塞がってる) ──▶ 各プロセス(一部停止)
+[現状] Monit画面(:2812) ──見られない──▶ monit本体(塞がってる) ──▶ 各プロセス(一部停止)
                                                   ↓ この部で直す
-[完了] ダッシュボード ──OK表示──▶ monit(:2812 開通) ──▶ 各プロセス(起動＆自動起動)
+[完了] Monit画面(:2812) ──OK表示──▶ monit本体(開通) ──▶ 各プロセス(起動＆自動起動)
 ```
 
 ### なぜ「Does not exist」になるのか（原因は2つ）
@@ -666,6 +649,29 @@ sudo systemctl restart monit && sleep 8 && sudo monit reload && sleep 12 && sudo
 Quantar_Bridge 以外（未使用モードのゲートウェイ等）が「Does not exist」でも、
 **使う予定がなければ実害はない**。ただし将来使うものは、ステップ3・4と同じ手順
 （`enable --now` ＋ `monit reload`）で起動・監視下に置く。
+
+---
+
+## 第6部：DVSwitch Dashboard（:80）の表示設定
+
+### 6-1. ⚠️ DocumentRoot の変更（DVSwitch Dashboard を :80 で表示）✅
+
+こちらは **DVSwitch Dashboard**（DVSwitch 本体の画面・通常の HTTP ポート :80）の設定。
+サービス監視の Monit Service Manager（:2812・第5部）とは別物。
+
+初期状態では `http://<IP>/`（:80）が Apache のデフォルトページを表示する。
+DVSwitch Dashboard の実体は **`/usr/share/dvswitch`** なので、DocumentRoot を変更する。
+
+```bash
+sudo sed -i 's|DocumentRoot /var/www/html|DocumentRoot /usr/share/dvswitch|' \
+  /etc/apache2/sites-enabled/000-default.conf
+sudo systemctl restart apache2
+```
+
+`http://<IP>/`（:80）で「DVSwitch Dashboard」が表示されれば成功。
+なお、サービス監視の Monit Service Manager は別ポート `http://<IP>:2812/`（第5部）。
+
+> **補足:** Zero 2W + SDカードでは初回表示が重い。`top` で `wa`(I/O待ち) が高い場合は SD のランダムアクセス遅延が主因。サービスを止めるより、まず全サービスを正常稼働させてから判断する。
 
 ---
 
@@ -1077,8 +1083,8 @@ sudo systemctl start dvswitch-bot
 | qemu-user-static | （記載なし） | 5.2 へダウングレード＋hold | 🔴 |
 | Apache DocumentRoot | （記載なし） | /usr/share/dvswitch | ⚠️ |
 | 送信 TG | （環境依存） | txTg / exportTG = 44833 | 🔴 |
-| **monit httpd（:2812）** | **（記載なし）** | **デフォルト無効。有効化が必要（第6部）** | **🔴**（v2追記） |
-| **Quantar_Bridge 等のサービス** | **（記載なし）** | **disabled・未起動。`enable --now` が必要（第6部）** | **🔴**（v2追記） |
+| **monit httpd（:2812）** | **（記載なし）** | **デフォルト無効。有効化が必要（第5部）** | **🔴**（v2追記） |
+| **Quantar_Bridge 等のサービス** | **（記載なし）** | **disabled・未起動。`enable --now` が必要（第5部）** | **🔴**（v2追記） |
 | **OS 世代** | **（記載なし）** | **bookworm に固定。sources.list 確認（第1部）** | **⚠️**（v2追記） |
 | **DVSwitch 側設定** | **手動 ini 編集** | **`dvs_config.sh` で一括設定（第3部）。手動は付録D** | **⚠️**（v3変更） |
 | **DMR サーバー TGIF 切替** | **（記載なし）** | **dvs 詳細設定02→24→TGIF（第2-4部）** | **⚠️**（v3追記） |
@@ -1099,8 +1105,8 @@ sudo systemctl start dvswitch-bot
 | ボット音声が無音 | md380-emu 停止 or Analog_Bridge 設定 | md380-emu 稼働確認、USRP ポート確認 |
 | dvswitch-bot が `activating (auto-restart)` を繰り返す | 設定ファイル不正/未作成でフェイルセーフ作動 | `journalctl -u dvswitch-bot` で `Config error` 確認 → `sudo python3 bot_setup.py` で作成 |
 | 手動起動の bot が `Config error` で停止 | `bot_config.json` が無い/壊れ/値不正 | `sudo python3 bot_setup.py` で作成。`-s` で検証 |
-| **ダッシュボードで Quantar_Bridge 等が「Does not exist」** | **monit httpd 無効＋サービス未起動** | **第6部：monitrc の httpd 有効化＋`systemctl enable --now`＋`monit reload`** |
-| **`sudo monit status` が `Connection reset by peer`** | **monit httpd（:2812）がコメントアウト** | **第6部 ステップ2：monitrc の httpd ブロックを有効化** |
+| **ダッシュボードで Quantar_Bridge 等が「Does not exist」** | **monit httpd 無効＋サービス未起動** | **第5部：monitrc の httpd 有効化＋`systemctl enable --now`＋`monit reload`** |
+| **`sudo monit status` が `Connection reset by peer`** | **monit httpd（:2812）がコメントアウト** | **第5部 ステップ2：monitrc の httpd ブロックを有効化** |
 | **`:2812` が外部 IP から開けない** | **`use address localhost` になっている** | **`use address 0.0.0.0` に変更して `sudo monit reload`** |
 | **`monit reload` 後も「Does not exist」のまま** | **monit のデータ収集待ち** | **十数秒待って再度 `sudo monit status`** |
 
@@ -1392,7 +1398,7 @@ sudo mv /usr/local/sbin/platformDetect.sh.new /usr/local/sbin/platformDetect.sh
 ### E-2. Web サーバ再起動とダッシュボード確認（方法A・B共通） ✅
 
 > ⚠️ **元記事は Bullseye / lighttpd 前提のため `systemctl restart lighttpd` だが、
-> 本環境は Bookworm / Apache2**（第5部で DocumentRoot を設定済み）。
+> 本環境は Bookworm / Apache2**（第6部で DocumentRoot を設定済み）。
 > したがって **`apache2`** を再起動する。
 
 ```bash
@@ -1414,6 +1420,6 @@ Hardware Info → Platform が **`Raspberry Pi Zero 2 W Rev 1.0`** になって�
 ---
 
 *初版作成: 2026-06-02*
-*v2 更新: 2026-06-03（第6部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
-*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替。dvs_config.sh による値確定を第3部として独立。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動 ini 編集を付録Dへ、Platform 表示修正を付録Eへ。第6部を目的明確化で改稿、第11部に常駐化後のログ確認手順を追加、第4部に各サービスの役割説明を追加、経路設定の参照節を削除、目次にページ内リンクを付与）*
+*v2 更新: 2026-06-03（第5部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
+*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替。dvs_config.sh による値確定を第3部として独立。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動 ini 編集を付録Dへ、Platform 表示修正を付録Eへ。第5部を目的明確化で改稿、第11部に常駐化後のログ確認手順を追加、第4部に各サービスの役割説明を追加、経路設定の参照節を削除、目次にページ内リンクを付与、第5部=Monit Service Manager(:2812)対処／第6部=DVSwitch Dashboard(:80)表示に分離・順序入替）*
 *対応 bot: dvswitch_bot.py（デーモン版・V1.60 ベース）＋ bot_setup.py（設定ツール）/ 実機: OCV (Zero 2W, Bookworm 32-bit)*
