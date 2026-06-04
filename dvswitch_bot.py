@@ -3,9 +3,20 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム —
+ — JJ2YYK デジピーター自動応答システム  V1.61 —
 
- 本ファイルは V1.60 をベースに、常駐運用（systemd）向けに改修したもの。
+ 本ファイルは V1.60 をベースにデーモン化し、V1.61 でナイトモードの
+ 抑制ロジックを改良したもの。
+
+【V1.61 での変更点】
+  - 🔴 ナイトモードの抑制を「時報」と「定時メッセージ」で分離した。
+      * 時報         : N1+1 時 〜 N2 時を抑制（N1 時の時報は送出）
+      * 定時メッセージ : N1 時 〜 N2 時を抑制（N1 時台から即抑制）
+    意図: N1 時は「最後の時報＋ナイトモード突入アナウンス」を出すが、
+    その後の同じ時間帯の定時メッセージ（例 N1=22 のとき 22:20）は出さない。
+    V1.60 では定時メッセージも N1+1 時からの抑制だったため、22:20 等が
+    送出されてしまっていた。これを修正。
+  - 起動ログに時報／定時それぞれの抑制時間帯を表示するようにした。
 
 【V1.60 からの変更点（デーモン化）】
   - 起動時の対話設定（_interactive_setup）を廃止し、
@@ -26,8 +37,9 @@
   NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
   NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
 
-【機能（V1.60 を踏襲）】
-  - ナイトモード（N1+1時〜N2時は時報・定時メッセージを抑制、kerchunk は24時間）
+【機能】
+  - ナイトモード（時報は N1+1時〜N2時を抑制／定時メッセージは N1時〜N2時を抑制。
+    N1時は時報＋突入アナウンスを出す。kerchunk は24時間応答）
   - 毎正時の時報（lead 秒前に発火）/ 定時メッセージ（001/002 交互）
   - カーチャンク検知応答 / 重複応答防止 / イントロ・アウトロ結合
   - 絶対時刻同期の UDP 送信（ドリフト補正）
@@ -46,8 +58,8 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: daemon-1.0 (based on V1.60)
- Last Updated: 2026-06
+ Document Version: V1.61 (daemon, based on V1.60)
+ Last Updated: 2026-06-04
 ================================================================================
 """
 
@@ -301,10 +313,26 @@ def send_usrp_wav_with_padding(wav_path):
 # ナイトモード判定
 # ============================================================
 def _is_night_suppressed(hour):
+    """時報の抑制判定。N1時の時報は出す（突入アナウンスのため）。
+    抑制は N1+1 時 〜 N2 時。例) N1=22, N2=5 → 23,0,1,2,3,4,5 時を抑制。"""
     if not NIGHT_MODE_ENABLED:
         return False
     suppress_start = (NIGHT_START_HOUR + 1) % 24
-    suppress_end = NIGHT_END_HOUR
+    suppress_end = NIGHT_END_HOUR % 24
+    if suppress_start <= suppress_end:
+        return suppress_start <= hour <= suppress_end
+    else:
+        return hour >= suppress_start or hour <= suppress_end
+
+
+def _is_night_suppressed_message(hour):
+    """定時メッセージの抑制判定。N1 時台から即抑制する
+    （N1 時の時報＋突入アナウンスの後、同じ時間帯の定時メッセージは出さない）。
+    抑制は N1 時 〜 N2 時。例) N1=22, N2=5 → 22,23,0,1,2,3,4,5 時を抑制。"""
+    if not NIGHT_MODE_ENABLED:
+        return False
+    suppress_start = NIGHT_START_HOUR % 24
+    suppress_end = NIGHT_END_HOUR % 24
     if suppress_start <= suppress_end:
         return suppress_start <= hour <= suppress_end
     else:
@@ -358,7 +386,7 @@ def _announcement_scheduler():
             current_minute_key = (now.hour, m)
             if fired_message_minute != current_minute_key:
                 fired_message_minute = current_minute_key
-                if _is_night_suppressed(now.hour):
+                if _is_night_suppressed_message(now.hour):
                     logger.info(_fmt("..", "NightSkip",
                                      f"{now.hour:02d}:{m:02d}",
                                      "scheduled_message suppressed (night mode)"))
@@ -513,7 +541,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot (daemon, based on V1.60) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.61 (daemon, based on V1.60) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -526,10 +554,14 @@ def _log_startup_info():
     logger.info(f"  Time signal       : every hour at :00 (lead {TIME_SIGNAL_LEAD_SEC}s)")
     if NIGHT_MODE_ENABLED:
         resume_hour = (NIGHT_END_HOUR + 1) % 24
-        suppress_start = (NIGHT_START_HOUR + 1) % 24
+        ts_suppress_start = (NIGHT_START_HOUR + 1) % 24   # 時報の抑制開始
+        msg_suppress_start = NIGHT_START_HOUR % 24        # 定時メッセージの抑制開始
         logger.info(f"  Night mode        : ON  (N1={NIGHT_START_HOUR:02d} N2={NIGHT_END_HOUR:02d} "
-                    f"/ suppress {suppress_start:02d}-{NIGHT_END_HOUR:02d} "
                     f"/ resume {resume_hour:02d}:00)")
+        logger.info(f"    - time_signal   : suppress {ts_suppress_start:02d}-{NIGHT_END_HOUR:02d} "
+                    f"(N1={NIGHT_START_HOUR:02d}:00 は送出)")
+        logger.info(f"    - sched_message : suppress {msg_suppress_start:02d}-{NIGHT_END_HOUR:02d} "
+                    f"(N1 時台から抑制)")
     else:
         logger.info(f"  Night mode        : OFF (24時間送出)")
     logger.info("-" * 70)
