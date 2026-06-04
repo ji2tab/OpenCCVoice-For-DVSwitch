@@ -428,49 +428,66 @@ Monit 監視画面は `http://<IP>:2812/`。
 
 ---
 
-## 第4.5部：Web ダッシュボードの「Does not exist」対処（v2 新設）
+## 第4.5部：ダッシュボードの赤字「Does not exist」を消す（v2 新設）
 
-### 4.5-0. 症状と背景
+### この部で何をするか（対象と目的）
 
-DVSwitch ダッシュボード（`http://<IP>/` および `:2812`）で、特定のプロセス
-（典型的には **Quantar_Bridge**）が **「Does not exist」**（赤字）と表示される。
+**対象:** DVSwitch ダッシュボード（`http://<IP>/` と `http://<IP>:2812/`）。
+**目的:** ダッシュボード上で赤字「Does not exist」と出ているプロセス
+（典型は **Quantar_Bridge**）を、緑の「OK」にする。
 
-この症状には **2 つの独立した原因**が重なっている。**OS 世代（Bookworm でも trixie でも）に
-関係なく、DVSwitch インストール直後の素の状態で発生する**。
+**この部の作業を一言でいうと:**
+1. **監視役（monit）が外部から見えるようにする**（今は塞がっていて全プロセスの状態が取れない）
+2. **止まっているプロセスを起動して、自動起動も有効にする**
+3. **monit に状態を取り直させて、ダッシュボードを「OK」にする**
 
-1. 🔴 **monit の httpd（port 2812）がデフォルトで無効。**
-   `/etc/monit/monitrc` の httpd 設定ブロック（おおむね 159〜162 行）が
-   コメントアウトされている。このため `sudo monit status` を実行すると
-   **`Error receiving data -- Connection reset by peer`** となり、monit への
-   ステータス問い合わせ自体が成立しない。ダッシュボードの表示元もここなので
-   「Does not exist」のままになる。
+```
+[現状] ダッシュボード ──見られない──▶ monit(:2812 塞がってる) ──▶ 各プロセス(一部停止)
+                                                  ↓ この部で直す
+[完了] ダッシュボード ──OK表示──▶ monit(:2812 開通) ──▶ 各プロセス(起動＆自動起動)
+```
 
-2. ⚠️ **当該サービスが disabled・未起動。**
-   `quantar-bridge` パッケージはインストールされていても、`quantar_bridge.service` が
-   `disabled` かつ未起動のことがある。プロセスが存在しないので、当然「Does not exist」になる。
+### なぜ「Does not exist」になるのか（原因は2つ）
 
-> **【誤解の整理】** v1 検証時は trixie に上がった環境で初めてこの症状に気づいたため
-> 「trixie のせい」と疑ったが、Bookworm のクリーン環境でも**同様に発生**することを
-> 2026-06-03 のトレースで確認した。原因は OS 世代ではなく、上記 2 点である。
+赤字「Does not exist」は、独立した **2 つの原因**が重なって出ている。
+**OS 世代（Bookworm / trixie）は無関係**で、DVSwitch インストール直後の素の状態で起きる。
 
-### 4.5-1. monit のステータス確認（症状の確認） ✅
+| # | 原因 | 何が起きているか |
+|---|---|---|
+| 1 | **monit の Web 機能（:2812）が無効** | `/etc/monit/monitrc` の httpd 設定がコメントアウトされたまま。monit に状態を問い合わせる窓口が閉じているので、ダッシュボードはどのプロセスの状態も取得できず、軒並み「Does not exist」になる |
+| 2 | **プロセス自体が停止＋自動起動オフ** | 例えば `quantar-bridge` はパッケージは入っていても `quantar_bridge.service` が停止・`disabled`。プロセスが実在しないので、当然「無い」と表示される |
+
+> **【誤解の整理】** v1 検証時は trixie 環境で初めて気づいたため「trixie のせい」と
+> 疑ったが、Bookworm のクリーン環境でも同様に起きることを 2026-06-03 に確認した。
+> 原因は OS 世代ではなく、上記 2 点。
+
+---
+
+### ステップ1：原因1を直す前に「症状」を確認する ✅
+
+**目的:** monit の窓口が本当に閉じているかを、エラーメッセージで確認する。
 
 ```bash
 sudo monit status
 ```
 
-`Error receiving data -- Connection reset by peer` が出れば、httpd が無効。
-次節で有効化する。
+→ **`Error receiving data -- Connection reset by peer`** が出れば、monit の Web 機能が
+無効（原因1が該当）。次のステップで開通させる。
 
-### 4.5-2. 🔴 monit httpd 設定の有効化 ✅
+---
 
-まず現状の該当行を確認する（行番号は環境で多少前後する）:
+### ステップ2：原因1を直す — monit の Web 機能（:2812）を開通させる 🔴
+
+**目的:** monit に状態を問い合わせる窓口（port 2812）を開け、LAN 内のブラウザから
+ダッシュボードを見られるようにする。
+
+**まず現状の該当行と行番号を確認**（行番号は環境で前後するので必ず確認する）:
 
 ```bash
 sudo grep -nE "set httpd|use address|allow localhost|allow admin" /etc/monit/monitrc
 ```
 
-標準状態では以下のように 4 行ともコメントアウトされている:
+標準状態では次の 4 行がコメントアウトされている（先頭が `#`）:
 
 ```
 159:#set httpd port 2812 and
@@ -479,8 +496,8 @@ sudo grep -nE "set httpd|use address|allow localhost|allow admin" /etc/monit/mon
 162:#    allow admin:monit      # require user 'admin' with password 'monit'
 ```
 
-この 4 行を、**LAN 内からパスワードなしでアクセスできる**設定に置き換える。
-行番号指定でまとめて書き換えるのが確実（`grep` で確認した実際の行番号に合わせること）:
+**この4行を、LAN内からパスワードなしで開ける設定に置き換える**
+（`grep` で見えた実際の行番号に合わせること。下記は 159〜162 の例）:
 
 ```bash
 sudo sed -i '159,162c\
@@ -490,13 +507,13 @@ set httpd port 2812 and\
     allow 192.168.1.0/24' /etc/monit/monitrc
 ```
 
-書き換え結果を確認:
+**書き換え結果を確認:**
 
 ```bash
 sudo sed -n '159,162p' /etc/monit/monitrc
 ```
 
-期待する内容:
+期待する内容（4行とも先頭の `#` が消えている）:
 
 ```
 set httpd port 2812 and
@@ -505,53 +522,65 @@ set httpd port 2812 and
     allow 192.168.1.0/24
 ```
 
-> ⚠️ **`use address localhost` のままにしない。**
-> `use address localhost` だと monit は **127.0.0.1 のみで listen** するため、
-> 外部 IP（例 `http://192.168.1.74:2812/`）からアクセスできなくなる。
-> 全インターフェースで受けるには **`use address 0.0.0.0`** にする。
+**各行の意味（なぜこの値か）:**
 
-> ⚠️ **`allow` 行の意味。**
-> - `allow localhost` … ローカルからの接続許可。
-> - `allow 192.168.1.0/24` … LAN セグメントからの接続許可（**パスワードなし**）。
-> - `allow admin:monit` … Basic 認証（ユーザー admin / パスワード monit）を要求。
-> パスワード認証を残したい場合は、`allow 192.168.1.0/24` を入れず
-> `allow admin:monit` を有効にする。セキュリティ的にはこちらが本来望ましい。
-> 本手順は LAN 内運用を前提にパスワードなし（`allow 192.168.1.0/24`）を採用している。
-> LAN セグメントが 192.168.1.0/24 でない場合は自環境に合わせて変更すること。
+| 行 | 意味 | この値にする理由 |
+|---|---|---|
+| `set httpd port 2812 and` | monit の Web 機能を 2812 番で有効化 | これが無効だと窓口が閉じたまま |
+| `use address 0.0.0.0` | 全ネットワーク面で待ち受け | `localhost` だと **PC のブラウザ（外部IP）から開けない** |
+| `allow localhost` | ローカルからの接続を許可 | 本体内からの監視用 |
+| `allow 192.168.1.0/24` | LAN からパスワードなしで許可 | LAN 内運用のため。**自分の LAN が別セグメントなら変更**（例 192.168.0.0/24） |
 
-### 4.5-3. 🔴 サービスの起動＋自動起動有効化 ✅
+> ⚠️ **パスワードを掛けたい場合:** `allow 192.168.1.0/24` を入れず、代わりに
+> `allow admin:monit`（ユーザー admin / パスワード monit）を使う。セキュリティ的には
+> こちらが本来望ましい。LAN 内限定運用ならパスワードなしでも実用上は可。
 
-「Does not exist」だったサービスを起動し、再起動後も自動で上がるようにする。
-（Quantar_Bridge の例。他サービスも同様に systemd ユニット名で指定する）
+> ⚠️ **`use address localhost` のままにしない:** これだと monit は 127.0.0.1 だけで
+> 待ち受け、`http://192.168.1.74:2812/` のような外部 IP から開けなくなる。
+> 開けなくなったら `use address 0.0.0.0` に直して `sudo monit reload`。
+
+---
+
+### ステップ3：原因2を直す — 止まっているプロセスを起動する 🔴
+
+**目的:** 「Does not exist」だった当該サービス（例 Quantar_Bridge）を起動し、
+再起動後も自動で上がるようにする（`enable` ＝自動起動、`--now` ＝今すぐ起動）。
 
 ```bash
 sudo systemctl enable --now quantar_bridge
 ```
 
-### 4.5-4. monit 再起動・reload・確認 ✅
+> 他のプロセスが対象なら、`quantar_bridge` の部分をそのサービスの systemd ユニット名に
+> 置き換える。
 
-monit を再起動し、設定を reload してからステータスを確認する。
-**monit はデータ収集に少し時間がかかる**ため、`reload` 後に十数秒待ってから確認する
-（待たずに見ると、起動済みでも一時的に「Does not exist」と出ることがある）。
+---
+
+### ステップ4：monit に状態を取り直させて「OK」を確認する ✅
+
+**目的:** ここまでの変更（窓口開通＋プロセス起動）を monit に反映させ、
+ダッシュボードが「OK」になることを確認する。
 
 ```bash
 sudo systemctl restart monit && sleep 8 && sudo monit reload && sleep 12 && sudo monit status Quantar_Bridge
 ```
 
-`status  OK` と表示されれば成功。ダッシュボード（`http://<IP>:2812/`）でも
-当該プロセスが緑の「OK」になり、パスワードなしで開けるようになる。
+→ `status  OK` と出れば成功。ブラウザで `http://<IP>:2812/` を開くと、当該プロセスが
+緑の「OK」になり、パスワードなしで表示される。
 
-> **【トレース時のハマりどころ】**
-> - `monit reload` 直後は `data collected` の時刻が古いまま「Does not exist」に
->   見えることがある。十数秒待って再度 `monit status` すると `OK` になる。
-> - `use address localhost` を有効にしてしまうと `:2812` が外部から見えなくなる。
->   この場合は `use address 0.0.0.0` に直して `sudo monit reload`。
+> **【ハマりどころ】**
+> - **すぐ確認すると「Does not exist」のまま**に見えることがある。monit は状態収集に
+>   少し時間がかかるため、`reload` 後 **十数秒待って**から `sudo monit status` を見る
+>   （上のコマンドは `sleep` で待ち時間を入れてある）。
+> - **`:2812` が外部から開けない** → ステップ2の `use address` が `localhost` に
+>   なっていないか確認し、`0.0.0.0` に直して `sudo monit reload`。
 
-### 4.5-5. （任意）他プロセスが「Does not exist」の場合
+---
 
-Quantar_Bridge 以外（例えば未使用モードのゲートウェイ）が「Does not exist」でも、
-**使う予定がなければ無害**。ただし「動いていなくてよい」と片付けず、必要なものは
-本節と同じ手順（サービス `enable --now` ＋ monit reload）で確実に起動・監視下に置く。
+### 補足：使わないプロセスが「Does not exist」のままでも
+
+Quantar_Bridge 以外（未使用モードのゲートウェイ等）が「Does not exist」でも、
+**使う予定がなければ実害はない**。ただし将来使うものは、ステップ3・4と同じ手順
+（`enable --now` ＋ `monit reload`）で起動・監視下に置く。
 
 ---
 
