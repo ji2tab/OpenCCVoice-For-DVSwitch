@@ -20,7 +20,7 @@
 ユーザー名は、配布ドキュメントでは `pi-star` だが、本機は `ocv` である。以下すべて `ocv` で記載する。別ユーザーで構築する場合は読み替えること。
 
 > **v2 での主な追記（2026-06-03 のトレースで判明）**
-> - **第5部** を新設：Quantar_Bridge ほかが Web ダッシュボードで「Does not exist」と
+> - **第6部** を新設：Quantar_Bridge ほかが Web ダッシュボードで「Does not exist」と
 >   表示される問題と、その対処（monit の httpd 設定有効化＋サービス起動）を追加した。
 >   これは OS 世代（Bookworm / trixie）に関係なく、DVSwitch インストール直後の素の状態で
 >   発生する。trixie のせいではない点に注意。
@@ -31,8 +31,7 @@
 >
 > **v3 での主な変更（2026-06-04 のトレースで判明）**
 > - **第2部を実作業順に再構成**：2-3（dvs 初期設定で ini 生成）→ 2-4（dvs 詳細設定で
->   TGIF 切替）→ 2-5（`dvs_config.sh` で TGIF 用の値を確定）の順に並べた。
->   従来は別章にあった `dvs_config.sh` を **第2-5部に統合**した。
+>   TGIF 切替）の順に並べ、続く `dvs_config.sh` での値確定は **第3部** として独立させた。
 >   取得コマンドは `curl -fsSL` 版を採用。
 > - **第7-4部** の `create_wav.sh` の取得 URL を修正（旧 `reate_wav.sh` は 404。
 >   リポジトリ側で `create_wav.sh` にリネームされた）。
@@ -42,14 +41,14 @@
 > - **第2-3部** に重要な発見を追記：`dvs` の「01 初期設定」を一度通さないと
 >   `/opt/Analog_Bridge/` の ini が生成されず、`dvs_config.sh` が前提を満たせない。
 >   `dvs` の全画面遷移（初期設定13ステップ＋TGIF切替）も具体的に記載した。
-> - **第11部** を新設：ダッシュボードの「Platform」が `Unknown ARM based System` に
+> - **付録E** を新設：ダッシュボードの「Platform」が `Unknown ARM based System` に
 >   なる問題を、`platformDetect.sh` への device-tree 判定追記で解決（方法B 推奨／
 >   方法A 全置換）。Web サーバは Bookworm の Apache2 を再起動する点に注意。
 > - **bot を「設定ツール＋デーモン本体」構成に変更**：対話設定内蔵の従来版
 >   （V1.58/V1.60）は systemd 常駐で `EOFError` 停止するため、`bot_setup.py`（対話・
 >   JSON 保存）と `dvswitch_bot.py`（JSON を読むだけのデーモン本体）に分離。本体は
->   設定が無い／不正なら起動を拒否する**フェイルセーフ**付き。第9部を新設し、
->   第10部の systemd unit を `dvswitch_bot.py` に更新。
+>   設定が無い／不正なら起動を拒否する**フェイルセーフ**付き。第10部を新設し、
+>   第11部の systemd unit を `dvswitch_bot.py` に更新。
 
 ---
 
@@ -65,36 +64,35 @@
   - 2-2. 本体インストール
   - 2-3. 🔴 初期設定メニュー（ini 生成のために必須）
   - 2-4. 詳細設定で DMR サーバーを TGIF に切替
-  - 2-5. 🔴 dvs_config.sh で TGIF 用の値を確定
-- [**第3部：サービスの起動確認と修正**](#第3部サービスの起動確認と修正)
-  - 3-1. サービス一覧の確認
-  - 3-2. 🔴 md380-emu の SEGV と qemu ダウングレード
-- [**第4部：Web ダッシュボード**](#第4部web-ダッシュボード)
-  - 4-1. DocumentRoot の変更
-- [**第5部：ダッシュボードの赤字「Does not exist」を消す**](#第5部ダッシュボードの赤字does-not-existを消すv2-新設)
+- [**第3部：dvs_config.sh で TGIF 用の値を確定**](#第3部dvs_configsh-で-tgif-用の値を確定-必須)
+- [**第4部：サービスの起動確認と修正**](#第4部サービスの起動確認と修正)
+  - 4-1. サービス一覧の確認
+  - 4-2. 🔴 md380-emu の SEGV と qemu ダウングレード
+- [**第5部：Web ダッシュボード**](#第5部web-ダッシュボード)
+  - 5-1. DocumentRoot の変更
+- [**第6部：ダッシュボードの赤字「Does not exist」を消す**](#第6部ダッシュボードの赤字does-not-existを消すv2-新設)
   - ステップ1〜4（症状確認 → monit Web 開通 → サービス起動 → OK 確認）
-- [**第6部：音声合成環境（Open JTalk + SoX）**](#第6部音声合成環境open-jtalk-sox)
-  - 6-1. パッケージ導入 / 6-2. 音声「メイ」導入 / 6-3. 動作確認
-- [**第7部：ボット本体と固定 WAV**](#第7部ボット本体と固定-wav)
-  - 7-1. ボット用ディレクトリ
-  - 7-2. bot 本体は第9部で取得（ここは固定 WAV へ）
-  - 7-3. 固定 WAV 作成（対話式スクリプト）
-- [**第8部：送信テスト**](#第8部送信テスト)
-  - 8-1. テスト送信ツール取得 / 8-2. 実行 / 8-3. 🔴 md380-emu SEGV 最終確認
-- [**第9部：bot 本体（デーモン版）と設定ツールの導入**](#第9部bot-本体デーモン版と設定ツールの導入v3-新設)
-  - 9-1. 取得 / 9-2. パラメータ確認 / 9-3. 🔴 bot_setup.py で設定作成 / 9-4. 手動起動で確認
-- [**第10部：常駐化（systemd）**](#第10部常駐化systemd)
-  - 10-1. 常駐化後のログの見方 / 10-2. 手動起動に戻したいとき
-- [**第11部：ダッシュボードの Platform 表示を正す**](#第11部ダッシュボードの-platform-表示を正すv3-追記)
-  - 11-1. バックアップ / 方法B（推奨・追記）/ 方法A（全置換）/ 11-2. 再起動と確認 / 11-3. トラブルシュート
+- [**第7部：音声合成環境（Open JTalk + SoX）**](#第7部音声合成環境open-jtalk-sox)
+  - 7-1. パッケージ導入 / 7-2. 音声「メイ」導入 / 7-3. 動作確認
+- [**第8部：ボット本体と固定 WAV**](#第8部ボット本体と固定-wav)
+  - 8-1. ボット用ディレクトリ
+  - 8-2. bot 本体は第10部で取得（ここは固定 WAV へ）
+  - 8-3. 固定 WAV 作成（対話式スクリプト）
+- [**第9部：送信テスト**](#第9部送信テスト)
+  - 9-1. テスト送信ツール取得 / 9-2. 実行 / 9-3. 🔴 md380-emu SEGV 最終確認
+- [**第10部：bot 本体（デーモン版）と設定ツールの導入**](#第10部bot-本体デーモン版と設定ツールの導入v3-新設)
+  - 10-1. 取得 / 10-2. パラメータ確認 / 10-3. 🔴 bot_setup.py で設定作成 / 10-4. 手動起動で確認
+- [**第11部：常駐化（systemd）**](#第11部常駐化systemd)
+  - 11-1. 常駐化後のログの見方 / 11-2. 手動起動に戻したいとき
 - [**付録A**：修正点まとめ（配布ドキュメント vs 実機）](#付録a今回の修正点まとめ配布ドキュメント-vs-実機)
 - [**付録B**：トラブルシューティング早見表](#付録bトラブルシューティング早見表)
 - [**付録C**：固定 WAV の個別コマンド生成（検証済み文面）](#付録c固定-wav-の個別コマンド生成検証済み文面)
 - [**付録D**：DVSwitch 側 ini の手動編集（参照用）](#付録ddvswitch-側-ini-の手動編集参照用)
+- [**付録E**：ダッシュボードの Platform 表示を正す（参照用）](#付録eダッシュボードの-platform-表示を正す参照用)
 
-> **最短ルート（クリーン構築）:** 第1部 → 第2部（2-1〜2-5）→ 第3部 → 第4部 →
-> 第5部 → 第6部 → 第7部 → 第8部 → 第9部 → 第10部 →（任意で第11部）。
-> DVSwitch 側の設定は第2-5部に統合済み、付録は参照用。
+> **最短ルート（クリーン構築）:** 第1部 → 第2部（2-1〜2-4）→ 第3部 → 第4部 →
+> 第5部 → 第6部 → 第7部 → 第8部 → 第9部 → 第10部 → 第11部。
+> 付録は参照用（手動 ini 編集は付録D、Platform 表示の修正は付録E）。
 
 ---
 
@@ -116,7 +114,7 @@
 4. ⚠️ **Web ダッシュボードの「Does not exist」は monit の httpd 無効が主因。**（v2 追記）
    Quantar_Bridge などが「Does not exist」と出るのは、サービス未起動に加えて、
    **monit の httpd（port 2812）がデフォルトでコメントアウト**されており、
-   monit のステータス問い合わせ自体が機能していないことが背景にある。第5部で対処する。
+   monit のステータス問い合わせ自体が機能していないことが背景にある。第6部で対処する。
 
 5. ⚠️ **OS は Bookworm に固定する。**（v2 追記）
    `apt upgrade` 自体ではディストリは上がらないが、sources.list が trixie を指していると
@@ -250,14 +248,14 @@ sudo /usr/local/dvs/dvs
 > `/opt/Analog_Bridge/` 配下の実体（`Analog_Bridge.ini` 等）が生成されない。**
 > インストール直後は `/opt/Analog_Bridge/` の ini が無い状態のことがあり、
 > この `dvs` の「01 初期設定」を完了して初めて生成される。
-> したがって、後段の `dvs_config.sh`（第2-5部）を実行する**前提条件**として、
+> したがって、後段の `dvs_config.sh`（第3部）を実行する**前提条件**として、
 > ここを必ず一度通しておく必要がある。ini が無いまま `dvs_config.sh` を実行すると
 > `[ERROR] 見つかりません` で止まる。
 
 > ⚠️ **ここで入れる値の多くは後で `dvs_config.sh` が上書きする。**
 > この初期設定メニューは **Brandmeister 前提**の入力フローで、USRP ポートも
 > デフォルト（32001/34001）になる。本構成は **TGIF 接続・USRP 51001/51000** が
-> 最終形だが、それらは第2-5部の `dvs_config.sh` が確定させる。
+> 最終形だが、それらは第3部の `dvs_config.sh` が確定させる。
 > よって**この時点では値の厳密さより「一度完走させて ini を生成すること」が目的**。
 > パスワードやポートはデフォルトのまま通してよい。
 
@@ -278,7 +276,7 @@ sudo /usr/local/dvs/dvs
 8. `USRP ポート番号（50000〜55000 推奨、未記入でデフォルト）` → 空欄のまま
    （後で `dvs_config.sh` が 51001/51000 にするため、ここは未記入でよい）
 9. 確認 `Analog_Bridge.ini` → `txPort: 32001, rxPort: 34001` と表示 → `Yes`
-   （この時点ではデフォルト値。第2-5部で 51001/51000 に上書きされる）
+   （この時点ではデフォルト値。第3部で 51001/51000 に上書きされる）
 10. `ローカル BM サーバー選択` → 一覧から選択（Brandmeister 用。TGIF 運用では
     後で `dvs_config.sh` が `Address=tgif.network` に上書きするため、ここは任意で可）
 11. `Brandmeister のパスワード` → デフォルト `passw0rd` のまま Enter で可
@@ -288,7 +286,7 @@ sudo /usr/local/dvs/dvs
 13. 確認 `入力終了` → `Yes`（ini files の設定が始まる）
 
 完了後、再起動する。これで `/opt/Analog_Bridge/Analog_Bridge.ini` 等が生成され、
-次の第2-5部の `dvs_config.sh` で TGIF 用の最終値に上書きできる状態になる。
+次の第3部の `dvs_config.sh` で TGIF 用の最終値に上書きできる状態になる。
 
 ---
 
@@ -317,7 +315,7 @@ sudo /usr/local/dvs/dvs
 
 ---
 
-### 2-5. 🔴 dvs_config.sh で TGIF 用の値を確定 ✅
+## 第3部：dvs_config.sh で TGIF 用の値を確定（🔴 必須）
 
 `dvs` の初期設定（01・02）で ini が生成・TGIF 化されたら、続けて対話ツール
 **`dvs_config.sh`** で、コールサイン／DMR ID／TGIF パスワード／送信 TG／USRP ポートを
@@ -327,7 +325,7 @@ sudo /usr/local/dvs/dvs
 > 取得は `curl` でも `wget` でもよい。以下は `curl` 版。
 
 ```bash
-cd ~ && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_config.sh -o dvs_config.sh && chmod +x dvs_config.sh && cat dvs_config.sh
+cd ~ && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_config.sh -o dvs_config.sh && chmod +x dvs_config.sh
 ```
 
 中身を確認したら実行:
@@ -399,7 +397,7 @@ DMR, Logged into the master successfully: tgif.network:62031
 
 ---
 
-## 第3部：サービスの起動確認と修正
+## 第4部：サービスの起動確認と修正
 
 ### この部で何をするか（対象と目的）
 
@@ -423,7 +421,7 @@ DVSwitch は単一のプログラムではなく、**役割の違う複数のサ
 この部の山場は **3-2 の md380-emu**。インストール直後はクラッシュを繰り返す状態
 （`activating (auto-restart)`）になっており、qemu のダウングレードで直す。
 
-### 3-1. サービス一覧の確認 ✅
+### 4-1. サービス一覧の確認 ✅
 
 まず、関係するサービスがどういう状態か一覧する。
 
@@ -438,7 +436,7 @@ sudo systemctl list-units --all | grep -E "analog|mmdvm|md380|bridge|dvswitch|we
 
 `dvswitch-server` という単体ユニットは**存在しない**（メタパッケージのため）。実体は `analog_bridge` / `mmdvm_bridge` / `md380-emu` / `webproxy` などのユニット群。
 
-### 3-2. 🔴🔴 md380-emu の SEGV と qemu ダウングレード ✅
+### 4-2. 🔴🔴 md380-emu の SEGV と qemu ダウングレード ✅
 
 **症状:** TGIF 等から実際に信号が入り AMBE デコードが走った瞬間、
 `md380-emu.service: Main process exited, code=killed, status=11/SEGV` を吐いて
@@ -485,7 +483,7 @@ wget http://archive.raspbian.org/raspbian/pool/main/q/qemu/qemu-user-static_5.2+
 
 > ⚠️ **この段階での running 表示は「起動できた」ことの確認に過ぎない。**
 > SEGV は実際に AMBE デコードが走ったときに発生するため、`status=11/SEGV`
-> が**出ないことの最終確認は、経路が開通する第8部の送信テスト後に行う**
+> が**出ないことの最終確認は、経路が開通する第9部の送信テスト後に行う**
 > （本手順書の実作業でも、SEGV が発覚したのは TGIF 接続後だった）。
 
 > **【経緯メモ】** 実作業では、qemu の SEGV に気づく前段階で、まず
@@ -495,9 +493,9 @@ wget http://archive.raspbian.org/raspbian/pool/main/q/qemu/qemu-user-static_5.2+
 
 ---
 
-## 第4部：Web ダッシュボード
+## 第5部：Web ダッシュボード
 
-### 4-1. ⚠️ DocumentRoot の変更 ✅
+### 5-1. ⚠️ DocumentRoot の変更 ✅
 
 初期状態では `http://<IP>/` が Apache のデフォルトページを表示する。
 DVSwitch ダッシュボードの実体は **`/usr/share/dvswitch`**。
@@ -515,7 +513,7 @@ Monit 監視画面は `http://<IP>:2812/`。
 
 ---
 
-## 第5部：ダッシュボードの赤字「Does not exist」を消す（v2 新設）
+## 第6部：ダッシュボードの赤字「Does not exist」を消す（v2 新設）
 
 ### この部で何をするか（対象と目的）
 
@@ -671,16 +669,16 @@ Quantar_Bridge 以外（未使用モードのゲートウェイ等）が「Does 
 
 ---
 
-## 第6部：音声合成環境（Open JTalk + SoX）
+## 第7部：音声合成環境（Open JTalk + SoX）
 
-### 6-1. パッケージ導入 ✅
+### 7-1. パッケージ導入 ✅
 
 ```bash
 sudo apt-get install -y open-jtalk open-jtalk-mecab-naist-jdic \
   hts-voice-nitech-jp-atr503-m001 sox
 ```
 
-### 6-2. 高品質音声「メイ」導入 ✅
+### 7-2. 高品質音声「メイ」導入 ✅
 
 ```bash
 cd ~
@@ -696,7 +694,7 @@ sudo cp MMDAgent_Example-1.8/Voice/mei/mei_normal.htsvoice /usr/share/hts-voice/
 rm -rf MMDAgent_Example-1.8 'MMDAgent_Example-1.8.zip'*
 ```
 
-### 6-3. 🔴 動作確認（辞書パスに注意） ✅
+### 7-3. 🔴 動作確認（辞書パスに注意） ✅
 
 ⚠️ 辞書パスは **`/var/lib/mecab/dic/open-jtalk/naist-jdic`**（`open-jtalk/` を含む）。
 
@@ -721,23 +719,23 @@ sox /tmp/test.wav -r 8000 -c 1 -b 16 /tmp/test_8k.wav && echo OK
 
 ---
 
-## 第7部：ボット本体と固定 WAV
+## 第8部：ボット本体と固定 WAV
 
-### 7-1. ボット用ディレクトリ ✅
+### 8-1. ボット用ディレクトリ ✅
 
 ```bash
 sudo mkdir -p /opt/dvswitch_bot
 sudo chown ocv:ocv /opt/dvswitch_bot
 ```
 
-### 7-2. ⚠️ bot 本体は第9部で取得（ここでは固定 WAV 作成に進む）
+### 8-2. ⚠️ bot 本体は第10部で取得（ここでは固定 WAV 作成に進む）
 
-> **【v3 構成変更】** bot 本体は、送信テスト（第8部）で経路開通を確認した**後**に、
-> 第9部でデーモン版 `dvswitch_bot.py` を取得・設定する流れに変更した。
-> 本節（第7部）では、bot 本体より先に必要となる**固定 WAV の作成**に進む。
+> **【v3 構成変更】** bot 本体は、送信テスト（第9部）で経路開通を確認した**後**に、
+> 第10部でデーモン版 `dvswitch_bot.py` を取得・設定する流れに変更した。
+> 本節（第8部）では、bot 本体より先に必要となる**固定 WAV の作成**に進む。
 > （固定 WAV は送信テストでも使うため、bot 本体より先に用意しておく）
 
-### 7-3. 固定 WAV 作成（対話式スクリプト） ✅
+### 8-3. 固定 WAV 作成（対話式スクリプト） ✅
 
 固定 WAV は GitHub の対話式スクリプトで生成する。コールサイン・地名・
 定時メッセージを対話入力すると、英数字を自動でカナ変換し、5本＋
@@ -791,9 +789,9 @@ soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確�
 
 ---
 
-## 第8部：送信テスト
+## 第9部：送信テスト
 
-### 8-1. テスト送信ツール取得 ✅
+### 9-1. テスト送信ツール取得 ✅
 
 `test_send.py` を GitHub から取得する。USRP プロトコルで前後 1.5 秒パディングを
 付けて WAV を単発送信するツール。
@@ -812,9 +810,9 @@ PACKET_INTERVAL = 0.02            # 20ms
 PRE_POST_PADDING_PACKETS = 75     # 前後 1.5 秒の無音
 ```
 
-### 8-2. 実行 ✅
+### 9-2. 実行 ✅
 
-第2-5部でサービスは設定反映済みなので、**ここでの再起動は不要**。
+第3部でサービスは設定反映済みなので、**ここでの再起動は不要**。
 固定 WAV を直接送信して経路を確認する。
 
 ```bash
@@ -829,7 +827,7 @@ TGIF TG 44833 で音声が出れば**経路開通**。本検証ではここま�
 > 編集した直後だけ。その場合のみ `sudo systemctl restart analog_bridge mmdvm_bridge`
 > を実行し、数秒待ってから送信する。設定を変えていないこの場面では不要。
 
-### 8-3. 🔴 md380-emu SEGV の最終確認 ✅
+### 9-3. 🔴 md380-emu SEGV の最終確認 ✅
 
 第3-2部でダウングレードした qemu の効果を、ここで**実際のデコードを走らせて確定**する。
 この送信テスト（および TGIF から実信号を受けたとき）に
@@ -845,11 +843,11 @@ SEGV が再発する場合は qemu が 7.2 に戻っていないか確認する
 
 ---
 
-## 第9部：bot 本体（デーモン版）と設定ツールの導入（v3 新設）
+## 第10部：bot 本体（デーモン版）と設定ツールの導入（v3 新設）
 
 ### この部で何をするか（対象と目的）
 
-送信テスト（第8部）で経路が開通したので、いよいよ自動応答 bot を導入する。
+送信テスト（第9部）で経路が開通したので、いよいよ自動応答 bot を導入する。
 
 本手順では、対話設定を内蔵した従来版（`dvswitch_botXXX.py`）ではなく、
 **「設定ツール＋デーモン本体」に役割分担した構成**を採用する。
@@ -869,7 +867,7 @@ SEGV が再発する場合は qemu が 7.2 に戻っていないか確認する
 機能面はベースの V1.60 を踏襲する（ナイトモード、毎正時の時報、定時メッセージ
 001/002 交互、カーチャンク応答、絶対時刻同期送信、ログローテーション）。
 
-### 9-1. bot 本体とツールの取得 ✅
+### 10-1. bot 本体とツールの取得 ✅
 
 ```bash
 cd ~
@@ -878,7 +876,7 @@ curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/mai
 chmod +x dvswitch_bot.py bot_setup.py
 ```
 
-### 9-2. ⚠️ パラメータの確認（UDP ポート等） ✅
+### 10-2. ⚠️ パラメータの確認（UDP ポート等） ✅
 
 デーモン本体の接続先が経路と一致しているか確認する（既定で正しい想定）:
 
@@ -901,7 +899,7 @@ grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH" dvswitch_bot.py
 > # 例: sed -i 's/^MY_CALLSIGN = .*/MY_CALLSIGN = "JI2TAB"/' dvswitch_bot.py
 > ```
 
-### 9-3. 🔴 設定ツールで bot_config.json を作成 ✅
+### 10-3. 🔴 設定ツールで bot_config.json を作成 ✅
 
 **デーモン本体を動かす前に、必ず設定ツールを実行**する。
 これを忘れると、本体はフェイルセーフで起動を拒否する（それが正しい挙動）。
@@ -931,7 +929,7 @@ cat /opt/dvswitch_bot/bot_config.json
 > 設定を変えたいときは、いつでも `sudo python3 bot_setup.py` を再実行 →
 > デーモンを再起動（`sudo systemctl restart dvswitch-bot`）すれば反映される。
 
-### 9-4. 手動起動で動作確認（常駐化の前に） ✅
+### 10-4. 手動起動で動作確認（常駐化の前に） ✅
 
 常駐化の前に、まず手動で起動して画面のログを見ながら動作を確認する。
 ここで設定ファイルが正しく読まれ、カーチャンク検知・時報などが動くことを見ておく。
@@ -941,17 +939,17 @@ python3 ~/dvswitch_bot.py
 ```
 
 - 起動時に `[..] Config  loaded  /opt/dvswitch_bot/bot_config.json` が出ればフェイルセーフ通過。
-- 設定が無い／不正だと、ここでエラーを出して止まる（その場合は 9-3 をやり直す）。
+- 設定が無い／不正だと、ここでエラーを出して止まる（その場合は 10-3 をやり直す）。
 - 実際にカーチャンク（短い PTT）を送って応答が返るか確認する。
-- 確認できたら `Ctrl+C` で停止し、第10部の常駐化へ進む。
+- 確認できたら `Ctrl+C` で停止し、第11部の常駐化へ進む。
 
 ---
 
-## 第10部：常駐化（systemd）
+## 第11部：常駐化（systemd）
 
-第9部で `bot_config.json` を作成し、手動起動で動作確認できたら常駐化する。
+第10部で `bot_config.json` を作成し、手動起動で動作確認できたら常駐化する。
 
-> 🔴 **前提:** 第9-3 で `bot_config.json` を作成済みであること。
+> 🔴 **前提:** 第10-3 で `bot_config.json` を作成済みであること。
 > 未作成だとデーモンはフェイルセーフで起動を拒否し、`Restart=on-failure` により
 > **再起動を繰り返して止まり続ける**（＝設定漏れに気づける、意図した挙動）。
 
@@ -994,7 +992,7 @@ sudo systemctl status dvswitch-bot --no-pager
 > 可能性が高い。`sudo journalctl -u dvswitch-bot -n 30 --no-pager` で `Config error`
 > を確認し、`sudo python3 bot_setup.py` で設定を作り直す。
 
-### 10-1. 常駐化後のログの見方（手動起動時の画面出力の代わり）
+### 11-1. 常駐化後のログの見方（手動起動時の画面出力の代わり）
 
 **手動起動（`python3 ~/dvswitch_bot.py`）では、カーチャンク検知や送信ログが
 ターミナル画面にリアルタイム表示**されていた。常駐化すると bot はバックグラウンドで
@@ -1040,7 +1038,7 @@ sudo systemctl status dvswitch-bot --no-pager
 > grep -nE "logging|FileHandler|basicConfig|filename=" ~/dvswitch_bot.py
 > ```
 
-### 10-2. 手動起動に戻して画面で見たいとき
+### 11-2. 手動起動に戻して画面で見たいとき
 
 デバッグ等で再び画面出力を見たいときは、いったん常駐を止めてから手動起動する
 （常駐したまま手動起動すると二重起動になり、USRP 送信が重なるため）。
@@ -1065,7 +1063,153 @@ sudo systemctl start dvswitch-bot
 
 ---
 
-## 第11部：ダッシュボードの Platform 表示を正す（v3 追記）
+## 付録A：今回の修正点まとめ（配布ドキュメント vs 実機）
+
+| 項目 | 配布ドキュメント | 実機（正） | 印 |
+|---|---|---|---|
+| ユーザー名 | pi-star | ocv | ⚠️ |
+| メニューコマンド | dvswitch-menu | /usr/local/dvs/dvs | ⚠️ |
+| USRP rxPort | 51000 / 31001 混在 | 51000 | ⚠️ |
+| USRP txPort | 51001 / 31001 混在 | 51001 | ⚠️ |
+| ボット UDP_PORT | 51000 | 51000 | ✅ |
+| Open JTalk 辞書 | /var/lib/mecab/dic/naist-jdic | /var/lib/mecab/dic/open-jtalk/naist-jdic | ⚠️ |
+| md380-emu 実行権限 | （記載なし） | `chmod +x` 必須（3-2 に統合） | 🔴 |
+| qemu-user-static | （記載なし） | 5.2 へダウングレード＋hold | 🔴 |
+| Apache DocumentRoot | （記載なし） | /usr/share/dvswitch | ⚠️ |
+| 送信 TG | （環境依存） | txTg / exportTG = 44833 | 🔴 |
+| **monit httpd（:2812）** | **（記載なし）** | **デフォルト無効。有効化が必要（第6部）** | **🔴**（v2追記） |
+| **Quantar_Bridge 等のサービス** | **（記載なし）** | **disabled・未起動。`enable --now` が必要（第6部）** | **🔴**（v2追記） |
+| **OS 世代** | **（記載なし）** | **bookworm に固定。sources.list 確認（第1部）** | **⚠️**（v2追記） |
+| **DVSwitch 側設定** | **手動 ini 編集** | **`dvs_config.sh` で一括設定（第3部）。手動は付録D** | **⚠️**（v3変更） |
+| **DMR サーバー TGIF 切替** | **（記載なし）** | **dvs 詳細設定02→24→TGIF（第2-4部）** | **⚠️**（v3追記） |
+| **create_wav.sh の URL** | **`reate_wav.sh`** | **`create_wav.sh` にリネーム（旧URLは404）** | **⚠️**（v3修正） |
+| **dvs 初期設定の必須性** | **（記載なし）** | **「01初期設定」完走で初めて /opt/Analog_Bridge の ini が生成（第2-3部）** | **🔴**（v3追記） |
+| **Platform 表示 Unknown** | **（記載なし）** | **platformDetect.sh に device-tree 判定を追記（付録E）。再起動は apache2** | **⚠️**（v3追記） |
+| **bot の常駐化** | **対話設定内蔵版を直接常駐** | **設定ツール bot_setup.py＋デーモン dvswitch_bot.py に分離（第10部）。EOFError 回避＋設定フェイルセーフ** | **🔴**（v3変更） |
+
+## 付録B：トラブルシューティング早見表
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| md380-emu が `Permission denied` | 実行ビット無し | `sudo chmod +x /opt/md380-emu/md380-emu` |
+| md380-emu が `status=11/SEGV` を繰り返す | qemu 7.2 のユーザーモード不具合（Debian Bug #1014177 / #1053101）。md380-emu の静的 ARM バイナリが影響を受ける | qemu 5.2 へダウングレード＋`apt-mark hold`（詳細は別資料「公式マニュアルとの差分」） |
+| Open JTalk が `Cannot open ... naist-jdic` | 辞書パス誤り | `/var/lib/mecab/dic/open-jtalk/naist-jdic` を使う |
+| `http://<IP>/` が Apache 既定ページ | DocumentRoot 未変更 | `/usr/share/dvswitch` に変更 |
+| 音声は出るが TG が 4000 に戻る | TGIF 側 Static 未設定 | TGIF ダッシュボードで 44833 を Static 登録 |
+| ボット音声が無音 | md380-emu 停止 or Analog_Bridge 設定 | md380-emu 稼働確認、USRP ポート確認 |
+| dvswitch-bot が `activating (auto-restart)` を繰り返す | 設定ファイル不正/未作成でフェイルセーフ作動 | `journalctl -u dvswitch-bot` で `Config error` 確認 → `sudo python3 bot_setup.py` で作成 |
+| 手動起動の bot が `Config error` で停止 | `bot_config.json` が無い/壊れ/値不正 | `sudo python3 bot_setup.py` で作成。`-s` で検証 |
+| **ダッシュボードで Quantar_Bridge 等が「Does not exist」** | **monit httpd 無効＋サービス未起動** | **第6部：monitrc の httpd 有効化＋`systemctl enable --now`＋`monit reload`** |
+| **`sudo monit status` が `Connection reset by peer`** | **monit httpd（:2812）がコメントアウト** | **第6部 ステップ2：monitrc の httpd ブロックを有効化** |
+| **`:2812` が外部 IP から開けない** | **`use address localhost` になっている** | **`use address 0.0.0.0` に変更して `sudo monit reload`** |
+| **`monit reload` 後も「Does not exist」のまま** | **monit のデータ収集待ち** | **十数秒待って再度 `sudo monit status`** |
+
+## 付録C：固定 WAV の個別コマンド生成（検証済み文面）
+
+第7-4部は対話式スクリプト（`create_wav.sh`）での生成を本手順とした。
+ここでは、スクリプトを使わず手動で作る場合、または**このセッションで
+TGIF 送信まで検証した文面**をそのまま再現したい場合のコマンドを掲載する。
+
+辞書パス・音声モデルは第7部と同じ。各ファイルは 8kHz / mono / 16bit PCM。
+`fixed_*` は単純変換、`time_intro` / `001` / `002` は前後トリム付き。
+
+```bash
+# fixed_intro.wav（カーチャンク応答イントロ）
+echo "こちらは、ジェイジェイツーワイワイケー、おわりあさひ ディーエムアール デジピーターです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_intro.wav && sudo sox /tmp/temp_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_intro.wav
+
+# fixed_outro.wav（カーチャンク応答アウトロ）
+echo "カーチャンクです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_outro.wav && sudo sox /tmp/temp_outro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_outro.wav
+
+# time_intro.wav（時報イントロ・前後トリム）
+echo "こちらは、ジェイジェイツーワイワイケー、" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/time_intro.wav && sox /tmp/time_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/time_intro.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+
+# 001.wav（定時メッセージ1・前後トリム）
+echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。オープン、シーシーヴォイス、フォー、ディーブイスイッチからの音声です。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/001_raw.wav && sox /tmp/001_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/001.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+
+# 002.wav（定時メッセージ2・前後トリム）
+echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。ティージーアイエフ、ヨンヨンハチサンサンと、インターネット接続しています。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/002_raw.wav && sox /tmp/002_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/002.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+```
+
+確認:
+
+```bash
+ls -la /opt/dvswitch_bot/
+soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確認
+```
+
+---
+
+## 付録D：DVSwitch 側 ini の手動編集（参照用）
+
+第3部は `dvs_config.sh` による一括設定を本手順とした。
+ここでは、スクリプトを使わず手動で ini を編集する場合、またはスクリプトが
+想定外の ini 構成に当たって `[WARN] キー ... が見つからず変更できません` を出した
+場合の参照用に、初版で行っていた手動設定を残す。
+
+各値は環境に合わせて読み替えること（本例では送信 TG = 44833）。
+
+### D-1. Analog_Bridge.ini（USRP / 送信 TG）
+
+`/opt/Analog_Bridge/Analog_Bridge.ini`
+
+```ini
+[USRP]
+address = 127.0.0.1
+txPort = 51001        ; Analog_Bridge → 外部（USRP送信）
+rxPort = 51000        ; 外部 → Analog_Bridge（ボットはここへ送る）
+```
+
+`[AMBE_AUDIO]` セクションの送信 TG:
+
+```ini
+[AMBE_AUDIO]
+txTg = 44833          ; ★ボット音声が乗る DMR TG（最重要）
+txTs = 2
+colorCode = 1
+```
+
+> **補足:** `gatewayDmrId` / `repeaterID` は運用するコールサイン／DMR ID に合わせる。
+> `dvs_config.sh` はこの 2 つを dmrid(7桁) / dmrid+essid で自動設定する。
+
+### D-2. DVSwitch.ini（DMR exportTG）
+
+`/opt/MMDVM_Bridge/DVSwitch.ini` の `[DMR]`:
+
+```ini
+[DMR]
+address = 127.0.0.1
+exportTG = 44833      ; ★エクスポート TG
+```
+
+> ⚠️ **`dvs_config.sh` はこの `DVSwitch.ini` を変更しない**（バックアップのみ）。
+> exportTG を明示的に設定したい場合は、この付録に従って手動で編集する。
+
+### D-3. MMDVM_Bridge.ini（TGIF 接続）
+
+`dvs_config.sh` を使わない場合、TGIF への DMR 接続情報も手動で設定する:
+
+```ini
+[DMR]
+Enable=1
+
+[DMR Network]
+Enable=1
+Address=tgif.network
+Password=（TGIF のパスワード）
+```
+
+`[General]` の `Callsign` と `Id`（dmrid + essid）も自局の値にする。
+
+### D-4. 設定反映
+
+```bash
+sudo systemctl restart analog_bridge mmdvm_bridge
+```
+
+---
+
+
+## 付録E：ダッシュボードの Platform 表示を正す（参照用）
 
 ### この部で何をするか（対象と目的）
 
@@ -1098,7 +1242,7 @@ grep -m1 Revision /proc/cpuinfo          # → 例: 902120（既存 case に無�
 **device-tree（`/proc/device-tree/model`）には完成された機種名がある**点が解決の鍵。
 これを使えば revision 表に依存せず、新機種でも正しく表示できる。
 
-### 11-1. バックアップ（共通・必須） ✅
+### E-1. バックアップ（共通・必須） ✅
 
 どちらの方法でも、まず既存スクリプトをバックアップする。
 
@@ -1245,10 +1389,10 @@ sudo mv /usr/local/sbin/platformDetect.sh.new /usr/local/sbin/platformDetect.sh
 
 ---
 
-### 11-2. Web サーバ再起動とダッシュボード確認（方法A・B共通） ✅
+### E-2. Web サーバ再起動とダッシュボード確認（方法A・B共通） ✅
 
 > ⚠️ **元記事は Bullseye / lighttpd 前提のため `systemctl restart lighttpd` だが、
-> 本環境は Bookworm / Apache2**（第4部で DocumentRoot を設定済み）。
+> 本環境は Bookworm / Apache2**（第5部で DocumentRoot を設定済み）。
 > したがって **`apache2`** を再起動する。
 
 ```bash
@@ -1258,7 +1402,7 @@ sudo systemctl restart apache2
 ブラウザで `http://<IP>/` を開き **Ctrl+F5**（ハードリロード）。
 Hardware Info → Platform が **`Raspberry Pi Zero 2 W Rev 1.0`** になっていれば成功。
 
-### 11-3. トラブルシュート
+### E-3. トラブルシュート
 
 | 症状 | 確認・対処 |
 |---|---|
@@ -1269,152 +1413,7 @@ Hardware Info → Platform が **`Raspberry Pi Zero 2 W Rev 1.0`** になって�
 
 ---
 
-## 付録A：今回の修正点まとめ（配布ドキュメント vs 実機）
-
-| 項目 | 配布ドキュメント | 実機（正） | 印 |
-|---|---|---|---|
-| ユーザー名 | pi-star | ocv | ⚠️ |
-| メニューコマンド | dvswitch-menu | /usr/local/dvs/dvs | ⚠️ |
-| USRP rxPort | 51000 / 31001 混在 | 51000 | ⚠️ |
-| USRP txPort | 51001 / 31001 混在 | 51001 | ⚠️ |
-| ボット UDP_PORT | 51000 | 51000 | ✅ |
-| Open JTalk 辞書 | /var/lib/mecab/dic/naist-jdic | /var/lib/mecab/dic/open-jtalk/naist-jdic | ⚠️ |
-| md380-emu 実行権限 | （記載なし） | `chmod +x` 必須（3-2 に統合） | 🔴 |
-| qemu-user-static | （記載なし） | 5.2 へダウングレード＋hold | 🔴 |
-| Apache DocumentRoot | （記載なし） | /usr/share/dvswitch | ⚠️ |
-| 送信 TG | （環境依存） | txTg / exportTG = 44833 | 🔴 |
-| **monit httpd（:2812）** | **（記載なし）** | **デフォルト無効。有効化が必要（第5部）** | **🔴**（v2追記） |
-| **Quantar_Bridge 等のサービス** | **（記載なし）** | **disabled・未起動。`enable --now` が必要（第5部）** | **🔴**（v2追記） |
-| **OS 世代** | **（記載なし）** | **bookworm に固定。sources.list 確認（第1部）** | **⚠️**（v2追記） |
-| **DVSwitch 側設定** | **手動 ini 編集** | **`dvs_config.sh` で一括設定（第2-5部）。手動は付録D** | **⚠️**（v3変更） |
-| **DMR サーバー TGIF 切替** | **（記載なし）** | **dvs 詳細設定02→24→TGIF（第2-4部）** | **⚠️**（v3追記） |
-| **create_wav.sh の URL** | **`reate_wav.sh`** | **`create_wav.sh` にリネーム（旧URLは404）** | **⚠️**（v3修正） |
-| **dvs 初期設定の必須性** | **（記載なし）** | **「01初期設定」完走で初めて /opt/Analog_Bridge の ini が生成（第2-3部）** | **🔴**（v3追記） |
-| **Platform 表示 Unknown** | **（記載なし）** | **platformDetect.sh に device-tree 判定を追記（第11部）。再起動は apache2** | **⚠️**（v3追記） |
-| **bot の常駐化** | **対話設定内蔵版を直接常駐** | **設定ツール bot_setup.py＋デーモン dvswitch_bot.py に分離（第9部）。EOFError 回避＋設定フェイルセーフ** | **🔴**（v3変更） |
-
-## 付録B：トラブルシューティング早見表
-
-| 症状 | 原因 | 対処 |
-|---|---|---|
-| md380-emu が `Permission denied` | 実行ビット無し | `sudo chmod +x /opt/md380-emu/md380-emu` |
-| md380-emu が `status=11/SEGV` を繰り返す | qemu 7.2 のユーザーモード不具合（Debian Bug #1014177 / #1053101）。md380-emu の静的 ARM バイナリが影響を受ける | qemu 5.2 へダウングレード＋`apt-mark hold`（詳細は別資料「公式マニュアルとの差分」） |
-| Open JTalk が `Cannot open ... naist-jdic` | 辞書パス誤り | `/var/lib/mecab/dic/open-jtalk/naist-jdic` を使う |
-| `http://<IP>/` が Apache 既定ページ | DocumentRoot 未変更 | `/usr/share/dvswitch` に変更 |
-| 音声は出るが TG が 4000 に戻る | TGIF 側 Static 未設定 | TGIF ダッシュボードで 44833 を Static 登録 |
-| ボット音声が無音 | md380-emu 停止 or Analog_Bridge 設定 | md380-emu 稼働確認、USRP ポート確認 |
-| dvswitch-bot が `activating (auto-restart)` を繰り返す | 設定ファイル不正/未作成でフェイルセーフ作動 | `journalctl -u dvswitch-bot` で `Config error` 確認 → `sudo python3 bot_setup.py` で作成 |
-| 手動起動の bot が `Config error` で停止 | `bot_config.json` が無い/壊れ/値不正 | `sudo python3 bot_setup.py` で作成。`-s` で検証 |
-| **ダッシュボードで Quantar_Bridge 等が「Does not exist」** | **monit httpd 無効＋サービス未起動** | **第5部：monitrc の httpd 有効化＋`systemctl enable --now`＋`monit reload`** |
-| **`sudo monit status` が `Connection reset by peer`** | **monit httpd（:2812）がコメントアウト** | **第5部 ステップ2：monitrc の httpd ブロックを有効化** |
-| **`:2812` が外部 IP から開けない** | **`use address localhost` になっている** | **`use address 0.0.0.0` に変更して `sudo monit reload`** |
-| **`monit reload` 後も「Does not exist」のまま** | **monit のデータ収集待ち** | **十数秒待って再度 `sudo monit status`** |
-
-## 付録C：固定 WAV の個別コマンド生成（検証済み文面）
-
-第7-4部は対話式スクリプト（`create_wav.sh`）での生成を本手順とした。
-ここでは、スクリプトを使わず手動で作る場合、または**このセッションで
-TGIF 送信まで検証した文面**をそのまま再現したい場合のコマンドを掲載する。
-
-辞書パス・音声モデルは第6部と同じ。各ファイルは 8kHz / mono / 16bit PCM。
-`fixed_*` は単純変換、`time_intro` / `001` / `002` は前後トリム付き。
-
-```bash
-# fixed_intro.wav（カーチャンク応答イントロ）
-echo "こちらは、ジェイジェイツーワイワイケー、おわりあさひ ディーエムアール デジピーターです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_intro.wav && sudo sox /tmp/temp_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_intro.wav
-
-# fixed_outro.wav（カーチャンク応答アウトロ）
-echo "カーチャンクです。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/temp_outro.wav && sudo sox /tmp/temp_outro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/fixed_outro.wav
-
-# time_intro.wav（時報イントロ・前後トリム）
-echo "こちらは、ジェイジェイツーワイワイケー、" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/time_intro.wav && sox /tmp/time_intro.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/time_intro.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
-
-# 001.wav（定時メッセージ1・前後トリム）
-echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。オープン、シーシーヴォイス、フォー、ディーブイスイッチからの音声です。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/001_raw.wav && sox /tmp/001_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/001.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
-
-# 002.wav（定時メッセージ2・前後トリム）
-echo "こちらは、ジェイジェイツーワイワイケー、尾張旭、DMR、デジピーターです。ティージーアイエフ、ヨンヨンハチサンサンと、インターネット接続しています。" | open_jtalk -x /var/lib/mecab/dic/open-jtalk/naist-jdic -m /usr/share/hts-voice/mei/mei_normal.htsvoice -ow /tmp/002_raw.wav && sox /tmp/002_raw.wav -r 8000 -c 1 -b 16 /opt/dvswitch_bot/002.wav silence 1 0.1 1% reverse silence 1 0.1 1% reverse
-```
-
-確認:
-
-```bash
-ls -la /opt/dvswitch_bot/
-soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確認
-```
-
----
-
-## 付録D：DVSwitch 側 ini の手動編集（参照用）
-
-第2-5部は `dvs_config.sh` による一括設定を本手順とした。
-ここでは、スクリプトを使わず手動で ini を編集する場合、またはスクリプトが
-想定外の ini 構成に当たって `[WARN] キー ... が見つからず変更できません` を出した
-場合の参照用に、初版で行っていた手動設定を残す。
-
-各値は環境に合わせて読み替えること（本例では送信 TG = 44833）。
-
-### D-1. Analog_Bridge.ini（USRP / 送信 TG）
-
-`/opt/Analog_Bridge/Analog_Bridge.ini`
-
-```ini
-[USRP]
-address = 127.0.0.1
-txPort = 51001        ; Analog_Bridge → 外部（USRP送信）
-rxPort = 51000        ; 外部 → Analog_Bridge（ボットはここへ送る）
-```
-
-`[AMBE_AUDIO]` セクションの送信 TG:
-
-```ini
-[AMBE_AUDIO]
-txTg = 44833          ; ★ボット音声が乗る DMR TG（最重要）
-txTs = 2
-colorCode = 1
-```
-
-> **補足:** `gatewayDmrId` / `repeaterID` は運用するコールサイン／DMR ID に合わせる。
-> `dvs_config.sh` はこの 2 つを dmrid(7桁) / dmrid+essid で自動設定する。
-
-### D-2. DVSwitch.ini（DMR exportTG）
-
-`/opt/MMDVM_Bridge/DVSwitch.ini` の `[DMR]`:
-
-```ini
-[DMR]
-address = 127.0.0.1
-exportTG = 44833      ; ★エクスポート TG
-```
-
-> ⚠️ **`dvs_config.sh` はこの `DVSwitch.ini` を変更しない**（バックアップのみ）。
-> exportTG を明示的に設定したい場合は、この付録に従って手動で編集する。
-
-### D-3. MMDVM_Bridge.ini（TGIF 接続）
-
-`dvs_config.sh` を使わない場合、TGIF への DMR 接続情報も手動で設定する:
-
-```ini
-[DMR]
-Enable=1
-
-[DMR Network]
-Enable=1
-Address=tgif.network
-Password=（TGIF のパスワード）
-```
-
-`[General]` の `Callsign` と `Id`（dmrid + essid）も自局の値にする。
-
-### D-4. 設定反映
-
-```bash
-sudo systemctl restart analog_bridge mmdvm_bridge
-```
-
----
-
 *初版作成: 2026-06-02*
-*v2 更新: 2026-06-03（第5部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
-*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第2-5部に統合し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動、第5部を目的明確化で改稿、第10部に常駐化後のログ確認手順を追加、第11部 Platform 表示修正を新設、第3部に各サービスの役割説明を追加、旧第8部（経路設定の参照節）を削除し以降を繰り上げ、目次にページ内リンクを付与）*
+*v2 更新: 2026-06-03（第6部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
+*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替。dvs_config.sh による値確定を第3部として独立。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動 ini 編集を付録Dへ、Platform 表示修正を付録Eへ。第6部を目的明確化で改稿、第11部に常駐化後のログ確認手順を追加、第4部に各サービスの役割説明を追加、経路設定の参照節を削除、目次にページ内リンクを付与）*
 *対応 bot: dvswitch_bot.py（デーモン版・V1.60 ベース）＋ bot_setup.py（設定ツール）/ 実機: OCV (Zero 2W, Bookworm 32-bit)*
