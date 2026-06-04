@@ -966,11 +966,10 @@ python3 ~/dvswitch_bot.py
 > 未作成だとデーモンはフェイルセーフで起動を拒否し、`Restart=on-failure` により
 > **再起動を繰り返して止まり続ける**（＝設定漏れに気づける、意図した挙動）。
 
-```bash
-sudo nano /etc/systemd/system/dvswitch-bot.service
-```
+サービスファイルを一括作成する（`tee` のヒアドキュメントで、編集なしで登録）。
 
-```ini
+```bash
+sudo tee /etc/systemd/system/dvswitch-bot.service > /dev/null << 'EOF'
 [Unit]
 Description=DVSwitch Bot (OpenCCVoice, daemon based on V1.60)
 After=network.target analog_bridge.service mmdvm_bridge.service md380-emu.service
@@ -987,12 +986,16 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
+
+> 別ユーザーで運用する場合は、`ExecStart` のパスと `User=` を読み替えること。
+
+作成したら、reload → 自動起動有効化 → 起動 → 状態確認をまとめて実行する。
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable dvswitch-bot
-sudo systemctl start dvswitch-bot
+sudo systemctl enable --now dvswitch-bot
 sudo systemctl status dvswitch-bot --no-pager
 ```
 
