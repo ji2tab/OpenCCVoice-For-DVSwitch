@@ -779,15 +779,20 @@ PRE_POST_PADDING_PACKETS = 75     # 前後 1.5 秒の無音
 
 ### 8-2. 実行 ✅
 
+第2-5部でサービスは設定反映済みなので、**ここでの再起動は不要**。
+固定 WAV を直接送信して経路を確認する。
+
 ```bash
-sudo systemctl restart analog_bridge mmdvm_bridge
-sleep 3
 python3 ~/test_send.py /opt/dvswitch_bot/001.wav
 ```
 
 TGIF TG 44833 で音声が出れば**経路開通**。本検証ではここまで成功を確認した。
 
 > bot 本体が常駐している場合は二重送信になるため、テスト時は bot を停止する。
+
+> **再起動が要るのはどんな時か:** `Analog_Bridge.ini` や `MMDVM_Bridge.ini` を
+> 編集した直後だけ。その場合のみ `sudo systemctl restart analog_bridge mmdvm_bridge`
+> を実行し、数秒待ってから送信する。設定を変えていないこの場面では不要。
 
 ### 8-3. 🔴 md380-emu SEGV の最終確認 ✅
 
