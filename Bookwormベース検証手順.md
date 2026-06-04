@@ -351,11 +351,40 @@ DMR, Logged into the master successfully: tgif.network:62031
 
 ## 第3部：サービスの起動確認と修正
 
+### この部で何をするか（対象と目的）
+
+**対象:** DVSwitch-Server が動かす一連の常駐サービス（systemd ユニット群）。
+**目的:** これらが正しく起動しているかを確認し、起動しないもの（特に md380-emu）を直す。
+
+DVSwitch は単一のプログラムではなく、**役割の違う複数のサービスが連携**して動く。
+本構成（DMR / TGIF）で関係する主なサービスは次のとおり。
+
+| サービス（systemd ユニット） | 役割 | 本構成での重要度 |
+|---|---|---|
+| `mmdvm_bridge` | TGIF（DMR ネットワーク）と接続する中核。デジタル無線プロトコル側の窓口 | 🔴 必須 |
+| `analog_bridge` | 音声（USRP/TLV）とデジタル側を橋渡し。bot の音声はここを通る | 🔴 必須 |
+| `md380-emu` | AMBE 音声コーデックをソフトウェアで処理（MD380 ファーム emulation）。受話/送話の声の実体 | 🔴 必須 |
+| `webproxy` | ダッシュボードの補助（プロキシ） | 補助 |
+
+> `dvswitch-server` という**単体のサービスは存在しない**（メタパッケージのため）。
+> 実体は上記の `analog_bridge` / `mmdvm_bridge` / `md380-emu` / `webproxy` などの
+> ユニット群で、これらが揃って初めて「DVSwitch が動いている」状態になる。
+
+この部の山場は **3-2 の md380-emu**。インストール直後はクラッシュを繰り返す状態
+（`activating (auto-restart)`）になっており、qemu のダウングレードで直す。
+
 ### 3-1. サービス一覧の確認 ✅
+
+まず、関係するサービスがどういう状態か一覧する。
 
 ```bash
 sudo systemctl list-units --all | grep -E "analog|mmdvm|md380|bridge|dvswitch|webproxy"
 ```
+
+**見るべきポイント:**
+- `analog_bridge` / `mmdvm_bridge` / `webproxy` が `active (running)` であること
+- `md380-emu` が `activating (auto-restart)` になっていないか
+  （なっていれば 3-2 の SEGV 問題。次節で対処する）
 
 `dvswitch-server` という単体ユニットは**存在しない**（メタパッケージのため）。実体は `analog_bridge` / `mmdvm_bridge` / `md380-emu` / `webproxy` などのユニット群。
 
@@ -1344,5 +1373,5 @@ sudo systemctl restart analog_bridge mmdvm_bridge
 
 *初版作成: 2026-06-02*
 *v2 更新: 2026-06-03（第4.5部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
-*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第7部から第2-5部へ移動し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動、第4.5部を目的明確化で改稿、第9部に常駐化後のログ確認手順を追加、第10部 Platform 表示修正を新設）*
+*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第7部から第2-5部へ移動し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動、第4.5部を目的明確化で改稿、第9部に常駐化後のログ確認手順を追加、第10部 Platform 表示修正を新設、第3部に各サービスの役割説明を追加）*
 *対応 bot: dvswitch_bot.py（デーモン版・V1.60 ベース）＋ bot_setup.py（設定ツール）/ 実機: OCV (Zero 2W, Bookworm 32-bit)*
