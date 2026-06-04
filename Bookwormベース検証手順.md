@@ -42,6 +42,9 @@
 > - **第2-3部** に重要な発見を追記：`dvs` の「01 初期設定」を一度通さないと
 >   `/opt/Analog_Bridge/` の ini が生成されず、`dvs_config.sh` が前提を満たせない。
 >   `dvs` の全画面遷移（初期設定13ステップ＋TGIF切替）も具体的に記載した。
+> - **第10部** を新設：ダッシュボードの「Platform」が `Unknown ARM based System` に
+>   なる問題を、`platformDetect.sh` への device-tree 判定追記で解決（方法B 推奨／
+>   方法A 全置換）。Web サーバは Bookworm の Apache2 を再起動する点に注意。
 
 ---
 
@@ -891,6 +894,210 @@ sudo systemctl start dvswitch-bot
 
 ---
 
+## 第10部：ダッシュボードの Platform 表示を正す（v3 追記）
+
+### この部で何をするか（対象と目的）
+
+**対象:** DVSwitch ダッシュボードの「Hardware Info → Platform」欄。
+**目的:** ここが **`Unknown ARM based System`** のままになっているのを、
+**`Raspberry Pi Zero 2 W Rev 1.0`** と正しく表示させる。
+
+機器の識別・保守性のため。複数台運用時の取り違え防止にもなる。
+
+### なぜ Unknown になるのか
+
+Platform 表示は `/usr/local/sbin/platformDetect.sh`（Andy Taylor MW0MWZ 作）が返す。
+このスクリプトは:
+
+1. `model name` が `ARM...` で始まることは判定できる（→ ARM 系と分かる）
+2. しかし機種名は `/proc/cpuinfo` の **Revision 値を case 文で変換**して決めている
+3. その case 文に **Zero 2 W の Revision（例 `902120`）が載っていない**
+4. どれにもマッチせず `*) "Unknown ARM based System"` に落ちる
+
+つまり「ARM 系とは分かるが、revision 表に無い新しい機種なので名前が出せない」状態。
+
+確認:
+
+```bash
+/usr/local/sbin/platformDetect.sh        # → Unknown ARM based System
+tr -d '\0' < /proc/device-tree/model; echo   # → Raspberry Pi Zero 2 W Rev 1.0
+grep -m1 Revision /proc/cpuinfo          # → 例: 902120（既存 case に無い値）
+```
+
+**device-tree（`/proc/device-tree/model`）には完成された機種名がある**点が解決の鍵。
+これを使えば revision 表に依存せず、新機種でも正しく表示できる。
+
+### 10-1. バックアップ（共通・必須） ✅
+
+どちらの方法でも、まず既存スクリプトをバックアップする。
+
+```bash
+sudo cp /usr/local/sbin/platformDetect.sh /usr/local/sbin/platformDetect.sh.bak.$(date +%F)
+```
+
+---
+
+### 方法B（推奨）：既存スクリプトに device-tree 判定を最小追記
+
+既存ロジックを壊さず、**シェバン直後に device-tree 判定ブロックを差し込む**だけ。
+device-tree が取れればそれを返し、取れなければ従来どおり既存ロジックに流れる。
+**Zero 2 W に限らず新機種全般で正しくなる**ため、こちらを推奨する。
+
+#### B-1. 挿入ブロックを一時ファイルに用意
+
+```bash
+cat > /tmp/dt_block.sh << 'EOF'
+
+# --- device-tree model を最優先で返す（新機種対応・前段に挿入） ---
+for __p in /sys/firmware/devicetree/base/model /proc/device-tree/model; do
+  if [ -r "$__p" ]; then
+    __dt=$(tr -d '\0' < "$__p" | sed 's/[[:space:]]\+$//')
+    if [ -n "$__dt" ]; then
+      echo "$__dt"
+      exit 0
+    fi
+  fi
+done
+EOF
+```
+
+#### B-2. 「シェバン → 挿入ブロック → 既存の2行目以降」で組み立て
+
+`sed` のエスケープを避け、`head`/`cat`/`tail` で安全に組み立てる（方式「う」）。
+まず `/tmp` で組み立てて**動作確認してから**本番に反映する。
+
+```bash
+# /tmp で組み立て（本番はまだ触らない）
+{ head -1 /usr/local/sbin/platformDetect.sh; \
+  cat /tmp/dt_block.sh; \
+  tail -n +2 /usr/local/sbin/platformDetect.sh; } > /tmp/platformDetect.test.sh
+chmod +x /tmp/platformDetect.test.sh
+
+# 先頭を目視確認（シェバンの直後にブロックが入っているか）
+head -15 /tmp/platformDetect.test.sh
+
+# 実行確認（Raspberry Pi Zero 2 W Rev 1.0 が返ればOK）
+/tmp/platformDetect.test.sh
+sudo -u www-data /tmp/platformDetect.test.sh
+```
+
+#### B-3. 本番へ反映
+
+`/tmp` の確認で正しい機種名が返ったら、本番ファイルへ置き換える。
+
+```bash
+sudo cp /tmp/platformDetect.test.sh /usr/local/sbin/platformDetect.sh
+sudo chmod 0755 /usr/local/sbin/platformDetect.sh
+/usr/local/sbin/platformDetect.sh        # 最終確認
+```
+
+---
+
+### 方法A（代替）：スクリプト全体を POSIX-sh 版に差し替え
+
+元記事（JJ2YYK ブログ）の方法。既存を**まるごと新版に置き換える**。
+判定順序が見直されており、device-tree を最優先で使う。完全版を使いたい場合はこちら。
+
+```bash
+sudo tee /usr/local/sbin/platformDetect.sh.new > /dev/null << 'EOF'
+#!/bin/sh
+#
+# platformDetect.sh - Return the board/platform name for DVSwitch Dashboard
+# Safe POSIX-sh version (no bash-only features)
+#
+
+BOARD_NAME=""
+if [ -r /etc/armbian-release ]; then
+  . /etc/armbian-release
+fi
+
+if [ -n "$BOARD_NAME" ]; then
+  echo "$BOARD_NAME"
+  exit 0
+fi
+
+# 1) device-tree model（最優先・最も確実）
+for p in /sys/firmware/devicetree/base/model /proc/device-tree/model; do
+  if [ -r "$p" ]; then
+    dt_model=$(tr -d '\0' < "$p" | sed 's/[[:space:]]\+$//')
+    if [ -n "$dt_model" ]; then
+      echo "$dt_model"
+      exit 0
+    fi
+  fi
+done
+
+# 2) /proc/cpuinfo Model 行
+model_line=$(grep -m1 -E '^Model[[:space:]]*:' /proc/cpuinfo 2>/dev/null | sed 's/^Model[[:space:]]*:[[:space:]]*//')
+if [ -n "$model_line" ]; then
+  echo "$model_line"
+  exit 0
+fi
+
+# 3) Hardware フィールドで最小マッピング
+hardware_field=$(grep -m1 -E '^Hardware[[:space:]]*:' /proc/cpuinfo 2>/dev/null | sed 's/^Hardware[[:space:]]*:[[:space:]]*//')
+echo "$hardware_field" | grep -qi '^ODROID' && { echo "Odroid XU3/XU4 System"; exit 0; }
+if echo "$hardware_field" | grep -qi 'sun8i'; then
+  if [ -n "$BOARD_NAME" ]; then echo "$BOARD_NAME"; else echo "sun8i based Pi Clone"; fi
+  exit 0
+fi
+echo "$hardware_field" | grep -qi 's5p4418' && { echo "Samsung Artik"; exit 0; }
+echo "$hardware_field" | grep -qi 'BCM2710' && { echo "Raspberry Pi Zero 2 W"; exit 0; }
+
+# 4) Legacy revision マッピング（best-effort・抜粋）
+model_name=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | sed 's/.*: //')
+echo "$model_name" | grep -q '^ARM' && {
+  board_rev=$(grep -m1 'Revision' /proc/cpuinfo 2>/dev/null | awk '{print $3}' | sed 's/^100//')
+  case "$board_rev" in
+    *900092) echo "Pi Zero Rev 1.2 (512MB)"; exit 0;;
+    *900093) echo "Pi Zero Rev 1.3 (512MB)"; exit 0;;
+    *9000c1) echo "Pi Zero W Rev 1.1 (512MB)"; exit 0;;
+    *a02082) echo "Pi 3 Model B (1GB) - Sony, UK"; exit 0;;
+    *a32082) echo "Pi 3 Model B (1GB) - Sony, JPN"; exit 0;;
+  esac
+}
+
+# 5) 最終フォールバック
+echo "Generic $(uname -m) class computer"
+exit 0
+EOF
+
+sudo chmod 0755 /usr/local/sbin/platformDetect.sh.new
+/usr/local/sbin/platformDetect.sh.new                 # 確認
+sudo -u www-data /usr/local/sbin/platformDetect.sh.new # www-data でも確認
+sudo mv /usr/local/sbin/platformDetect.sh.new /usr/local/sbin/platformDetect.sh
+```
+
+> 元記事の case 文は機種網羅版（40 行超）。上記は要点を抜粋した。Zero 2 W は
+> device-tree（手順1）で解決するため case には到達しないが、完全網羅したい場合は
+> 元記事のマッピングをそのまま使う。
+
+---
+
+### 10-2. Web サーバ再起動とダッシュボード確認（方法A・B共通） ✅
+
+> ⚠️ **元記事は Bullseye / lighttpd 前提のため `systemctl restart lighttpd` だが、
+> 本環境は Bookworm / Apache2**（第4部で DocumentRoot を設定済み）。
+> したがって **`apache2`** を再起動する。
+
+```bash
+sudo systemctl restart apache2
+```
+
+ブラウザで `http://<IP>/` を開き **Ctrl+F5**（ハードリロード）。
+Hardware Info → Platform が **`Raspberry Pi Zero 2 W Rev 1.0`** になっていれば成功。
+
+### 10-3. トラブルシュート
+
+| 症状 | 確認・対処 |
+|---|---|
+| 端末では正しいが Dashboard が Unknown のまま | ブラウザを Ctrl+F5。`sudo systemctl restart apache2` |
+| `sudo -u www-data ...` で結果が違う | 権限の問題。`sudo chmod 0755 /usr/local/sbin/platformDetect.sh` |
+| PHP の `exec()` が無効 | `php.ini` の `disable_functions` を確認 |
+| 元に戻したい | `sudo cp /usr/local/sbin/platformDetect.sh.bak.YYYY-MM-DD /usr/local/sbin/platformDetect.sh` |
+
+---
+
 ## 付録A：今回の修正点まとめ（配布ドキュメント vs 実機）
 
 | 項目 | 配布ドキュメント | 実機（正） | 印 |
@@ -912,6 +1119,7 @@ sudo systemctl start dvswitch-bot
 | **DMR サーバー TGIF 切替** | **（記載なし）** | **dvs 詳細設定02→24→TGIF（第2-4部）** | **⚠️**（v3追記） |
 | **create_wav.sh の URL** | **`reate_wav.sh`** | **`create_wav.sh` にリネーム（旧URLは404）** | **⚠️**（v3修正） |
 | **dvs 初期設定の必須性** | **（記載なし）** | **「01初期設定」完走で初めて /opt/Analog_Bridge の ini が生成（第2-3部）** | **🔴**（v3追記） |
+| **Platform 表示 Unknown** | **（記載なし）** | **platformDetect.sh に device-tree 判定を追記（第10部）。再起動は apache2** | **⚠️**（v3追記） |
 
 ## 付録B：トラブルシューティング早見表
 
@@ -1034,5 +1242,5 @@ sudo systemctl restart analog_bridge mmdvm_bridge
 
 *初版作成: 2026-06-02*
 *v2 更新: 2026-06-03（第4.5部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
-*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第7部から第2-5部へ移動し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動、第4.5部を目的明確化で改稿、第9部に常駐化後のログ確認手順を追加）*
+*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第7部から第2-5部へ移動し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動、第4.5部を目的明確化で改稿、第9部に常駐化後のログ確認手順を追加、第10部 Platform 表示修正を新設）*
 *対応 bot: dvswitch_bot158.py V1.58（リポジトリに V1.60=dvswitch_bot160.py も存在）/ 実機: OCV (Zero 2W, Bookworm 32-bit)*
