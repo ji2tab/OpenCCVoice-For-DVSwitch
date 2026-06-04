@@ -411,7 +411,7 @@ def _reply_executor(mode, val, extra=None):
     try:
         if mode == "kerchunk":
             cs_kana = "".join([CHAR_TO_KANA.get(ch, ch) for ch in val.upper()])
-            middle = f"{cs_kana}局からの、"
+            middle = f"{cs_kana}局の、"
             logger.info(_fmt("TX", "Generate", val))
             if _generate_hybrid(FIXED_INTRO_WAV, middle, FIXED_OUTRO_WAV):
                 logger.info(_fmt("TX", "Sending", val))
