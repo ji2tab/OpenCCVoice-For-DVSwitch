@@ -408,13 +408,40 @@ sudo /usr/local/dvs/dvs
 **`dvs_config.sh`** で、コールサイン／DMR ID／TGIF パスワード／送信 TG／USRP ポートを
 一括設定する。**この順序（dvs → dvs_config.sh）が前提。**
 
+### 5-0. 🔴 ツール置き場 `/opt/dvswitch_bot/bin/` を作り、全スクリプトを取得
+
+本手順で使う 5 本のスクリプト（`dvs_config.sh` / `create_wav.sh` / `test_send.py` /
+`dvswitch_bot.py` / `bot_setup.py`）は、**すべて `/opt/dvswitch_bot/bin/` に集約**する。
+ホーム直下に散らからず、後の管理（バックアップ・更新）も一箇所で済む。
+
+> **配置の考え方:** スクリプト（実行ファイル）は `/opt/dvswitch_bot/bin/`、
+> bot が読む WAV・設定 JSON は `/opt/dvswitch_bot/` 直下。役割で階層を分ける。
+
 ```bash
-cd ~ && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_config.sh -o dvs_config.sh && chmod +x dvs_config.sh
+# 置き場を作成（bin はスクリプト、直下は WAV・JSON 用）
+sudo mkdir -p /opt/dvswitch_bot/bin
+sudo chown -R ocv:ocv /opt/dvswitch_bot
+
+# 5 本を bin/ に一括取得
+cd /opt/dvswitch_bot/bin
+BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main
+for f in dvs_config.sh create_wav.sh test_send.py dvswitch_bot.py bot_setup.py; do
+  curl -fsSL "$BASE/$f" -o "$f"
+done
+chmod +x *.sh *.py
+ls -la /opt/dvswitch_bot/bin/
 ```
 
-中身を確認したら実行:
+> 5 本が並び、`.sh`/`.py` に実行権（`x`）が付いていれば取得完了。
+> 以降の各部（固定 WAV 作成・送信テスト・bot 常駐化）は、ここで取得済みの
+> スクリプトを使う。個別の再ダウンロードは不要。
+
+### 5-1. dvs_config.sh を実行
+
+中身を確認したら実行（`bin/` に cd して実行、または絶対パスで）:
 
 ```bash
+cd /opt/dvswitch_bot/bin
 sudo ./dvs_config.sh
 ```
 
@@ -676,32 +703,27 @@ sox /tmp/test.wav -r 8000 -c 1 -b 16 /tmp/test_8k.wav && echo OK
 
 ## 第10部：ボット用ディレクトリと固定 WAV の作成
 
-### 10-1. ボット用ディレクトリ ✅
+### 10-1. ボット用ディレクトリ（第5-0で作成済み） ✅
+
+`/opt/dvswitch_bot/`（および `bin/`）は**第5-0で作成済み**。固定 WAV はこの直下
+（`/opt/dvswitch_bot/`）に置く。未作成の場合のみ次を実行:
 
 ```bash
-sudo mkdir -p /opt/dvswitch_bot
-sudo chown ocv:ocv /opt/dvswitch_bot
+sudo mkdir -p /opt/dvswitch_bot/bin
+sudo chown -R ocv:ocv /opt/dvswitch_bot
 ```
 
 > 別ユーザーで運用する場合は `ocv` を読み替えること。
 
 ### 10-2. 固定 WAV 作成（対話式スクリプト） ✅
 
-固定 WAV は GitHub の対話式スクリプトで生成する。
+固定 WAV は第5-0で取得済みの対話式スクリプト `create_wav.sh` で生成する。
+出力先はスクリプト内で `/opt/dvswitch_bot/`（直下）に固定。
 
 ```bash
-cd ~
-wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/create_wav.sh -O create_wav.sh
-chmod +x create_wav.sh
+cd /opt/dvswitch_bot/bin
 sudo ./create_wav.sh
 ```
-
-> ⚠️ **ファイル名は `create_wav.sh`。**
-> 旧 URL（`reate_wav.sh`、先頭 c 欠落）は **404** になる。
-> 最新ファイル名の確認:
-> ```bash
-> curl -s https://api.github.com/repos/ji2tab/OpenCCVoice-For-DVSwitch/contents/ | grep '"name"'
-> ```
 
 対話入力の流れ:
 
@@ -734,14 +756,11 @@ soxi /opt/dvswitch_bot/*.wav    # 全ファイル 8000Hz / 1ch / 16-bit を確�
 
 ## 第11部：送信テスト
 
-### 11-1. テスト送信ツール取得 ✅
+### 11-1. テスト送信ツール（第5-0で取得済み） ✅
 
-```bash
-cd ~
-wget https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/test_send.py
-```
+`test_send.py` は第5-0で `/opt/dvswitch_bot/bin/` に取得済み。
 
-主要パラメータ（取得後に確認）:
+主要パラメータ（必要なら確認）:
 
 ```python
 UDP_IP = "127.0.0.1"
@@ -753,7 +772,7 @@ PRE_POST_PADDING_PACKETS = 75     # 前後 1.5 秒の無音
 ### 11-2. 実行 ✅
 
 ```bash
-python3 ~/test_send.py /opt/dvswitch_bot/001.wav
+python3 /opt/dvswitch_bot/bin/test_send.py /opt/dvswitch_bot/001.wav
 ```
 
 TGIF TG 44833 で音声が出れば**経路開通**。
@@ -792,19 +811,23 @@ SEGV が再発する場合は qemu が 7.2 に戻っていないか確認する
 機能: ナイトモード・毎正時時報・定時メッセージ（001/002 交互）・カーチャンク応答・
 絶対時刻同期送信・ログローテーション自動追従
 
-### 12-1. bot 本体とツールの取得 ✅
+### 12-1. bot 本体とツール（第5-0で取得済み） ✅
+
+`dvswitch_bot.py` と `bot_setup.py` は第5-0で `/opt/dvswitch_bot/bin/` に取得済み。
+未取得の場合のみ次を実行:
 
 ```bash
-cd ~
-curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvswitch_bot.py -o dvswitch_bot.py
-curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/bot_setup.py  -o bot_setup.py
+cd /opt/dvswitch_bot/bin
+BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main
+curl -fsSL "$BASE/dvswitch_bot.py" -o dvswitch_bot.py
+curl -fsSL "$BASE/bot_setup.py"  -o bot_setup.py
 chmod +x dvswitch_bot.py bot_setup.py
 ```
 
 ### 12-2. ⚠️ パラメータの確認 ✅
 
 ```bash
-grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH" dvswitch_bot.py
+grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH" /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```
 
 期待値:
@@ -819,9 +842,9 @@ grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH" dvswitch_bot.py
 `MY_CALLSIGN` も自局に合わせる（既定は `JJ2YYK`）:
 
 ```bash
-grep -n "^MY_CALLSIGN" dvswitch_bot.py
+grep -n "^MY_CALLSIGN" /opt/dvswitch_bot/bin/dvswitch_bot.py
 # 変更が必要なら:
-# sed -i 's/^MY_CALLSIGN = .*/MY_CALLSIGN = "JJ2YYK"/' dvswitch_bot.py
+# sudo sed -i 's/^MY_CALLSIGN = .*/MY_CALLSIGN = "JJ2YYK"/' /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```
 
 ### 12-3. 🔴 設定ツールで bot_config.json を作成 ✅
@@ -830,7 +853,7 @@ grep -n "^MY_CALLSIGN" dvswitch_bot.py
 未実行だと本体はフェイルセーフで起動を拒否する（それが正しい挙動）。
 
 ```bash
-sudo python3 bot_setup.py
+sudo python3 /opt/dvswitch_bot/bin/bot_setup.py
 ```
 
 対話入力:
@@ -847,14 +870,14 @@ sudo python3 bot_setup.py
 確認:
 
 ```bash
-sudo python3 bot_setup.py -s     # 現在の設定を表示＋有効性チェック
+sudo python3 /opt/dvswitch_bot/bin/bot_setup.py -s     # 現在の設定を表示＋有効性チェック
 cat /opt/dvswitch_bot/bot_config.json
 ```
 
 ### 12-4. 手動起動で動作確認（常駐化の前に） ✅
 
 ```bash
-python3 ~/dvswitch_bot.py
+python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```
 
 - 起動時に `[..] Config loaded /opt/dvswitch_bot/bot_config.json` が出ればフェイルセーフ通過。
@@ -879,7 +902,7 @@ Wants=analog_bridge.service mmdvm_bridge.service md380-emu.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/ocv/dvswitch_bot.py
+ExecStart=/usr/bin/python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
 Restart=on-failure
 RestartSec=10
 User=ocv
@@ -903,7 +926,7 @@ sudo systemctl status dvswitch-bot --no-pager
 
 > ⚠️ `activating (auto-restart)` を繰り返す場合は設定ファイル不正の可能性が高い。
 > `sudo journalctl -u dvswitch-bot -n 30 --no-pager` で `Config error` を確認し、
-> `sudo python3 bot_setup.py` で設定を作り直す。
+> `sudo python3 /opt/dvswitch_bot/bin/bot_setup.py` で設定を作り直す。
 
 ### 13-1. 常駐化後のログの見方
 
@@ -926,15 +949,15 @@ sudo systemctl status dvswitch-bot --no-pager
 ### 13-2. 手動起動に戻したいとき
 
 ```bash
-sudo systemctl stop dvswitch-bot      # 常駐を一時停止
-python3 ~/dvswitch_bot.py             # 画面出力で手動起動（Ctrl+C で終了）
-sudo systemctl start dvswitch-bot     # 確認後、常駐に戻す
+sudo systemctl stop dvswitch-bot                    # 常駐を一時停止
+python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # 画面出力で手動起動（Ctrl+C で終了）
+sudo systemctl start dvswitch-bot                   # 確認後、常駐に戻す
 ```
 
 > **設定を変えたいとき:**
 > ```bash
-> sudo python3 ~/bot_setup.py            # 対話で bot_config.json を更新
-> sudo systemctl restart dvswitch-bot    # デーモンを再起動して反映
+> sudo python3 /opt/dvswitch_bot/bin/bot_setup.py    # 対話で bot_config.json を更新
+> sudo systemctl restart dvswitch-bot                # デーモンを再起動して反映
 > ```
 
 ---
@@ -973,8 +996,8 @@ cd ~/dvswitch_backup
 
 sudo cp /opt/Analog_Bridge/Analog_Bridge.ini ./
 sudo cp /opt/MMDVM_Bridge/MMDVM_Bridge.ini ./
-cp ~/dvswitch_bot.py ./
-cp ~/bot_setup.py ./
+cp /opt/dvswitch_bot/bin/dvswitch_bot.py ./
+cp /opt/dvswitch_bot/bin/bot_setup.py ./
 sudo cp /etc/systemd/system/dvswitch-bot.service ./ 2>/dev/null || true
 cp /opt/dvswitch_bot/bot_config.json ./
 cp /usr/share/hts-voice/mei/mei_normal.htsvoice ./
@@ -1010,11 +1033,13 @@ cd ~
 tar xzf dvswitch_backup_YYYYMMDD.tar.gz
 sudo cp ~/dvswitch_backup/Analog_Bridge.ini /opt/Analog_Bridge/
 sudo cp ~/dvswitch_backup/MMDVM_Bridge.ini /opt/MMDVM_Bridge/
-cp ~/dvswitch_backup/dvswitch_bot.py ~/
-cp ~/dvswitch_backup/bot_setup.py ~/
+sudo mkdir -p /opt/dvswitch_bot/bin
+sudo cp ~/dvswitch_backup/dvswitch_bot.py /opt/dvswitch_bot/bin/
+sudo cp ~/dvswitch_backup/bot_setup.py /opt/dvswitch_bot/bin/
+sudo chmod +x /opt/dvswitch_bot/bin/*.py
 sudo cp ~/dvswitch_backup/dvswitch-bot.service /etc/systemd/system/
-sudo mkdir -p /opt/dvswitch_bot
 sudo cp ~/dvswitch_backup/bot_config.json /opt/dvswitch_bot/
+sudo chown -R ocv:ocv /opt/dvswitch_bot
 sudo systemctl daemon-reload
 sudo systemctl restart analog_bridge mmdvm_bridge md380-emu
 sudo systemctl enable --now dvswitch-bot
@@ -1032,7 +1057,7 @@ crontab -e
 
 ```cron
 # 毎週日曜 3:00 に DVSwitch 設定をバックアップ
-0 3 * * 0 tar czf /home/ocv/dvswitch_backup_$(date +\%Y\%m\%d).tar.gz /opt/Analog_Bridge/Analog_Bridge.ini /opt/MMDVM_Bridge/MMDVM_Bridge.ini /home/ocv/dvswitch_bot.py /home/ocv/bot_setup.py /opt/dvswitch_bot/bot_config.json
+0 3 * * 0 tar czf /home/ocv/dvswitch_backup_$(date +\%Y\%m\%d).tar.gz /opt/Analog_Bridge/Analog_Bridge.ini /opt/MMDVM_Bridge/MMDVM_Bridge.ini /opt/dvswitch_bot/bin/dvswitch_bot.py /opt/dvswitch_bot/bin/bot_setup.py /opt/dvswitch_bot/bot_config.json
 ```
 
 ---
@@ -1062,6 +1087,7 @@ crontab -e
 | dvs 初期設定の必須性 | （記載なし） | 「01初期設定」完走で /opt/Analog_Bridge の ini が生成（第4-3部） | 🔴 |
 | Platform 表示 Unknown | （記載なし） | platformDetect.sh に device-tree 判定を追記（付録E） | ⚠️ |
 | bot の常駐化 | 対話設定内蔵版を直接常駐 | bot_setup.py＋dvswitch_bot.py に分離（第12部）。EOFError 回避＋フェイルセーフ | 🔴 |
+| スクリプト配置 | ホーム直下に散在 | 5本を `/opt/dvswitch_bot/bin/` に集約（第5-0で一括取得）。systemd の ExecStart も同パス | ⚠️ |
 
 ---
 
@@ -1320,8 +1346,11 @@ sudo systemctl restart apache2
 | `/var/log/mmdvm/MMDVM_Bridge-*.log` | ログファイル（Bot の監視対象） |
 | `/usr/share/hts-voice/mei/mei_normal.htsvoice` | メイの音声モデル |
 | `/var/lib/mecab/dic/open-jtalk/naist-jdic` | Open JTalk 辞書 |
-| `~/dvswitch_bot.py` | 自動応答 Bot デーモン本体 |
-| `~/bot_setup.py` | Bot 設定ツール |
+| `/opt/dvswitch_bot/bin/dvswitch_bot.py` | 自動応答 Bot デーモン本体 |
+| `/opt/dvswitch_bot/bin/bot_setup.py` | Bot 設定ツール |
+| `/opt/dvswitch_bot/bin/test_send.py` | USRP テスト送信ツール |
+| `/opt/dvswitch_bot/bin/create_wav.sh` | 固定 WAV 生成スクリプト |
+| `/opt/dvswitch_bot/bin/dvs_config.sh` | DVSwitch ini 設定ツール |
 | `/opt/dvswitch_bot/bot_config.json` | Bot 設定ファイル |
 | `/opt/dvswitch_bot/*.wav` | 固定 WAV ファイル群 |
 | `/etc/systemd/system/dvswitch-bot.service` | systemd サービス定義 |

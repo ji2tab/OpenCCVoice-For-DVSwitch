@@ -5,14 +5,17 @@
  USRP テスト送信ツール
  — 指定した WAV ファイルを Analog_Bridge へ単発送信する —
 
+【配置】
+  /opt/dvswitch_bot/bin/test_send.py
+
 【使い方】
-  python3 test_send.py /opt/dvswitch_bot/002.wav
-  python3 test_send.py /opt/dvswitch_bot/001.wav
+  python3 /opt/dvswitch_bot/bin/test_send.py /opt/dvswitch_bot/002.wav
+  python3 /opt/dvswitch_bot/bin/test_send.py /opt/dvswitch_bot/001.wav
 
 【注意】
   bot 本体が動いている場合は、同じ UDP ポートに二重送信になるので、
   bot を一旦止めてから実行してください。
-    sudo systemctl stop dvswitch_bot     # systemd の場合
+    sudo systemctl stop dvswitch-bot     # systemd の場合（サービス名はハイフン）
     または bot を起動しているターミナルで Ctrl+C
 ================================================================================
 """
@@ -98,6 +101,6 @@ def send_usrp_wav(wav_path):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("使い方: python3 test_send.py <WAVファイルパス>")
-        print("例   : python3 test_send.py /opt/dvswitch_bot/002.wav")
+        print("例   : python3 /opt/dvswitch_bot/bin/test_send.py /opt/dvswitch_bot/002.wav")
         sys.exit(1)
     send_usrp_wav(sys.argv[1])

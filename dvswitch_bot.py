@@ -38,9 +38,13 @@
   /opt/dvswitch_bot/001.wav / 002.wav
   ※ time_outro.wav は不要（動的合成に統合）
 
+【配置】
+  /opt/dvswitch_bot/bin/dvswitch_bot.py
+  （WAV・設定 JSON は /opt/dvswitch_bot/ 直下。BOT_DIR 参照）
+
 【使い方】
-  1) sudo python3 bot_setup.py     # 先に設定ファイルを作成
-  2) python3 dvswitch_bot.py       # または systemd で常駐
+  1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
+  2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
  Document Version: daemon-1.0 (based on V1.60)
  Last Updated: 2026-06
@@ -163,7 +167,7 @@ def _fatal_config(msg):
     logger.error("=" * 70)
     logger.error(_fmt("!!", "Config error", "", msg))
     logger.error(_fmt("!!", "Hint", "", f"設定ファイル: {CONFIG_PATH}"))
-    logger.error(_fmt("!!", "Hint", "", "先に 'sudo python3 bot_setup.py' を実行して設定を作成してください"))
+    logger.error(_fmt("!!", "Hint", "", "先に 'sudo python3 /opt/dvswitch_bot/bin/bot_setup.py' を実行して設定を作成してください"))
     logger.error("デフォルト値での起動は安全のため行いません（意図しない送信を防止）。")
     logger.error("=" * 70)
     sys.exit(1)

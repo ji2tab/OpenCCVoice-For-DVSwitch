@@ -25,11 +25,16 @@ OpenCCVoice は、アマチュア無線の精神に基づき、以下の理念�
 
 ---
 
-# OpenCCVoice DVSwitch Bot V1.58
+# OpenCCVoice DVSwitch Bot
 
 ## 概要
 
-DVSwitch Bot V1.58 は、DVSwitch / Analog_Bridge / MMDVM_Bridge 環境向けに設計された、自動音声応答・時報・定時案内システムです。
+DVSwitch Bot は、DVSwitch / Analog_Bridge / MMDVM_Bridge 環境向けに設計された、自動音声応答・時報・定時案内システムです。
+
+> **現行構成（デーモン分離版）:** 設定ツール `bot_setup.py` と デーモン本体
+> `dvswitch_bot.py` に分離し、`/opt/dvswitch_bot/bin/` に配置する。systemd 常駐時の
+> `EOFError` 回避と、設定不正時のフェイルセーフを備える。以下に挙げる機能は、
+> 時報の一体合成（「〇〇時です」）を導入した V1.58 系を踏襲している。
 
 MMDVM_Bridge のログをリアルタイム監視し、受信状況に応じて以下の処理を自動実行します。
 
@@ -190,15 +195,30 @@ MMDVM_Bridge のログローテーションを自動検出し、監視対象を�
 
 # 起動方法
 
+スクリプトは **`/opt/dvswitch_bot/bin/`** に配置し、設定は専用ツール
+`bot_setup.py` で作成する。デーモン本体 `dvswitch_bot.py` は起動時に
+その設定ファイル（`/opt/dvswitch_bot/bot_config.json`）を読むだけで、
+対話は行わない（systemd 常駐に適した構成）。
+
 ```bash
-python3 dvswitch_bot158.py
+# 1) 先に設定ファイルを作成（対話）
+sudo python3 /opt/dvswitch_bot/bin/bot_setup.py
+
+# 2) デーモン本体を起動（手動起動の例。常駐は systemd 推奨）
+python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```
 
-起動時に以下を対話設定できます。
+`bot_setup.py` で設定できる項目:
 
-* 最小受信時間
-* 最大受信時間
-* 1時間あたりの定時放送回数
+* 最小受信時間 / 最大受信時間（カーチャンク判定）
+* 1時間あたりの定時放送回数（1〜3）
+* ナイトモード（夜間の時報・定時メッセージ抑制）と開始/終了時刻
+
+> 設定ファイルが無い・壊れている・値が不正な場合、デーモン本体は誤動作を避けるため
+> **起動を拒否する（フェイルセーフ）**。必ず先に `bot_setup.py` を実行すること。
+
+常駐化（systemd）や各スクリプトの取得を含む詳しい構築手順は、リポジトリの
+**`Bookwormベース検証手順.md`** を参照。
 
 ---
 

@@ -18,10 +18,13 @@
    NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
    NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
 
+【配置】
+   /opt/dvswitch_bot/bin/bot_setup.py
+
 【使い方】
-   sudo python3 bot_setup.py        対話で作成・更新（既存値があれば初期表示）
-   sudo python3 bot_setup.py -s     現在の設定を表示するだけ
-   sudo python3 bot_setup.py -h     ヘルプ
+   sudo python3 /opt/dvswitch_bot/bin/bot_setup.py        対話で作成・更新（既存値があれば初期表示）
+   sudo python3 /opt/dvswitch_bot/bin/bot_setup.py -s     現在の設定を表示するだけ
+   sudo python3 /opt/dvswitch_bot/bin/bot_setup.py -h     ヘルプ
 
  ※ /opt/dvswitch_bot/ への書き込みのため sudo 推奨。
 ================================================================================
@@ -116,7 +119,7 @@ def show_config():
     cfg = load_existing()
     if cfg is None:
         print(f"[INFO] 設定ファイルがありません（または壊れています）: {CONFIG_PATH}")
-        print("       'sudo python3 bot_setup.py' で作成してください。")
+        print("       'sudo python3 /opt/dvswitch_bot/bin/bot_setup.py' で作成してください。")
         return
     print(f"[INFO] 現在の設定: {CONFIG_PATH}")
     print(json.dumps(cfg, ensure_ascii=False, indent=2))
@@ -249,7 +252,7 @@ def do_edit():
         save_config(cfg)
     except PermissionError:
         print(f"\n[ERROR] 書き込み権限がありません: {CONFIG_PATH}")
-        print("        sudo を付けて再実行してください: sudo python3 bot_setup.py")
+        print("        sudo を付けて再実行してください: sudo python3 /opt/dvswitch_bot/bin/bot_setup.py")
         sys.exit(1)
     except Exception as e:
         print(f"\n[ERROR] 保存に失敗しました: {e}")

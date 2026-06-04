@@ -1,11 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # DVSwitch 設定対話ツール  dvs_config.sh
+#   配置: /opt/dvswitch_bot/bin/dvs_config.sh
 #   TGIF 接続を前提に、ユーザ毎の可変項目を対話入力し、3つの ini を更新する。
 #   編集前に /opt/bak/YYMMDDHHMMSS/ へ 3ファイルをまとめてバックアップする。
 #
-#   使い方:
-#     sudo ./dvs_config.sh        対話編集（編集前に自動バックアップ）
+#   使い方（bin ディレクトリに cd して実行、または絶対パスで実行）:
+#     cd /opt/dvswitch_bot/bin && sudo ./dvs_config.sh   対話編集（編集前に自動バックアップ）
+#     sudo /opt/dvswitch_bot/bin/dvs_config.sh           （絶対パスでも可）
 #     sudo ./dvs_config.sh -r     バックアップから復元（日付フォルダを選択）
 #     sudo ./dvs_config.sh -d     /opt/bak/ 配下のバックアップを全削除
 #     sudo ./dvs_config.sh -h     ヘルプ
