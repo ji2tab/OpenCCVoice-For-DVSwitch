@@ -360,8 +360,8 @@ sudo ./dvs_config.sh -h     # ヘルプ
 | 項目 | 入力例（本トレース） | 備考 |
 |---|---|---|
 | Callsign | `JI2TAB` | 自局コールサイン |
-| DMR ID(7桁) | `4401378` | |
-| ESSID(2桁) | `11` | |
+| DMR ID(7桁) | `4401378` | 自局 DMR ID |
+| ESSID(2桁) | `11` | サブ番号（枝番号） |
 | TGIF Password | （TGIF アカウントの値） | TGIF サイトで発行したもの |
 | 送信 TG（txTg） | `44833` | ボット音声が乗る DMR TG |
 
