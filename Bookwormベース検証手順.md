@@ -826,6 +826,69 @@ sudo systemctl status dvswitch-bot
 > 常駐化の前に、まず `python3 ~/dvswitch_bot158.py` を手動起動して
 > カーチャンク検知・定時放送の動作を対話設定込みで確認することを推奨する。
 
+### 9-1. 常駐化後のログの見方（手動起動時の画面出力の代わり）
+
+**手動起動（`python3 ~/dvswitch_bot158.py`）では、カーチャンク検知や送信ログが
+ターミナル画面にリアルタイム表示**されていた。常駐化すると bot はバックグラウンドで
+動くため画面には出なくなり、**出力は journal に記録される**（unit 定義の
+`StandardOutput=journal` / `StandardError=journal` による）。
+
+つまり「画面で見ていたもの」は消えるのではなく journal に移る。以下で確認する。
+
+**リアルタイム監視（旧・画面表示の代わり。これを常用する）:**
+
+```bash
+sudo journalctl -u dvswitch-bot -f
+```
+
+`-f` は `tail -f` 相当。カーチャンク検知・定時放送などが流れてくるのを
+そのまま眺められる。終了は `Ctrl+C`（bot は止まらず、ログ表示だけ終わる）。
+
+**直近のログをまとめて見る:**
+
+```bash
+sudo journalctl -u dvswitch-bot -n 50 --no-pager
+```
+
+**今日のログだけ／時間で絞る:**
+
+```bash
+sudo journalctl -u dvswitch-bot --since today --no-pager
+sudo journalctl -u dvswitch-bot --since "1 hour ago" --no-pager
+```
+
+**サービスの稼働状態（落ちていないか）:**
+
+```bash
+sudo systemctl status dvswitch-bot --no-pager
+```
+
+> **【bot 独自のログファイルがある場合】**
+> `dvswitch_bot158.py` は Python の `logger` を使っており、journal とは別に
+> **独自のログファイル**へ書いている可能性がある（V2.0 系ではログローテーションの
+> 仕組みも持つ）。その場合は journal と併せてそのファイルも確認する。場所はスクリプトの
+> ログ設定で決まるので、不明なときは次で確認:
+> ```bash
+> grep -nE "logging|FileHandler|basicConfig|filename=" ~/dvswitch_bot158.py
+> ```
+> ログファイルが判明したら `tail -f <そのパス>` で同様にリアルタイム監視できる。
+
+### 9-2. 手動起動に戻して画面で見たいとき
+
+デバッグ等で再び画面出力を見たいときは、いったん常駐を止めてから手動起動する
+（常駐したまま手動起動すると二重起動になり、USRP 送信が重なるため）。
+
+```bash
+sudo systemctl stop dvswitch-bot      # 常駐を一時停止
+python3 ~/dvswitch_bot158.py          # 画面出力で手動起動（Ctrl+C で終了）
+```
+
+確認が済んだら常駐に戻す:
+
+```bash
+sudo systemctl start dvswitch-bot
+```
+
 ---
 
 ## 付録A：今回の修正点まとめ（配布ドキュメント vs 実機）
@@ -971,5 +1034,5 @@ sudo systemctl restart analog_bridge mmdvm_bridge
 
 *初版作成: 2026-06-02*
 *v2 更新: 2026-06-03（第4.5部 Quantar_Bridge 対処、第1部 OS固定確認、OSイメージ直リンクを追記）*
-*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第7部から第2-5部へ移動し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動）*
+*v3 更新: 2026-06-04（第2部を実作業順に再構成：2-3 dvs初期設定→2-4 TGIF切替→2-5 dvs_config.sh。dvs_config.sh を第7部から第2-5部へ移動し curl 版に。create_wav.sh のファイル名修正、TGIF ログイン確認手順を追加、dvs の全画面遷移を追記、手動編集を付録Dへ移動、第4.5部を目的明確化で改稿、第9部に常駐化後のログ確認手順を追加）*
 *対応 bot: dvswitch_bot158.py V1.58（リポジトリに V1.60=dvswitch_bot160.py も存在）/ 実機: OCV (Zero 2W, Bookworm 32-bit)*
