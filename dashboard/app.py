@@ -294,7 +294,7 @@ TEMPLATE = r"""<!DOCTYPE html>
     --blue:    #2563eb;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#f8f8f8;color:var(--text);font-family:arial,sans-serif;font-size:11pt;min-height:100vh;padding-bottom:40px}
+  body{background:#f8f8f8;color:var(--text);font-family:arial,sans-serif;font-size:13pt;min-height:100vh;padding-bottom:40px}
 
   /* ヘッダ */
   header{
@@ -560,24 +560,6 @@ TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
-</div>
-
-<div class="card">
-  <div class="card-head">🗄 ini バックアップ一覧</div>
-  <div class="card-body">
-    {% if backups %}
-    <ul class="bak-list">
-      {% for b in backups[:10] %}
-      <li>{{ b[:2] }}/{{ b[2:4] }}/{{ b[4:6] }} {{ b[6:8] }}:{{ b[8:10] }}:{{ b[10:12] }}  →  {{ b }}</li>
-      {% endfor %}
-    </ul>
-    {% if backups|length > 10 %}
-    <div style="font-size:10px;color:var(--muted);margin-top:4px">（最新10件を表示）</div>
-    {% endif %}
-    {% else %}
-    <div style="font-size:11px;color:var(--muted)">バックアップはまだありません。</div>
-    {% endif %}
-  </div>
 </div>
 
 <div class="card">
