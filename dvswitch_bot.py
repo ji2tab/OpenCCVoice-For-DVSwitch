@@ -10,7 +10,7 @@
 【V1.62 での変更点】
   - 🔴 起動アナウンスを追加。
     デーモン起動後、ログ監視を開始する直前に threading.Timer で
-    STARTUP_ANNOUNCE_DELAY_SEC（既定 7.0 秒）遅延して
+    STARTUP_ANNOUNCE_DELAY_SEC（既定 5.0 秒）遅延して
     「起動しました。」を 1 回だけ送出する。
     意図: MMDVM_Bridge / Analog_Bridge の起動が落ち着いてから送出する
     ため、固定の遅延を入れている（5〜10 秒程度で調整可）。
@@ -142,7 +142,7 @@ ROTATION_CHECK_INTERVAL = 5.0
 GAP_AFTER_INTRO_SEC = 0.5
 
 # 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
-STARTUP_ANNOUNCE_DELAY_SEC = 2.0
+STARTUP_ANNOUNCE_DELAY_SEC = 5.0
 
 # ============================================================
 # グローバル状態 / 設定値
