@@ -223,8 +223,14 @@ sudo journalctl -u dvswitch-bot -n 25 --no-pager
 ## 6. 音声の変更（固定WAV・試聴）
 
 コールサインや案内文を変えたいときは、固定 WAV を作り直す。
+**運用を続けたまま（常駐させたまま）作り直せる。**
 
-### 6-1. 固定 WAV を作り直す（対話）
+> 💡 **重要: WAV の作り直しに Bot の再起動は不要。**
+> Bot は応答・時報・定時メッセージを送出する**たびに WAV ファイルを読み直す**設計
+> （起動時にメモリへ抱え込まない）。そのため WAV を上書きすれば、**次の送出から
+> 自動的に新しい音声**になる。`systemctl restart` は不要。
+
+### 6-1. 運用途中で固定 WAV を作り直す（対話）
 
 ```bash
 cd /opt/dvswitch_bot/bin
@@ -232,7 +238,23 @@ sudo ./create_wav.sh
 ```
 
 コールサイン・地名・定時メッセージ1/2 を対話入力すると、英数字を自動でカナ変換し、
-`/opt/dvswitch_bot/` 直下に WAV を生成する（fixed_intro / fixed_outro / time_intro / 001 / 002）。
+`/opt/dvswitch_bot/` 直下に WAV を生成（上書き）する
+（fixed_intro / fixed_outro / time_intro / 001 / 002）。
+
+> 💡 **上書き前に自動バックアップされる。**
+> `create_wav.sh` は、上書きの直前に既存の `*.wav` を
+> `/opt/bak/wav_YYMMDDHHMMSS/` へ自動退避する（dvs_config.sh と同じ作法）。
+> 作り直しに失敗しても元へ戻せる（6-4 参照）。
+
+> ⚠️ **タイミングの注意（任意）:** 生成（上書き）中に、ちょうど Bot が同じファイルを
+> 送出で読むと、まれに音が乱れることがある。確実を期すなら、閑散時に作業するか、
+> 念のため一時停止してから作り直す:
+> ```bash
+> sudo systemctl stop dvswitch-bot     # 念のため停止（任意）
+> cd /opt/dvswitch_bot/bin && sudo ./create_wav.sh
+> sudo systemctl start dvswitch-bot    # 作り直し後に再開
+> ```
+> 通常は停止せずに作り直しても問題ないが、確実にしたいときの手順として。
 
 ### 6-2. 生成された WAV を確認する
 
@@ -240,6 +262,8 @@ sudo ./create_wav.sh
 ls -la /opt/dvswitch_bot/*.wav
 soxi /opt/dvswitch_bot/*.wav     # 8000Hz / 1ch / 16-bit になっているか
 ```
+
+ファイルの**更新時刻**が今になっていれば、上書きできている。
 
 ### 6-3. 試聴する（実際に電波に乗せて聞く）
 
@@ -255,6 +279,44 @@ sudo systemctl start dvswitch-bot
 
 > Bot を止めずに test_send.py を実行すると、同じ UDP ポート(51000)に二重送信になり
 > 音が崩れる。必ず stop してからテストする。
+> （試聴せず、実際の運用の中で次の送出を聞いて確認するなら、停止も不要）
+
+### 6-4. 特定の1ファイルだけ手で作り直す（細かい調整）
+
+読み上げ文を細かく調整したい、特定の1ファイルだけ直したい場合は、
+Open JTalk + SoX を直接実行する。例（fixed_outro を作り直す）:
+
+```bash
+echo "カーチャンクです。" | open_jtalk \
+  -x /var/lib/mecab/dic/open-jtalk/naist-jdic \
+  -m /usr/share/hts-voice/mei/mei_normal.htsvoice \
+  -ow /tmp/outro_raw.wav
+sox /tmp/outro_raw.wav -r 8000 -c 1 -b 16 \
+  /opt/dvswitch_bot/fixed_outro.wav \
+  silence 1 0.1 1% reverse silence 1 0.1 1% reverse
+```
+
+各ファイルの読み上げ文・コマンドの詳細は **`Voice_generation_manual.md`** を参照。
+こちらも上書きするだけで、再起動なしに次の送出から反映される。
+
+### 6-5. 作り直しに失敗した → 元の音声に戻す（復元）
+
+`create_wav.sh` は上書きのたびに `/opt/bak/wav_YYMMDDHHMMSS/` へ自動バックアップしている。
+読み間違い・変換ミスなどで失敗したら、`-r` で過去のWAVセットに戻せる。
+
+```bash
+cd /opt/dvswitch_bot/bin
+sudo ./create_wav.sh -r
+```
+
+日付フォルダの一覧が出るので、戻したい番号を選ぶ。復元の前にも現状を保険バックアップするので、
+「戻しすぎた」場合もさらに戻せる。復元後は再起動不要で次の送出から反映される。
+
+古いバックアップをまとめて消したいとき:
+
+```bash
+sudo ./create_wav.sh -d     # /opt/bak/wav_* を全削除（確認あり）
+```
 
 ---
 
@@ -391,6 +453,7 @@ gzip ~/pi_backup_*.img
 | **時報・定時が出ない** | ナイトモード中 | ログに `NightSkip` が出ていれば仕様通り。設定は `bot_setup.py -s` で確認 |
 | **定時が夜間も出てしまう** | 旧版（V1.60以前）の可能性 | V1.61 以降に更新（8章）。起動ログのバージョンを確認 |
 | **test_send で音が崩れる** | Bot と二重送信 | 先に `sudo systemctl stop dvswitch-bot` してからテスト |
+| **音声を作り直したら失敗した** | 読み間違い・変換ミス等 | `cd /opt/dvswitch_bot/bin && sudo ./create_wav.sh -r` で前のWAVに戻す |
 | **Dashboard の Platform が Unknown** | 機種判定スクリプト | platformDetect.sh に device-tree 判定を追記（別資料の付録参照）。再起動は `apache2` |
 | **md380-emu が SEGV** | qemu が新しすぎる | qemu-user-static を 5.2 系に固定（`apt-mark hold`）。`qemu-arm-static --version` を確認 |
 
@@ -415,7 +478,8 @@ sudo python3 /opt/dvswitch_bot/bin/bot_setup.py -s  # 設定表示
 sudo systemctl restart dvswitch-bot                 # 反映
 
 # === 音声 ===
-cd /opt/dvswitch_bot/bin && sudo ./create_wav.sh    # 音声再生成
+cd /opt/dvswitch_bot/bin && sudo ./create_wav.sh    # 音声再生成（自動バックアップ付き）
+cd /opt/dvswitch_bot/bin && sudo ./create_wav.sh -r # 音声を前のセットに戻す
 python3 /opt/dvswitch_bot/bin/test_send.py /opt/dvswitch_bot/001.wav  # 試聴(要 stop)
 
 # === DVSwitch 設定 ===

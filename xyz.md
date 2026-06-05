@@ -725,6 +725,11 @@ cd /opt/dvswitch_bot/bin
 sudo ./create_wav.sh
 ```
 
+> 💡 **自動バックアップ／復元:** `create_wav.sh` は上書き直前に既存の `*.wav` を
+> `/opt/bak/wav_YYMMDDHHMMSS/` へ自動退避する。失敗したら `sudo ./create_wav.sh -r`
+> で前の WAV セットに戻せる（`-d` 全削除 / `-h` ヘルプ）。bot は送出のたびに WAV を
+> 読むため、上書きは再起動なしで次の送出から反映される。
+
 対話入力の流れ:
 
 1. コールサイン（例 `JJ2YYK`）→ 自動カナ変換結果を確認・修正
