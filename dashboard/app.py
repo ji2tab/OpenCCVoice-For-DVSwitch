@@ -294,7 +294,7 @@ TEMPLATE = r"""<!DOCTYPE html>
     --blue:    #2563eb;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#f8f8f8;color:var(--text);font-family:arial,sans-serif;font-size:13pt;min-height:100vh;padding-bottom:40px}
+  body{background:#f8f8f8;color:var(--text);font-family:arial,sans-serif;font-size:11pt;min-height:100vh;padding-bottom:40px}
 
   /* ヘッダ */
   header{
