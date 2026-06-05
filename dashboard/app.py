@@ -274,73 +274,149 @@ TEMPLATE = r"""<!DOCTYPE html>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
   :root {
-    --bg:    #0d1117;
-    --panel: #161b22;
-    --p2:    #1c2a3a;
-    --bd:    #30363d;
-    --bd2:   #21262d;
-    --acc:   #2563eb;
-    --grn:   #3fb950;
-    --red:   #f85149;
-    --amb:   #e3b341;
-    --blu:   #58a6ff;
-    --txt:   #c9d1d9;
-    --mut:   #8b949e;
-    --mono:  'Share Tech Mono', monospace;
+    --bg:      #fafafa;
+    --bg2:     #e8e8e8;
+    --bg3:     #f9f9f9;
+    --border:  #ccc;
+    --border2: #ddd;
+    --orange:  #b44010;
+    --orange2: #b5651d;
+    --orange3: #ef7215;
+    --green:   #12AD2A;
+    --green2:  #1d1;
+    --green3:  #0b0;
+    --text:    #333;
+    --muted:   #666;
+    --th-bg:   #d0d0d0;
+    --mono:    'Share Tech Mono', monospace;
+    --red:     #c0392b;
+    --amber:   #e67e22;
+    --blue:    #2563eb;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:12px;min-height:100vh;padding-bottom:40px}
-  header{background:var(--p2);border-bottom:2px solid var(--acc);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
-  .logo{font-size:14px;color:#fff;letter-spacing:.08em}
-  .tagline{font-size:10px;color:var(--mut);margin-top:2px}
-  .status-pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut)}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--mut)}
-  .dot.active{background:var(--grn);box-shadow:0 0 5px var(--grn)}
+  body{background:#f8f8f8;color:var(--text);font-family:arial,sans-serif;font-size:11pt;min-height:100vh;padding-bottom:40px}
+
+  /* ヘッダ */
+  header{
+    background:var(--bg);
+    border-bottom:2px solid var(--orange);
+    padding:10px 20px;
+    display:flex;align-items:center;justify-content:space-between;
+    position:sticky;top:0;z-index:100;
+    box-shadow:0 0 6px #999;
+  }
+  .logo{font-size:14px;font-weight:bold;color:var(--orange);font-family:var(--mono);letter-spacing:.06em}
+  .tagline{font-size:10px;color:var(--muted);margin-top:2px}
+  .status-pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .dot{width:10px;height:10px;border-radius:50%;background:#ccc}
+  .dot.active{background:var(--green3);box-shadow:0 0 4px var(--green3)}
   .dot.failed{background:var(--red)}
-  .dot.inactive{background:var(--amb)}
-  main{max-width:1200px;margin:0 auto;padding:12px 16px;display:grid;gap:10px}
-  .card{background:var(--panel);border:1px solid var(--bd);border-radius:4px;overflow:hidden}
-  .card-head{background:var(--p2);padding:5px 12px;border-bottom:1px solid var(--bd);font-size:11px;color:var(--blu);letter-spacing:.08em;display:flex;align-items:center;gap:6px}
+  .dot.inactive{background:var(--amber)}
+
+  main{max-width:1100px;margin:0 auto;padding:14px 16px;display:grid;gap:12px}
+
+  /* カード */
+  .card{
+    background:var(--bg);
+    border-radius:10px;
+    box-shadow:0 0 8px #999;
+    overflow:hidden;
+  }
+  .card-head{
+    background:var(--bg2);
+    padding:6px 14px;
+    border-bottom:1px solid var(--border);
+    font-size:12px;font-weight:bold;
+    color:var(--orange2);
+    display:flex;align-items:center;gap:6px;
+    border-radius:10px 10px 0 0;
+  }
   .card-body{padding:14px}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+
+  /* フォーム */
   .field{margin-bottom:10px}
-  label{display:block;font-size:10px;color:var(--mut);margin-bottom:3px;letter-spacing:.05em}
-  input[type=text],input[type=number],input[type=password],select{width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:3px;color:var(--txt);font-family:var(--mono);font-size:12px;padding:5px 8px;outline:none}
-  input:focus,select:focus{border-color:var(--acc)}
+  label{display:block;font-size:10px;color:var(--muted);margin-bottom:3px}
+  input[type=text],input[type=number],input[type=password],select{
+    width:100%;
+    background:var(--bg3);
+    border:1px solid var(--border);
+    border-radius:4px;
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:12px;
+    padding:5px 8px;
+    outline:none;
+  }
+  input:focus,select:focus{border-color:var(--orange2)}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-  .toggle-label{font-size:11px;color:var(--txt)}
-  input[type=checkbox]{width:14px;height:14px;accent-color:var(--acc)}
-  .btn{display:inline-flex;align-items:center;gap:5px;padding:5px 14px;border-radius:3px;border:1px solid var(--bd);font-family:var(--mono);font-size:11px;cursor:pointer;transition:opacity .15s;background:var(--p2);color:var(--txt)}
+  .toggle-label{font-size:12px;color:var(--text)}
+  input[type=checkbox]{width:14px;height:14px;accent-color:var(--orange2)}
+
+  /* ボタン */
+  .btn{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:5px 16px;border-radius:5px;
+    font-family:arial,sans-serif;font-size:11px;font-weight:bold;
+    cursor:pointer;transition:opacity .15s;border:1px solid #999;
+    background:var(--bg2);color:var(--text);
+  }
   .btn:hover{opacity:.8}
   .btn:active{transform:scale(.97)}
-  .btn-primary{background:var(--acc);border-color:var(--acc);color:#fff}
-  .btn-green{background:#1a4a1a;border-color:var(--grn);color:var(--grn)}
-  .btn-red{background:#3a1a1a;border-color:var(--red);color:var(--red)}
-  .btn-amber{background:#3a2e0a;border-color:var(--amb);color:var(--amb)}
-  .btn-ghost{background:transparent;border-color:var(--bd);color:var(--mut)}
-  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .btn-primary{background:var(--orange2);border-color:var(--orange);color:#fff}
+  .btn-green{background:#1a6b1a;border-color:#0a4a0a;color:#fff}
+  .btn-red{background:#a02020;border-color:#701010;color:#fff}
+  .btn-amber{background:#b07010;border-color:#806000;color:#fff}
+  .btn-ghost{background:var(--bg2);border-color:#999;color:var(--muted)}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+
+  /* サービス */
   .svc-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .svc-name{font-size:12px;color:var(--blu)}
-  .svc-badge{font-size:10px;padding:2px 8px;border-radius:2px;border:1px solid var(--bd);background:var(--bg)}
-  .svc-badge.active{color:var(--grn);border-color:var(--grn);background:#1a4a1a}
-  .svc-badge.failed{color:var(--red);border-color:var(--red);background:#3a1a1a}
-  .svc-badge.inactive{color:var(--amb);border-color:var(--amb);background:#3a2e0a}
-  .msg,.err{border-radius:3px;padding:8px 14px;font-size:11px;margin-bottom:6px;border-left:3px solid}
-  .msg{background:#1a4a1a;border-color:var(--grn);color:var(--grn)}
-  .err{background:#3a1a1a;border-color:var(--red);color:var(--red)}
+  .svc-name{font-size:12px;font-weight:bold;color:var(--orange2);font-family:var(--mono)}
+  .svc-badge{
+    font-size:11px;padding:2px 10px;border-radius:4px;
+    border:1px solid #999;background:var(--bg3);font-weight:bold;
+  }
+  .svc-badge.active{color:#030;background:#bfb;border-color:var(--green)}
+  .svc-badge.failed{color:#fff;background:#a02020;border-color:#701010}
+  .svc-badge.inactive{color:#630;background:#ffeedd;border-color:var(--amber)}
+
+  /* メッセージ */
+  .msg,.err{
+    border-radius:6px;padding:8px 14px;
+    font-size:12px;margin-bottom:6px;border-left:4px solid;
+  }
+  .msg{background:#e8f5e9;border-color:var(--green);color:#1a6b1a}
+  .err{background:#fdecea;border-color:var(--red);color:#a02020}
+
+  /* テーブル共通 */
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:var(--th-bg);padding:4px 8px;text-align:left;border:1px solid var(--border);font-size:11px}
+  td{padding:3px 8px;border-bottom:1px solid var(--border2)}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#f0f0e8}
+
+  /* バックアップ・変更ログ */
   .bak-list{list-style:none}
-  .bak-list li{font-size:10px;color:var(--mut);padding:3px 0;border-bottom:1px solid var(--bd2)}
+  .bak-list li{font-size:11px;color:var(--muted);padding:3px 0;border-bottom:1px solid var(--border2);font-family:var(--mono)}
   .bak-list li:last-child{border-bottom:none}
   .chg-list{list-style:none}
-  .chg-list li{font-size:11px;padding:5px 0;border-bottom:1px solid var(--bd2);display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+  .chg-list li{font-size:11px;padding:5px 0;border-bottom:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-family:var(--mono)}
   .chg-list li:last-child{border-bottom:none}
-  .chg-time{color:var(--mut);min-width:135px;font-size:10px}
-  .chg-key{color:var(--blu)}
-  .chg-arrow{color:var(--amb)}
-  .chg-new{color:var(--grn)}
-  .section-title{font-size:10px;color:var(--mut);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--bd)}
+  .chg-time{color:var(--muted);min-width:135px;font-size:10px}
+  .chg-key{color:var(--orange2);font-weight:bold}
+  .chg-arrow{color:var(--muted)}
+  .chg-new{color:#1a6b1a;font-weight:bold}
+
+  .section-title{
+    font-size:10px;color:var(--muted);
+    letter-spacing:.1em;text-transform:uppercase;
+    margin-bottom:10px;padding-bottom:4px;
+    border-bottom:1px solid var(--border2);
+  }
 </style>
 </head>
 <body>
@@ -473,7 +549,7 @@ TEMPLATE = r"""<!DOCTYPE html>
           <label>送信 TG（txTg）</label>
           <input type="text" name="txtg" value="{{ dvs.txtg }}" placeholder="168" required>
         </div>
-        <div style="font-size:10px;color:var(--mut);margin-bottom:12px">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:12px">
           保存前に自動バックアップを作成します。<br>
           固定値: Address=tgif.network / txPort=51001 / rxPort=51000
         </div>
@@ -496,10 +572,10 @@ TEMPLATE = r"""<!DOCTYPE html>
       {% endfor %}
     </ul>
     {% if backups|length > 10 %}
-    <div style="font-size:10px;color:var(--mut);margin-top:4px">（最新10件を表示）</div>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px">（最新10件を表示）</div>
     {% endif %}
     {% else %}
-    <div style="font-size:11px;color:var(--mut)">バックアップはまだありません。</div>
+    <div style="font-size:11px;color:var(--muted)">バックアップはまだありません。</div>
     {% endif %}
   </div>
 </div>
@@ -514,7 +590,7 @@ TEMPLATE = r"""<!DOCTYPE html>
         <span class="chg-time">{{ e.time }}</span>
         {% for k, v in e.changes.items() %}
         <span class="chg-key">{{ k }}</span>
-        <span style="color:var(--mut)">{{ v.from }}</span>
+        <span style="color:var(--muted)">{{ v.from }}</span>
         <span class="chg-arrow">→</span>
         <span class="chg-new">{{ v.to }}</span>
         {% endfor %}
@@ -522,9 +598,13 @@ TEMPLATE = r"""<!DOCTYPE html>
       {% endfor %}
     </ul>
     {% else %}
-    <div style="font-size:11px;color:var(--mut)">変更履歴はまだありません。</div>
+    <div style="font-size:11px;color:var(--muted)">変更履歴はまだありません。</div>
     {% endif %}
   </div>
+</div>
+
+<div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
+  OpenCCVoice for DVSwitch Web Dashboard V2.5
 </div>
 
 </main>
