@@ -3,10 +3,19 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.61 —
+ — JJ2YYK デジピーター自動応答システム  V1.62 —
 
- 本ファイルは V1.60 をベースにデーモン化し、V1.61 でナイトモードの
- 抑制ロジックを改良したもの。
+ 本ファイルは V1.61 をベースに、起動アナウンス機能を追加したもの。
+
+【V1.62 での変更点】
+  - 🔴 起動アナウンスを追加。
+    デーモン起動後、ログ監視を開始する直前に threading.Timer で
+    STARTUP_ANNOUNCE_DELAY_SEC（既定 7.0 秒）遅延して
+    「起動しました。」を 1 回だけ送出する。
+    意図: MMDVM_Bridge / Analog_Bridge の起動が落ち着いてから送出する
+    ため、固定の遅延を入れている（5〜10 秒程度で調整可）。
+    実装: is_talking フラグと競合しないよう _start_worker を経由せず
+    _send_startup_announcement() を直接呼ぶ。
 
 【V1.61 での変更点】
   - 🔴 ナイトモードの抑制を「時報」と「定時メッセージ」で分離した。
@@ -45,6 +54,7 @@
   NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
 
 【機能】
+  - 起動アナウンス（起動 N 秒後に「起動しました。」を 1 回送出）
   - ナイトモード（時報は N1+1時〜N2時を抑制／定時メッセージは N1時〜N2時を抑制。
     N1時は時報＋突入アナウンスを出す。kerchunk は24時間応答）
   - 毎正時の時報（lead 秒前に発火）/ 定時メッセージ（001/002 交互）
@@ -65,8 +75,8 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.61 (daemon, based on V1.60)
- Last Updated: 2026-06-04
+ Document Version: V1.62 (daemon, based on V1.60)
+ Last Updated: 2026-06-06
 ================================================================================
 """
 
@@ -130,6 +140,9 @@ PACKET_INTERVAL = 0.02
 PRE_POST_PADDING_PACKETS = 75
 ROTATION_CHECK_INTERVAL = 5.0
 GAP_AFTER_INTRO_SEC = 0.5
+
+# 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
+STARTUP_ANNOUNCE_DELAY_SEC = 2.0
 
 # ============================================================
 # グローバル状態 / 設定値
@@ -421,6 +434,34 @@ def _start_worker(mode, val, extra=None):
 
 
 # ============================================================
+# 🔴 起動アナウンス（V1.62）
+# ============================================================
+def _send_startup_announcement():
+    """起動アナウンス。起動後 STARTUP_ANNOUNCE_DELAY_SEC 秒遅延して
+    「起動しました。」を 1 回だけ送出する。
+    is_talking と競合しないよう _start_worker は経由せず直接実行する。"""
+    if should_exit:
+        return
+    started_at = time.monotonic()
+    middle_text = "起動しました。"
+    logger.info(_fmt("TX", "Generate", "startup", "startup_announce"))
+    if _generate_hybrid(FIXED_INTRO_WAV, middle_text, None):
+        logger.info(_fmt("TX", "Sending", "startup", "startup_announce"))
+        send_usrp_wav_with_padding(TEMP_FINAL)
+        elapsed = time.monotonic() - started_at
+        logger.info(_fmt("TX", "Startup", "startup", f"{elapsed:.1f}s"))
+    else:
+        logger.error(_fmt("!!", "Gen failed", "startup", "startup_announce"))
+    # 一時ファイルの後始末（_reply_executor の finally と同等）
+    for tmp in (TEMP_FINAL, TEMP_48K, TEMP_8K, TEMP_INTRO_PADDED):
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError as e:
+                logger.error(_fmt("!!", "Tmp rm err", os.path.basename(tmp), str(e)))
+
+
+# ============================================================
 # ナイトモード開始アナウンス
 # ============================================================
 NIGHT_ANN_GAP_SEC = 1.0
@@ -548,7 +589,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.61 (daemon, based on V1.60) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.62 (daemon, based on V1.60) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -557,6 +598,7 @@ def _log_startup_info():
     logger.info(f"  RX duration       : min={RX_DURATION_MIN_SEC}s / max={RX_DURATION_MAX_SEC}s")
     logger.info(f"  Suppress duration : {SUPPRESS_DURATION_SEC}s")
     logger.info(f"  Gap after intro   : {GAP_AFTER_INTRO_SEC}s")
+    logger.info(f"  Startup announce  : {STARTUP_ANNOUNCE_DELAY_SEC}s 後に「起動しました。」を送出")
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ}/h (at minutes {_get_trigger_minutes()})")
     logger.info(f"  Time signal       : every hour at :00 (lead {TIME_SIGNAL_LEAD_SEC}s)")
     if NIGHT_MODE_ENABLED:
@@ -647,6 +689,10 @@ def monitor_and_reply():
     logger.info(f"Monitoring log file: {current_path}")
     f, current_ino = _open_log_file(current_path)
     logger.info("Bot ready — monitoring DMR traffic")
+
+    # 🔴 起動アナウンス（V1.62）: STARTUP_ANNOUNCE_DELAY_SEC 秒後に 1 回送出
+    threading.Timer(STARTUP_ANNOUNCE_DELAY_SEC, _send_startup_announcement).start()
+    logger.info(_fmt("..", "Startup ann", "", f"scheduled in {STARTUP_ANNOUNCE_DELAY_SEC}s"))
 
     last_cs = None
     last_start_dt = None
