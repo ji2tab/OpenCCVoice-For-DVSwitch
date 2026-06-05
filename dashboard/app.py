@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.54
+ app.py  V2.55
 
  変更履歴:
    V2.0  初版リリース
@@ -17,6 +17,7 @@
    V2.52 MMDVM_Bridge [Info] セクション編集機能を追加
    V2.53 Bot設定/DVSwitch設定/MMDVM Info を3カラム横並びに変更
    V2.54 受信時間フィルタを縦並びに変更
+   V2.55 メッセージをURLパラメータから内部保持に変更（URL 2バイト文字除去）
 
  配置:
    /opt/openccvoice/web/app.py   ← 推奨
@@ -42,6 +43,19 @@ BAK_ROOT     = "/opt/dvswitch_bot/bak/ini"
 SERVICE_NAME = "dvswitch-bot"
 
 app = Flask(__name__)
+
+# リダイレクト後に1回だけ表示するメッセージ（URLに乗せない）
+_flash = {"msg": "", "err": ""}
+
+def set_flash(msg="", err=""):
+    _flash["msg"] = msg
+    _flash["err"] = err
+
+def pop_flash():
+    m, e = _flash["msg"], _flash["err"]
+    _flash["msg"] = ""
+    _flash["err"] = ""
+    return m, e
 
 # ─── ユーティリティ ──────────────────────────────────────
 
@@ -167,6 +181,7 @@ def list_backups():
 
 @app.route("/")
 def index():
+    _msg, _err = pop_flash()
     status = get_service_status()
     bot_cfg = read_json(BOT_CONFIG)
     change_log = read_json(CHANGE_LOG) if os.path.exists(CHANGE_LOG) else []
@@ -179,8 +194,8 @@ def index():
         info=get_info_values(),
         backups=list_backups(),
         change_log=change_log,
-        msg=request.args.get("msg", ""),
-        err=request.args.get("err", ""),
+        msg=_msg,
+        err=_err,
     )
 
 def get_dvs_values():
@@ -212,12 +227,12 @@ def api_status():
 @app.route("/service/<action>", methods=["POST"])
 def service_ctrl(action):
     if action not in ("start", "stop", "restart"):
-        return redirect(url_for("index", err="不正なアクション"))
+        set_flash(err="不正なアクション"); return redirect("/")
     ok, msg = service_action(action)
     if ok:
-        return redirect(url_for("index", msg=f"サービスを {action} しました"))
+        set_flash(msg=f"サービスを {action} しました"); return redirect("/")
     else:
-        return redirect(url_for("index", err=f"{action} 失敗: {msg}"))
+        set_flash(err=f"{action} 失敗: {msg}"); return redirect("/")
 
 @app.route("/bot_config", methods=["POST"])
 def bot_config_save():
@@ -238,9 +253,9 @@ def bot_config_save():
         old_cfg = read_json(BOT_CONFIG)
         write_json(BOT_CONFIG, cfg)
         append_change_log("Bot設定", old_cfg, cfg)
-        return redirect(url_for("index", msg="Bot設定を保存しました。サービスを再起動してください。"))
+        set_flash(msg="Bot設定を保存しました。サービスを再起動してください。"); return redirect("/")
     except (AssertionError, ValueError) as e:
-        return redirect(url_for("index", err=f"入力エラー: {e}"))
+        set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
 @app.route("/dvs_config", methods=["POST"])
 def dvs_config_save():
@@ -277,10 +292,9 @@ def dvs_config_save():
         # analog_bridge / mmdvm_bridge を自動再起動
         subprocess.run(["sudo", "systemctl", "restart", "analog_bridge", "mmdvm_bridge"],
                        capture_output=True, timeout=15)
-        return redirect(url_for("index",
-            msg=f"DVSwitch設定を保存し、サービスを再起動しました（バックアップ: {ts}）"))
+        set_flash(msg=f"DVSwitch設定を保存し、サービスを再起動しました（バックアップ: {ts}）"); return redirect("/")
     except (AssertionError, ValueError) as e:
-        return redirect(url_for("index", err=f"入力エラー: {e}"))
+        set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
 
 @app.route("/info_config", methods=["POST"])
@@ -298,9 +312,9 @@ def info_config_save():
         set_ini_value(MMDVM_INI, "URL",         request.form["url"].strip(), "[Info]")
         subprocess.run(["sudo", "systemctl", "restart", "mmdvm_bridge"],
                        capture_output=True, timeout=15)
-        return redirect(url_for("index", msg="MMDVM Info を保存し、mmdvm_bridge を再起動しました"))
+        set_flash(msg="MMDVM Info を保存し、mmdvm_bridge を再起動しました"); return redirect("/")
     except (KeyError, ValueError) as e:
-        return redirect(url_for("index", err=f"入力エラー: {e}"))
+        set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
 # ─── HTML テンプレート ────────────────────────────────────
 
@@ -465,7 +479,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.54</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.55</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
