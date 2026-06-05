@@ -1,5 +1,11 @@
-# DVSwitch Bot 音声ファイル生成マニュアル
-
+# DVSwitch Bot 音声ファイル生成マニュアルPlus
+## 音声ファイル生成マニュアル との差異について（音声ファイル生成マニュアルPlus とは何か）
+本ファイル（Voice_generation_manual.md）は「Voice generation manual.md」（スペース区切り）のファイル配置変更版です。ファイル名をアンダースコア区切りに統一するとともに、以下の技術的変更を加えています。
+- ファイル名を「Voice generation manual.md」（スペース区切り）から「Voice_generation_manual.md」（アンダースコア区切り）に変更
+- 「試聴（テスト送信）」セクションにおける bot サービス名を dvswitch_bot（アンダースコア）から dvswitch-bot（ハイフン）に変更
+- test_send.py の呼び出しパスを ~/test_send.py から /opt/dvswitch_bot/bin/test_send.py に変更
+- 上記以外の技術コンテンツはスペース版と同一です
+---    
 **対象システム:** DVSwitch ログ監視・自動音声応答システム V1.58 (JJ2YYK デジピーター)
 **最終更新:** 2026年5月
 **実行環境:** Raspberry Pi 等の Linux 環境 (open-jtalk / sox 導入済み)
