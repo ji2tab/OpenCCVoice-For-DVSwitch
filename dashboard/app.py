@@ -3,15 +3,17 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.2
+ app.py  V2.51
 
  変更履歴:
    V2.0  初版リリース
    V2.1  タイトル変更、ポート8081、ログディレクトリ修正、変更ログ機能追加
    V2.2  V2.1実機ソースのクリーンアップ
-         - CHANGE_LOG 二重定義を修正
-         - append_change_log 二重定義を修正
-         - コメントの文字化け修正
+   V2.3  ログ表示機能を削除（音声化け対策）
+         DVSwitch設定保存後に analog_bridge / mmdvm_bridge を自動再起動
+   V2.4  UIスタイルをDVSwitch Dashboard風に変更
+   V2.5  配色をDVSwitch Dashboard実ソースに合わせて変更
+   V2.51 フォント11pt統一、iniバックアップ一覧を非表示、ヘッダにバージョン表示
 
  配置:
    /opt/openccvoice/web/app.py   ← 推奨
@@ -424,7 +426,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.51</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
