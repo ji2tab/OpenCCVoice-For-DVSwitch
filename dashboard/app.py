@@ -305,9 +305,9 @@ TEMPLATE = r"""<!DOCTYPE html>
     position:sticky;top:0;z-index:100;
     box-shadow:0 0 6px #999;
   }
-  .logo{font-size:16px;font-weight:bold;color:var(--orange);font-family:var(--mono);letter-spacing:.06em}
-  .tagline{font-size:12px;color:var(--muted);margin-top:2px}
-  .status-pill{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+  .logo{font-weight:bold;color:var(--orange);font-family:var(--mono);letter-spacing:.06em}
+  .tagline{color:var(--muted);margin-top:2px}
+  .status-pill{display:flex;align-items:center;gap:6pxcolor:var(--muted)}
   .dot{width:10px;height:10px;border-radius:50%;background:#ccc}
   .dot.active{background:var(--green3);box-shadow:0 0 4px var(--green3)}
   .dot.failed{background:var(--red)}
@@ -326,7 +326,7 @@ TEMPLATE = r"""<!DOCTYPE html>
     background:var(--bg2);
     padding:6px 14px;
     border-bottom:1px solid var(--border);
-    font-size:14px;font-weight:bold;
+font-weight:bold;
     color:var(--orange2);
     display:flex;align-items:center;gap:6px;
     border-radius:10px 10px 0 0;
@@ -338,7 +338,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 
   /* フォーム */
   .field{margin-bottom:10px}
-  label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+  label{display:blockcolor:var(--muted);margin-bottom:3px}
   input[type=text],input[type=number],input[type=password],select{
     width:100%;
     background:var(--bg3);
@@ -346,21 +346,21 @@ TEMPLATE = r"""<!DOCTYPE html>
     border-radius:4px;
     color:var(--text);
     font-family:var(--mono);
-    font-size:14px;
+
     padding:5px 8px;
     outline:none;
   }
   input:focus,select:focus{border-color:var(--orange2)}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-  .toggle-label{font-size:14px;color:var(--text)}
+  .toggle-label{color:var(--text)}
   input[type=checkbox]{width:14px;height:14px;accent-color:var(--orange2)}
 
   /* ボタン */
   .btn{
     display:inline-flex;align-items:center;gap:5px;
     padding:5px 16px;border-radius:5px;
-    font-family:arial,sans-serif;font-size:13px;font-weight:bold;
+    font-family:arial,sans-seriffont-weight:bold;
     cursor:pointer;transition:opacity .15s;border:1px solid #999;
     background:var(--bg2);color:var(--text);
   }
@@ -375,9 +375,9 @@ TEMPLATE = r"""<!DOCTYPE html>
 
   /* サービス */
   .svc-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .svc-name{font-size:14px;font-weight:bold;color:var(--orange2);font-family:var(--mono)}
+  .svc-name{font-weight:bold;color:var(--orange2);font-family:var(--mono)}
   .svc-badge{
-    font-size:13px;padding:2px 10px;border-radius:4px;
+padding:2px 10px;border-radius:4px;
     border:1px solid #999;background:var(--bg3);font-weight:bold;
   }
   .svc-badge.active{color:#030;background:#bfb;border-color:var(--green)}
@@ -387,32 +387,32 @@ TEMPLATE = r"""<!DOCTYPE html>
   /* メッセージ */
   .msg,.err{
     border-radius:6px;padding:8px 14px;
-    font-size:14px;margin-bottom:6px;border-left:4px solid;
+margin-bottom:6px;border-left:4px solid;
   }
   .msg{background:#e8f5e9;border-color:var(--green);color:#1a6b1a}
   .err{background:#fdecea;border-color:var(--red);color:#a02020}
 
   /* テーブル共通 */
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th{background:var(--th-bg);padding:4px 8px;text-align:left;border:1px solid var(--border);font-size:13px}
+  table{width:100%;border-collapse:collapse}
+  th{background:var(--th-bg);padding:4px 8px;text-align:left;border:1px solid var(--border)}
   td{padding:3px 8px;border-bottom:1px solid var(--border2)}
   tr:last-child td{border-bottom:none}
   tr:hover td{background:#f0f0e8}
 
   /* バックアップ・変更ログ */
   .bak-list{list-style:none}
-  .bak-list li{font-size:13px;color:var(--muted);padding:3px 0;border-bottom:1px solid var(--border2);font-family:var(--mono)}
+  .bak-list li{color:var(--muted);padding:3px 0;border-bottom:1px solid var(--border2);font-family:var(--mono)}
   .bak-list li:last-child{border-bottom:none}
   .chg-list{list-style:none}
-  .chg-list li{font-size:13px;padding:5px 0;border-bottom:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-family:var(--mono)}
+  .chg-list li{padding:5px 0;border-bottom:1px solid var(--border2);display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-family:var(--mono)}
   .chg-list li:last-child{border-bottom:none}
-  .chg-time{color:var(--muted);min-width:135px;font-size:12px}
+  .chg-time{color:var(--muted);min-width:135px}
   .chg-key{color:var(--orange2);font-weight:bold}
   .chg-arrow{color:var(--muted)}
   .chg-new{color:#1a6b1a;font-weight:bold}
 
   .section-title{
-    font-size:12px;color:var(--muted);
+color:var(--muted);
     letter-spacing:.1em;text-transform:uppercase;
     margin-bottom:10px;padding-bottom:4px;
     border-bottom:1px solid var(--border2);
@@ -549,7 +549,7 @@ TEMPLATE = r"""<!DOCTYPE html>
           <label>送信 TG（txTg）</label>
           <input type="text" name="txtg" value="{{ dvs.txtg }}" placeholder="168" required>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:12px">
           保存前に自動バックアップを作成します。<br>
           固定値: Address=tgif.network / txPort=51001 / rxPort=51000
         </div>
@@ -580,7 +580,7 @@ TEMPLATE = r"""<!DOCTYPE html>
       {% endfor %}
     </ul>
     {% else %}
-    <div style="font-size:13px;color:var(--muted)">変更履歴はまだありません。</div>
+    <div style="font-size:11px;color:var(--muted)">変更履歴はまだありません。</div>
     {% endif %}
   </div>
 </div>
