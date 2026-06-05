@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.53
+ app.py  V2.54
 
  変更履歴:
    V2.0  初版リリース
@@ -16,6 +16,7 @@
    V2.51 フォント11pt統一、iniバックアップ一覧を非表示、ヘッダにバージョン表示
    V2.52 MMDVM_Bridge [Info] セクション編集機能を追加
    V2.53 Bot設定/DVSwitch設定/MMDVM Info を3カラム横並びに変更
+   V2.54 受信時間フィルタを縦並びに変更
 
  配置:
    /opt/openccvoice/web/app.py   ← 推奨
@@ -464,7 +465,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.53</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.54</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -510,17 +511,15 @@ color:var(--muted);
     <div class="card-body">
       <form method="post" action="/bot_config">
         <div class="section-title">受信時間フィルタ</div>
-        <div class="row2">
-          <div class="field">
-            <label>最小受信時間 (秒)</label>
-            <input type="number" name="rx_min" step="0.1" min="0.1" max="10"
-              value="{{ bot_cfg.get('RX_DURATION_MIN_SEC', 0.5) }}" required>
-          </div>
-          <div class="field">
-            <label>最大受信時間 / カーチャンク (秒)</label>
-            <input type="number" name="rx_max" step="0.1" min="0.2" max="30"
-              value="{{ bot_cfg.get('RX_DURATION_MAX_SEC', 3.9) }}" required>
-          </div>
+        <div class="field">
+          <label>最小受信時間 (秒)</label>
+          <input type="number" name="rx_min" step="0.1" min="0.1" max="10"
+            value="{{ bot_cfg.get('RX_DURATION_MIN_SEC', 0.5) }}" required>
+        </div>
+        <div class="field">
+          <label>最大受信時間 / カーチャンク (秒)</label>
+          <input type="number" name="rx_max" step="0.1" min="0.2" max="30"
+            value="{{ bot_cfg.get('RX_DURATION_MAX_SEC', 3.9) }}" required>
         </div>
         <div class="section-title">定時アナウンス</div>
         <div class="field">
