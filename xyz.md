@@ -447,7 +447,7 @@ sudo ./dvs_config.sh
 
 このツールがすること:
 
-- 編集前に **`/opt/bak/YYMMDDHHMMSS/`** へ 3 つの ini を自動バックアップ
+- 編集前に **`/opt/dvswitch_bot/bak/ini/YYMMDDHHMMSS/`** へ 3 つの ini を自動バックアップ
   （`MMDVM_Bridge.ini` / `DVSwitch.ini` / `Analog_Bridge.ini`）
 - 対話入力 5 項目：`callsign` / `dmrid(7桁)` / `essid(2桁)` / `tgifpassword` / `txtgif`
 - 固定セット：
@@ -460,7 +460,7 @@ sudo ./dvs_config.sh
 
 ```bash
 sudo ./dvs_config.sh -r     # バックアップから復元
-sudo ./dvs_config.sh -d     # /opt/bak/ 配下のバックアップを全削除
+sudo ./dvs_config.sh -d     # /opt/dvswitch_bot/bak/ini/ 配下のバックアップを全削除
 sudo ./dvs_config.sh -h     # ヘルプ
 ```
 
@@ -726,7 +726,7 @@ sudo ./create_wav.sh
 ```
 
 > 💡 **自動バックアップ／復元:** `create_wav.sh` は上書き直前に既存の `*.wav` を
-> `/opt/bak/wav_YYMMDDHHMMSS/` へ自動退避する。失敗したら `sudo ./create_wav.sh -r`
+> `/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/` へ自動退避する。失敗したら `sudo ./create_wav.sh -r`
 > で前の WAV セットに戻せる（`-d` 全削除 / `-h` ヘルプ）。bot は送出のたびに WAV を
 > 読むため、上書きは再起動なしで次の送出から反映される。
 

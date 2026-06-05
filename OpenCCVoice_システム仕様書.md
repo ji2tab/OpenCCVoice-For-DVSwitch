@@ -158,7 +158,7 @@ flowchart TB
 | `/var/lib/mecab/dic/open-jtalk/naist-jdic` | Open JTalk 辞書（`open-jtalk/` を含む点に注意） |
 | `/usr/share/hts-voice/mei/mei_normal.htsvoice` | 音声モデル「メイ」 |
 | `/dev/shm/` | 一時音声ファイル（RAM ディスク。SD カード保護） |
-| `/opt/bak/YYMMDDHHMMSS/` | dvs_config.sh による ini バックアップ |
+| `/opt/dvswitch_bot/bak/ini/YYMMDDHHMMSS/` | dvs_config.sh による ini バックアップ |
 | `/usr/local/sbin/platformDetect.sh` | Dashboard の機種判定スクリプト |
 
 ---
@@ -202,7 +202,7 @@ flowchart TB
 |---|---|
 | 役割 | コールサイン・地名・定時メッセージを対話入力し、固定 WAV を一括生成 |
 | 出力 | `/opt/dvswitch_bot/` 直下に WAV（fixed_intro/outro, time_intro, 001, 002 ほか） |
-| バックアップ | 上書き直前に既存 `*.wav` を `/opt/bak/wav_YYMMDDHHMMSS/` へ自動退避 |
+| バックアップ | 上書き直前に既存 `*.wav` を `/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/` へ自動退避 |
 | オプション | `-r`（バックアップから復元）/ `-d`（WAVバックアップ全削除）/ `-h`（ヘルプ） |
 | 実行例 | `cd /opt/dvswitch_bot/bin && sudo ./create_wav.sh` |
 | 備考 | 英数字を自動でカナ変換。辞書・音声モデルのパスはスクリプト内に実装済み。bot は送出のたびに WAV を読むため上書きは再起動なしで反映 |
@@ -435,7 +435,7 @@ sudo systemctl restart dvswitch-bot
 
 ```bash
 cd /opt/dvswitch_bot/bin
-sudo ./create_wav.sh        # 上書き前に /opt/bak/wav_* へ自動バックアップ
+sudo ./create_wav.sh        # 上書き前に /opt/dvswitch_bot/bak/wav/ へ自動バックアップ
 sudo ./create_wav.sh -r     # 失敗したら前のWAVセットに戻す
 ```
 

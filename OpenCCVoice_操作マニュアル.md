@@ -243,7 +243,7 @@ sudo ./create_wav.sh
 
 > 💡 **上書き前に自動バックアップされる。**
 > `create_wav.sh` は、上書きの直前に既存の `*.wav` を
-> `/opt/bak/wav_YYMMDDHHMMSS/` へ自動退避する（dvs_config.sh と同じ作法）。
+> `/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/` へ自動退避する（dvs_config.sh と同じ作法）。
 > 作り直しに失敗しても元へ戻せる（6-4 参照）。
 
 > ⚠️ **タイミングの注意（任意）:** 生成（上書き）中に、ちょうど Bot が同じファイルを
@@ -301,7 +301,7 @@ sox /tmp/outro_raw.wav -r 8000 -c 1 -b 16 \
 
 ### 6-5. 作り直しに失敗した → 元の音声に戻す（復元）
 
-`create_wav.sh` は上書きのたびに `/opt/bak/wav_YYMMDDHHMMSS/` へ自動バックアップしている。
+`create_wav.sh` は上書きのたびに `/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/` へ自動バックアップしている。
 読み間違い・変換ミスなどで失敗したら、`-r` で過去のWAVセットに戻せる。
 
 ```bash
@@ -315,7 +315,7 @@ sudo ./create_wav.sh -r
 古いバックアップをまとめて消したいとき:
 
 ```bash
-sudo ./create_wav.sh -d     # /opt/bak/wav_* を全削除（確認あり）
+sudo ./create_wav.sh -d     # /opt/dvswitch_bot/bak/wav/ を全削除（確認あり）
 ```
 
 ---
@@ -352,7 +352,7 @@ cd /opt/dvswitch_bot/bin
 sudo ./dvs_config.sh -r
 ```
 
-日付フォルダ（`/opt/bak/YYMMDDHHMMSS/`）の一覧が出るので、戻したい番号を選ぶ。
+日付フォルダ（`/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/`）の一覧が出るので、戻したい番号を選ぶ。
 
 ### 7-3. 古いバックアップを全部消す
 

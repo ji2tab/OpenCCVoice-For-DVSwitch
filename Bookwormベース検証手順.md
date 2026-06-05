@@ -371,7 +371,7 @@ sudo ./dvs_config.sh
 
 このツールがすること:
 
-- 編集前に **`/opt/bak/YYMMDDHHMMSS/`** へ 3 つの ini を自動バックアップ
+- 編集前に **`/opt/dvswitch_bot/bak/ini/YYMMDDHHMMSS/`** へ 3 つの ini を自動バックアップ
   （`MMDVM_Bridge.ini` / `DVSwitch.ini` / `Analog_Bridge.ini`）
 - 対話入力 5 項目：`callsign` / `dmrid(7桁)` / `essid(2桁)` / `tgifpassword` / `txtgif`
 - 固定セット：
@@ -385,7 +385,7 @@ sudo ./dvs_config.sh
 ```bash
 cd /opt/dvswitch_bot/bin
 sudo ./dvs_config.sh -r     # バックアップから復元（日付フォルダを選択）
-sudo ./dvs_config.sh -d     # /opt/bak/ 配下のバックアップを全削除
+sudo ./dvs_config.sh -d     # /opt/dvswitch_bot/bak/ini/ 配下のバックアップを全削除
 sudo ./dvs_config.sh -h     # ヘルプ
 ```
 
@@ -399,7 +399,7 @@ sudo ./dvs_config.sh -h     # ヘルプ
 | TGIF Password | （TGIF アカウントの値） | TGIF サイトで発行したもの |
 | 送信 TG（txTg） | `44833` | ボット音声が乗る DMR TG |
 
-確認画面で内容を確認し、`y` で保存。`/opt/bak/...` にバックアップが取られ、
+確認画面で内容を確認し、`y` で保存。`/opt/dvswitch_bot/bak/ini/...` にバックアップが取られ、
 3 ファイルに値が書き込まれる。
 
 #### 設定反映（サービス再起動）と TGIF ログイン確認
@@ -797,7 +797,7 @@ sudo ./create_wav.sh
 > 出力先はスクリプト内で `/opt/dvswitch_bot/`（直下）に固定。WAV はそこに生成される。
 
 > 💡 **自動バックアップ／復元:** `create_wav.sh` は上書きの直前に、既存の `*.wav` を
-> `/opt/bak/wav_YYMMDDHHMMSS/` へ自動退避する（dvs_config.sh と同じ作法）。
+> `/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/` へ自動退避する（dvs_config.sh と同じ作法）。
 > 作り直しに失敗したら `sudo ./create_wav.sh -r` で前の WAV セットに戻せる
 > （`-d` で WAV バックアップ全削除、`-h` でヘルプ）。運用フェーズで音声を
 > 何度も差し替える際の保険になる。なお bot は送出のたびに WAV を読むため、
