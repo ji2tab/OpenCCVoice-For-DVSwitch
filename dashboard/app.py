@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.66
+ app.py  V2.67
 
  変更履歴:
    V2.0  初版リリース
@@ -31,6 +31,7 @@
    V2.64 サービス状態を●(緑)active / ●(赤)inactive の丸印表現に変更
    V2.65 操作ボタンをPi-star風テキストボタン（オレンジ統一・| 区切り）に変更
    V2.66 操作ボタンを右寄せ、アイコン削除（テキストのみ）
+   V2.67 変更ボタンのアイコン削除・ラベルを「変更モード」に変更
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -599,7 +600,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.66</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.67</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -624,7 +625,7 @@ margin-bottom:6px;border-left:4px solid;
       <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
       <div class="btn-row" style="align-items:center;margin-left:auto">
         <!-- 通常モード: 変更ボタンのみ -->
-        <button class="mode-link" id="btn-edit" onclick="enterEdit()">✎ 変更</button>
+        <button class="mode-link" id="btn-edit" onclick="enterEdit()">変更モード</button>
         <!-- 変更モード: 操作ボタン群（初期非表示） -->
         <div id="edit-buttons" class="tbtn-row" style="display:none">
           <form method="post" action="/service/start" class="tbtn-form">
