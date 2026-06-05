@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.51
+ app.py  V2.52
 
  変更履歴:
    V2.0  初版リリース
@@ -14,6 +14,7 @@
    V2.4  UIスタイルをDVSwitch Dashboard風に変更
    V2.5  配色をDVSwitch Dashboard実ソースに合わせて変更
    V2.51 フォント11pt統一、iniバックアップ一覧を非表示、ヘッダにバージョン表示
+   V2.52 MMDVM_Bridge [Info] セクション編集機能を追加
 
  配置:
    /opt/openccvoice/web/app.py   ← 推奨
@@ -173,6 +174,7 @@ def index():
         status=status,
         bot_cfg=bot_cfg,
         dvs=get_dvs_values(),
+        info=get_info_values(),
         backups=list_backups(),
         change_log=change_log,
         msg=request.args.get("msg", ""),
@@ -185,6 +187,19 @@ def get_dvs_values():
         "mmdvm_id": get_ini_value(MMDVM_INI, "Id"),
         "password": get_ini_value(MMDVM_INI, "Password"),
         "txtg":     get_ini_value(ANALOG_INI, "txTg"),
+    }
+
+def get_info_values():
+    return {
+        "rxfreq":    get_ini_value(MMDVM_INI, "RXFrequency", "[Info]"),
+        "txfreq":    get_ini_value(MMDVM_INI, "TXFrequency", "[Info]"),
+        "power":     get_ini_value(MMDVM_INI, "Power", "[Info]"),
+        "lat":       get_ini_value(MMDVM_INI, "Latitude", "[Info]"),
+        "lon":       get_ini_value(MMDVM_INI, "Longitude", "[Info]"),
+        "height":    get_ini_value(MMDVM_INI, "Height", "[Info]"),
+        "location":  get_ini_value(MMDVM_INI, "Location", "[Info]"),
+        "desc":      get_ini_value(MMDVM_INI, "Description", "[Info]"),
+        "url":       get_ini_value(MMDVM_INI, "URL", "[Info]"),
     }
 
 @app.route("/api/status")
@@ -263,6 +278,26 @@ def dvs_config_save():
         return redirect(url_for("index",
             msg=f"DVSwitch設定を保存し、サービスを再起動しました（バックアップ: {ts}）"))
     except (AssertionError, ValueError) as e:
+        return redirect(url_for("index", err=f"入力エラー: {e}"))
+
+
+@app.route("/info_config", methods=["POST"])
+def info_config_save():
+    try:
+        backup_ini()
+        set_ini_value(MMDVM_INI, "RXFrequency", request.form["rxfreq"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "TXFrequency", request.form["txfreq"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Power",       request.form["power"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Latitude",    request.form["lat"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Longitude",   request.form["lon"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Height",      request.form["height"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Location",    request.form["location"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Description", request.form["desc"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "URL",         request.form["url"].strip(), "[Info]")
+        subprocess.run(["sudo", "systemctl", "restart", "mmdvm_bridge"],
+                       capture_output=True, timeout=15)
+        return redirect(url_for("index", msg="MMDVM Info を保存し、mmdvm_bridge を再起動しました"))
+    except (KeyError, ValueError) as e:
         return redirect(url_for("index", err=f"入力エラー: {e}"))
 
 # ─── HTML テンプレート ────────────────────────────────────
@@ -426,7 +461,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.51</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.52</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -562,6 +597,66 @@ color:var(--muted);
     </div>
   </div>
 
+</div>
+
+<!-- MMDVM Info -->
+<div class="card">
+  <div class="card-head">📍 MMDVM Info — MMDVM_Bridge.ini [Info]</div>
+  <div class="card-body">
+    <form method="post" action="/info_config">
+      <div class="section-title">周波数</div>
+      <div class="row2">
+        <div class="field">
+          <label>RX Frequency (Hz)</label>
+          <input type="text" name="rxfreq" value="{{ info.rxfreq }}" placeholder="222340000">
+        </div>
+        <div class="field">
+          <label>TX Frequency (Hz)</label>
+          <input type="text" name="txfreq" value="{{ info.txfreq }}" placeholder="224940000">
+        </div>
+      </div>
+      <div class="section-title">位置情報</div>
+      <div class="row2">
+        <div class="field">
+          <label>Latitude（緯度）</label>
+          <input type="text" name="lat" value="{{ info.lat }}" placeholder="35.21">
+        </div>
+        <div class="field">
+          <label>Longitude（経度）</label>
+          <input type="text" name="lon" value="{{ info.lon }}" placeholder="137.03">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Height（高さ m）</label>
+          <input type="text" name="height" value="{{ info.height }}" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Power（W）</label>
+          <input type="text" name="power" value="{{ info.power }}" placeholder="1">
+        </div>
+      </div>
+      <div class="field">
+        <label>Location（設置場所）</label>
+        <input type="text" name="location" value="{{ info.location }}" placeholder="Owariasahi, Aichi">
+      </div>
+      <div class="section-title">その他</div>
+      <div class="field">
+        <label>Description</label>
+        <input type="text" name="desc" value="{{ info.desc }}" placeholder="MMDVM_Bridge">
+      </div>
+      <div class="field">
+        <label>URL</label>
+        <input type="text" name="url" value="{{ info.url }}" placeholder="https://...">
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:12px">
+        保存前に自動バックアップを作成し、mmdvm_bridge を再起動します。
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" type="submit">💾 保存＆再起動</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <div class="card">
