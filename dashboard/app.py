@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.58
+ app.py  V2.59
 
  変更履歴:
    V2.0  初版リリース
@@ -22,6 +22,8 @@
    V2.57 3カードを一括保存に統合、保存ボタンをサービス制御行へ、変更ログ非表示、
          保存時に dvswitch-bot/analog_bridge/mmdvm_bridge を一括再起動
    V2.58 メッセージ頭切れ修正（main上余白追加）、status-pillのCSS typo修正
+   V2.59 .btn/.section-title のCSS typo修正（ボタン肥大化）、ボタンを大きく、
+         section-titleを通常フォント化（半角括弧を細く表示）
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -486,9 +488,9 @@ font-weight:bold;
 
   /* ボタン */
   .btn{
-    display:inline-flex;align-items:center;gap:5px;
-    padding:5px 16px;border-radius:5px;
-    font-family:arial,sans-seriffont-weight:bold;
+    display:inline-flex;align-items:center;gap:6px;
+    padding:9px 22px;border-radius:6px;
+    font-family:arial,sans-serif;font-weight:bold;font-size:14px;
     cursor:pointer;transition:opacity .15s;border:1px solid #999;
     background:var(--bg2);color:var(--text);
   }
@@ -540,8 +542,9 @@ margin-bottom:6px;border-left:4px solid;
   .chg-new{color:#1a6b1a;font-weight:bold}
 
   .section-title{
-color:var(--muted);
-    letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);
+    font-family:arial,sans-serif;
+    letter-spacing:.05em;
     margin-bottom:10px;padding-bottom:4px;
     border-bottom:1px solid var(--border2);
   }
@@ -552,7 +555,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.58</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.59</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
