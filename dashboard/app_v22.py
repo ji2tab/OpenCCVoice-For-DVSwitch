@@ -147,20 +147,6 @@ def service_action(action):
     except Exception as e:
         return False, str(e)
 
-def get_latest_log(lines=5):
-    """日付付き MMDVM_Bridge ログファイルの末尾 N 行を返す。"""
-    try:
-        logs = sorted([
-            l for l in glob.glob(os.path.join(LOG_DIR, "MMDVM_Bridge*.log"))
-            if "-" in os.path.basename(l)
-        ])
-        if not logs:
-            return "(ログファイルが見つかりません)"
-        with open(logs[-1], encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
-        return "".join(all_lines[-lines:])
-    except Exception as e:
-        return f"(読み込みエラー: {e})"
 
 def list_backups():
     try:
@@ -187,7 +173,6 @@ def index():
         dvs=get_dvs_values(),
         backups=list_backups(),
         change_log=change_log,
-        log=get_latest_log(),
         msg=request.args.get("msg", ""),
         err=request.args.get("err", ""),
     )
@@ -204,9 +189,6 @@ def get_dvs_values():
 def api_status():
     return jsonify({"status": get_service_status()})
 
-@app.route("/api/log")
-def api_log():
-    return jsonify({"log": get_latest_log(5)})
 
 @app.route("/service/<action>", methods=["POST"])
 def service_ctrl(action):
@@ -273,8 +255,11 @@ def dvs_config_save():
         set_ini_value(ANALOG_INI, "usrpAudio", "AUDIO_USE_GAIN", "[USRP]")
         set_ini_value(ANALOG_INI, "tlvAudio",  "AUDIO_USE_GAIN", "[USRP]")
 
+        # analog_bridge / mmdvm_bridge を自動再起動
+        subprocess.run(["sudo", "systemctl", "restart", "analog_bridge", "mmdvm_bridge"],
+                       capture_output=True, timeout=15)
         return redirect(url_for("index",
-            msg=f"DVSwitch設定を保存しました（バックアップ: {ts}）。サービスを再起動してください。"))
+            msg=f"DVSwitch設定を保存し、サービスを再起動しました（バックアップ: {ts}）"))
     except (AssertionError, ValueError) as e:
         return redirect(url_for("index", err=f"入力エラー: {e}"))
 
@@ -425,20 +410,6 @@ TEMPLATE = r"""<!DOCTYPE html>
   .svc-status.failed   { color: var(--red);   border-color: var(--red); }
   .svc-status.inactive { color: var(--amber); border-color: var(--amber); }
 
-  .log-box {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px 14px;
-    font-family: var(--mono);
-    font-size: .75rem;
-    color: #7ee787;
-    line-height: 1.55;
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 160px;
-    overflow-y: auto;
-  }
 
   .msg, .err {
     border-radius: 6px;
@@ -645,18 +616,6 @@ TEMPLATE = r"""<!DOCTYPE html>
 
 </div><!-- .grid2 -->
 
-<!-- ログ -->
-<div class="card">
-  <div class="card-head">
-    <span class="icon">📄</span> MMDVM_Bridge ログ（末尾5行）
-    <button class="btn btn-ghost" style="margin-left:auto;padding:4px 12px;font-size:.75rem"
-      onclick="refreshLog()">⟳ 更新</button>
-  </div>
-  <div class="card-body">
-    <div class="log-box" id="log-box">{{ log }}</div>
-  </div>
-</div>
-
 <!-- バックアップ一覧 -->
 <div class="card">
   <div class="card-head"><span class="icon">🗄</span> ini バックアップ一覧</div>
@@ -721,21 +680,9 @@ function refreshStatus() {
   });
 }
 
-function refreshLog() {
-  fetch("/api/log").then(r=>r.json()).then(d => {
-    const box = document.getElementById("log-box");
-    box.textContent = d.log;
-    box.scrollTop = box.scrollHeight;
-  });
-}
 
 setInterval(refreshStatus, 20000);
-setInterval(refreshLog, 30000);
 
-window.addEventListener("load", () => {
-  const box = document.getElementById("log-box");
-  if (box) box.scrollTop = box.scrollHeight;
-});
 
 function toggleNight(on) {
   document.getElementById("night-fields").style.display = on ? "" : "none";
