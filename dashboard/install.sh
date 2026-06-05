@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# install.sh  OpenCCVoice for DVSwitch Web Dashboard V2.2
+# install.sh  OpenCCVoice for DVSwitch Web Dashboard V2.3
 # curl対応版 — GitHubから直接取得してインストール
 #
 # 使い方:
@@ -23,7 +23,7 @@ python3 -c "import flask" 2>/dev/null || apt-get install -y python3-flask
 
 echo "[2/4] ファイルを取得・配置: $WEB_DIR"
 mkdir -p "$WEB_DIR"
-curl -fsSL "${GITHUB_RAW}/app_v22.py" -o "$WEB_DIR/app.py"
+curl -fsSL "${GITHUB_RAW}/app.py" -o "$WEB_DIR/app.py"
 chmod 755 "$WEB_DIR/app.py"
 
 echo "[3/4] systemd サービス登録: $SERVICE_DST"
