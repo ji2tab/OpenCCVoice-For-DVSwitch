@@ -1,29 +1,33 @@
 #!/bin/bash
 # ============================================================
 # install.sh  OpenCCVoice for DVSwitch Web Dashboard V2.2
-# 配置先: /opt/dvswitch_bot/web/
-# 使い方: sudo bash install.sh
+# curl対応版 — GitHubから直接取得してインストール
+#
+# 使い方:
+#   curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/install.sh | sudo bash
 # ============================================================
 set -e
 
+GITHUB_RAW="https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard"
 WEB_DIR="/opt/dvswitch_bot/web"
 SERVICE_DST="/etc/systemd/system/dvswitch-web.service"
 
 if [ "$EUID" -ne 0 ]; then
-  echo "[ERROR] sudo で実行してください: sudo bash install.sh"
+  echo "[ERROR] sudo で実行してください"
+  echo "  curl -fsSL ${GITHUB_RAW}/install.sh | sudo bash"
   exit 1
 fi
 
 echo "[1/4] flask インストール確認..."
 python3 -c "import flask" 2>/dev/null || apt-get install -y python3-flask
 
-echo "[2/4] ファイルを配置: $WEB_DIR"
+echo "[2/4] ファイルを取得・配置: $WEB_DIR"
 mkdir -p "$WEB_DIR"
-cp -f app.py "$WEB_DIR/app.py"
+curl -fsSL "${GITHUB_RAW}/app_v22.py" -o "$WEB_DIR/app.py"
 chmod 755 "$WEB_DIR/app.py"
 
 echo "[3/4] systemd サービス登録: $SERVICE_DST"
-cp -f dvswitch-web.service "$SERVICE_DST"
+curl -fsSL "${GITHUB_RAW}/dvswitch-web.service" -o "$SERVICE_DST"
 systemctl daemon-reload
 systemctl enable dvswitch-web.service
 
