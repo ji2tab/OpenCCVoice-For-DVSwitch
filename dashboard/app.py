@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.55
+ app.py  V2.57
 
  変更履歴:
    V2.0  初版リリース
@@ -18,10 +18,12 @@
    V2.53 Bot設定/DVSwitch設定/MMDVM Info を3カラム横並びに変更
    V2.54 受信時間フィルタを縦並びに変更
    V2.55 メッセージをURLパラメータから内部保持に変更（URL 2バイト文字除去）
+   V2.56 配置コメントを実態（/opt/dvswitch_bot/web）に修正
+   V2.57 3カードを一括保存に統合、保存ボタンをサービス制御行へ、変更ログ非表示、
+         保存時に dvswitch-bot/analog_bridge/mmdvm_bridge を一括再起動
 
  配置:
-   /opt/openccvoice/web/app.py   ← 推奨
-   /opt/dvswitch_bot/web/app.py  ← 既存環境
+   /opt/dvswitch_bot/web/app.py
 
  アクセス:
    http://<RPi-IP>:8081/
@@ -316,6 +318,76 @@ def info_config_save():
     except (KeyError, ValueError) as e:
         set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
+
+@app.route("/save_all", methods=["POST"])
+def save_all():
+    try:
+        backup_ini()
+
+        # --- Bot設定 (bot_config.json) ---
+        cfg = {
+            "RX_DURATION_MIN_SEC": float(request.form["rx_min"]),
+            "RX_DURATION_MAX_SEC": float(request.form["rx_max"]),
+            "ANNOUNCE_FREQ":       int(request.form["freq"]),
+            "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
+            "NIGHT_START_HOUR":    int(request.form["night_start"]),
+            "NIGHT_END_HOUR":      int(request.form["night_end"]),
+        }
+        assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
+        assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
+        assert cfg["ANNOUNCE_FREQ"] in (1, 2, 3), "放送回数は1/2/3"
+        assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
+        assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
+        old_cfg = read_json(BOT_CONFIG)
+        write_json(BOT_CONFIG, cfg)
+        append_change_log("Bot設定", old_cfg, cfg)
+
+        # --- DVSwitch設定 (ini) ---
+        callsign = request.form["callsign"].strip().upper()
+        dmrid    = request.form["dmrid"].strip()
+        essid    = request.form["essid"].strip()
+        password = request.form["password"].strip()
+        txtg     = request.form["txtg"].strip()
+        assert re.match(r"^[0-9]{7}$", dmrid), "DMRID は7桁数字"
+        assert re.match(r"^[0-9]{2}$", essid), "ESSID は2桁数字"
+        assert callsign, "コールサインを入力"
+        full_id  = dmrid + essid
+        set_ini_value(MMDVM_INI, "Callsign", callsign)
+        set_ini_value(MMDVM_INI, "Id", full_id)
+        set_ini_value(MMDVM_INI, "Password", password)
+        set_ini_value(MMDVM_INI, "Enable", "1", "[DMR]")
+        set_ini_value(MMDVM_INI, "Enable", "1", "[DMR Network]")
+        set_ini_value(MMDVM_INI, "Address", "tgif.network", "[DMR Network]")
+        set_ini_value(ANALOG_INI, "gatewayDmrId", dmrid)
+        set_ini_value(ANALOG_INI, "repeaterID", full_id)
+        set_ini_value(ANALOG_INI, "txTg", txtg)
+        set_ini_value(ANALOG_INI, "txPort", "51001", "[USRP]")
+        set_ini_value(ANALOG_INI, "rxPort", "51000", "[USRP]")
+        set_ini_value(ANALOG_INI, "usrpAudio", "AUDIO_USE_GAIN", "[USRP]")
+        set_ini_value(ANALOG_INI, "tlvAudio",  "AUDIO_USE_GAIN", "[USRP]")
+
+        # --- MMDVM Info ([Info]) ---
+        set_ini_value(MMDVM_INI, "RXFrequency", request.form["rxfreq"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "TXFrequency", request.form["txfreq"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Power",       request.form["power"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Latitude",    request.form["lat"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Longitude",   request.form["lon"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Height",      request.form["height"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Location",    request.form["location"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "Description", request.form["desc"].strip(), "[Info]")
+        set_ini_value(MMDVM_INI, "URL",         request.form["url"].strip(), "[Info]")
+
+        # --- 3サービス一括再起動 ---
+        subprocess.run(
+            ["sudo", "systemctl", "restart", "dvswitch-bot", "analog_bridge", "mmdvm_bridge"],
+            capture_output=True, timeout=30
+        )
+        set_flash(msg="全設定を保存し、dvswitch-bot / analog_bridge / mmdvm_bridge を再起動しました")
+        return redirect("/")
+    except (AssertionError, ValueError, KeyError) as e:
+        set_flash(err=f"入力エラー: {e}")
+        return redirect("/")
+
 # ─── HTML テンプレート ────────────────────────────────────
 
 TEMPLATE = r"""<!DOCTYPE html>
@@ -479,7 +551,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.55</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.57</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -513,17 +585,18 @@ color:var(--muted);
           <button class="btn btn-amber">↺ Restart</button>
         </form>
         <button class="btn btn-ghost" onclick="refreshStatus()">⟳ 更新</button>
+        <button class="btn btn-primary" type="submit" form="save-form" style="margin-left:12px">💾 保存</button>
       </div>
     </div>
   </div>
 </div>
 
+<form id="save-form" method="post" action="/save_all">
 <div class="grid3">
 
   <div class="card">
     <div class="card-head">🤖 Bot 設定 — bot_config.json</div>
     <div class="card-body">
-      <form method="post" action="/bot_config">
         <div class="section-title">受信時間フィルタ</div>
         <div class="field">
           <label>最小受信時間 (秒)</label>
@@ -563,17 +636,12 @@ color:var(--muted);
               value="{{ bot_cfg.get('NIGHT_END_HOUR', 5) }}">
           </div>
         </div>
-        <div class="btn-row" style="margin-top:14px">
-          <button class="btn btn-primary" type="submit">💾 保存</button>
-        </div>
-      </form>
-    </div>
+      </div>
   </div>
 
   <div class="card">
     <div class="card-head">📡 DVSwitch 設定 — ini ファイル</div>
     <div class="card-body">
-      <form method="post" action="/dvs_config">
         <div class="section-title">局識別情報 (MMDVM_Bridge.ini)</div>
         <div class="field">
           <label>Callsign</label>
@@ -606,19 +674,14 @@ color:var(--muted);
           保存前に自動バックアップを作成します。<br>
           固定値: Address=tgif.network / txPort=51001 / rxPort=51000
         </div>
-        <div class="btn-row">
-          <button class="btn btn-primary" type="submit">💾 保存＆バックアップ</button>
-        </div>
-      </form>
-    </div>
+      </div>
   </div>
 
   <!-- MMDVM Info -->
   <div class="card">
     <div class="card-head">📍 MMDVM Info — MMDVM_Bridge.ini [Info]</div>
     <div class="card-body">
-      <form method="post" action="/info_config">
-        <div class="section-title">周波数</div>
+          <div class="section-title">周波数</div>
         <div class="row2">
           <div class="field">
             <label>RX Frequency (Hz)</label>
@@ -663,45 +726,17 @@ color:var(--muted);
           <label>URL</label>
           <input type="text" name="url" value="{{ info.url }}" placeholder="https://...">
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:12px">
-          保存前に自動バックアップを作成し、mmdvm_bridge を再起動します。
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-primary" type="submit">💾 保存＆再起動</button>
-        </div>
-      </form>
     </div>
   </div>
 
 </div>
 
 
-<div class="card">
-  <div class="card-head">📝 Bot設定 変更ログ</div>
-  <div class="card-body">
-    {% if change_log %}
-    <ul class="chg-list">
-      {% for e in change_log[:20] %}
-      <li>
-        <span class="chg-time">{{ e.time }}</span>
-        {% for k, v in e.changes.items() %}
-        <span class="chg-key">{{ k }}</span>
-        <span style="color:var(--muted)">{{ v.from }}</span>
-        <span class="chg-arrow">→</span>
-        <span class="chg-new">{{ v.to }}</span>
-        {% endfor %}
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <div style="font-size:11px;color:var(--muted)">変更履歴はまだありません。</div>
-    {% endif %}
-  </div>
-</div>
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
   OpenCCVoice for DVSwitch Web Dashboard V2.5
 </div>
+</form>
 
 </main>
 
