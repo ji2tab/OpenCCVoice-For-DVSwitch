@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.52
+ app.py  V2.53
 
  変更履歴:
    V2.0  初版リリース
@@ -15,6 +15,7 @@
    V2.5  配色をDVSwitch Dashboard実ソースに合わせて変更
    V2.51 フォント11pt統一、iniバックアップ一覧を非表示、ヘッダにバージョン表示
    V2.52 MMDVM_Bridge [Info] セクション編集機能を追加
+   V2.53 Bot設定/DVSwitch設定/MMDVM Info を3カラム横並びに変更
 
  配置:
    /opt/openccvoice/web/app.py   ← 推奨
@@ -372,6 +373,8 @@ font-weight:bold;
 
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:start}
+  @media(max-width:900px){.grid3{grid-template-columns:1fr}}
 
   /* フォーム */
   .field{margin-bottom:10px}
@@ -461,7 +464,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.52</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.53</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -500,7 +503,7 @@ color:var(--muted);
   </div>
 </div>
 
-<div class="grid2">
+<div class="grid3">
 
   <div class="card">
     <div class="card-head">🤖 Bot 設定 — bot_config.json</div>
@@ -597,67 +600,68 @@ color:var(--muted);
     </div>
   </div>
 
+  <!-- MMDVM Info -->
+  <div class="card">
+    <div class="card-head">📍 MMDVM Info — MMDVM_Bridge.ini [Info]</div>
+    <div class="card-body">
+      <form method="post" action="/info_config">
+        <div class="section-title">周波数</div>
+        <div class="row2">
+          <div class="field">
+            <label>RX Frequency (Hz)</label>
+            <input type="text" name="rxfreq" value="{{ info.rxfreq }}" placeholder="222340000">
+          </div>
+          <div class="field">
+            <label>TX Frequency (Hz)</label>
+            <input type="text" name="txfreq" value="{{ info.txfreq }}" placeholder="224940000">
+          </div>
+        </div>
+        <div class="section-title">位置情報</div>
+        <div class="row2">
+          <div class="field">
+            <label>Latitude（緯度）</label>
+            <input type="text" name="lat" value="{{ info.lat }}" placeholder="35.21">
+          </div>
+          <div class="field">
+            <label>Longitude（経度）</label>
+            <input type="text" name="lon" value="{{ info.lon }}" placeholder="137.03">
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Height（高さ m）</label>
+            <input type="text" name="height" value="{{ info.height }}" placeholder="0">
+          </div>
+          <div class="field">
+            <label>Power（W）</label>
+            <input type="text" name="power" value="{{ info.power }}" placeholder="1">
+          </div>
+        </div>
+        <div class="field">
+          <label>Location（設置場所）</label>
+          <input type="text" name="location" value="{{ info.location }}" placeholder="Owariasahi, Aichi">
+        </div>
+        <div class="section-title">その他</div>
+        <div class="field">
+          <label>Description</label>
+          <input type="text" name="desc" value="{{ info.desc }}" placeholder="MMDVM_Bridge">
+        </div>
+        <div class="field">
+          <label>URL</label>
+          <input type="text" name="url" value="{{ info.url }}" placeholder="https://...">
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:12px">
+          保存前に自動バックアップを作成し、mmdvm_bridge を再起動します。
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" type="submit">💾 保存＆再起動</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
 </div>
 
-<!-- MMDVM Info -->
-<div class="card">
-  <div class="card-head">📍 MMDVM Info — MMDVM_Bridge.ini [Info]</div>
-  <div class="card-body">
-    <form method="post" action="/info_config">
-      <div class="section-title">周波数</div>
-      <div class="row2">
-        <div class="field">
-          <label>RX Frequency (Hz)</label>
-          <input type="text" name="rxfreq" value="{{ info.rxfreq }}" placeholder="222340000">
-        </div>
-        <div class="field">
-          <label>TX Frequency (Hz)</label>
-          <input type="text" name="txfreq" value="{{ info.txfreq }}" placeholder="224940000">
-        </div>
-      </div>
-      <div class="section-title">位置情報</div>
-      <div class="row2">
-        <div class="field">
-          <label>Latitude（緯度）</label>
-          <input type="text" name="lat" value="{{ info.lat }}" placeholder="35.21">
-        </div>
-        <div class="field">
-          <label>Longitude（経度）</label>
-          <input type="text" name="lon" value="{{ info.lon }}" placeholder="137.03">
-        </div>
-      </div>
-      <div class="row2">
-        <div class="field">
-          <label>Height（高さ m）</label>
-          <input type="text" name="height" value="{{ info.height }}" placeholder="0">
-        </div>
-        <div class="field">
-          <label>Power（W）</label>
-          <input type="text" name="power" value="{{ info.power }}" placeholder="1">
-        </div>
-      </div>
-      <div class="field">
-        <label>Location（設置場所）</label>
-        <input type="text" name="location" value="{{ info.location }}" placeholder="Owariasahi, Aichi">
-      </div>
-      <div class="section-title">その他</div>
-      <div class="field">
-        <label>Description</label>
-        <input type="text" name="desc" value="{{ info.desc }}" placeholder="MMDVM_Bridge">
-      </div>
-      <div class="field">
-        <label>URL</label>
-        <input type="text" name="url" value="{{ info.url }}" placeholder="https://...">
-      </div>
-      <div style="font-size:10px;color:var(--muted);margin-bottom:12px">
-        保存前に自動バックアップを作成し、mmdvm_bridge を再起動します。
-      </div>
-      <div class="btn-row">
-        <button class="btn btn-primary" type="submit">💾 保存＆再起動</button>
-      </div>
-    </form>
-  </div>
-</div>
 
 <div class="card">
   <div class="card-head">📝 Bot設定 変更ログ</div>
