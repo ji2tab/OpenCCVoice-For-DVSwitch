@@ -56,6 +56,7 @@
 - [19. 設定変更・音声差し替え・バックアップ](#19-設定変更音声差し替えバックアップ)
 - [20. 運用上の注意と法令遵守](#20-運用上の注意と法令遵守)
 - [21. システム全体のバックアップとリストア](#21-システム全体のバックアップとリストア)
+- [22. Web ダッシュボード（OpenCCVoice for DVSwitch Web Dashboard）](#22-web-ダッシュボード)
 
 ### 付録
 - [付録A：トラブルシューティング早見表](#付録aトラブルシューティング早見表)
@@ -65,7 +66,7 @@
 - [付録E：クイックリファレンス](#付録eクイックリファレンス)
 
 > **最短ルート（クリーン構築）:** 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 →
-> 15 → 16 → 17 → 18。付録は参照用。
+> 15 → 16 → 17 → 18。22 は任意。付録は参照用。
 
 ---
 
@@ -863,6 +864,62 @@ crontab -e
 0 3 * * 0 tar czf /home/ocv/dvswitch_backup_$(date +\%Y\%m\%d).tar.gz /opt/Analog_Bridge/Analog_Bridge.ini /opt/MMDVM_Bridge/MMDVM_Bridge.ini /opt/dvswitch_bot/bin/dvswitch_bot.py /opt/dvswitch_bot/bin/bot_setup.py /opt/dvswitch_bot/bot_config.json
 ```
 
+## 22. Web ダッシュボード（OpenCCVoice for DVSwitch Web Dashboard）
+
+Bot の設定・監視・サービス制御をブラウザから行える Web ダッシュボード（任意導入）。
+Raspberry Pi 上の Flask アプリとして動作する。
+
+> **前提:** 第17章で `bot_setup.py` を実行し `bot_config.json` が存在すること。
+
+### 機能一覧
+
+| 機能 | 説明 |
+|---|---|
+| サービス制御 | dvswitch-bot の Start / Stop / Restart |
+| Bot 設定 | `bot_config.json` の全項目をフォームで編集・保存 |
+| DVSwitch 設定 | `MMDVM_Bridge.ini` / `Analog_Bridge.ini` をフォームで編集 |
+| 自動バックアップ | DVSwitch 設定保存時に `/opt/dvswitch_bot/bak/ini/` へ自動バックアップ |
+| ログ表示 | MMDVM_Bridge ログ末尾5行を表示・30秒自動更新 |
+| バックアップ一覧 | ini バックアップのタイムスタンプ一覧（最新10件） |
+| 変更ログ | Bot 設定の変更履歴（項目・変更前後の値・日時）を記録・表示 |
+
+### インストール ✅
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/install.sh | sudo bash
+```
+
+完了するとIPアドレスが表示される:
+
+```
+✔ dvswitch-web が起動しました！
+  ブラウザでアクセス: http://192.168.1.81:8081/
+```
+
+### アクセス
+
+```
+http://<Raspberry-Pi-IP>:8081/
+```
+
+### アンインストール
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/uninstall.sh | sudo bash
+```
+
+> **削除されるもの:** dvswitch-web サービス / `/opt/dvswitch_bot/web/app.py`
+>
+> **残るもの（保護）:** `bot_config.json` / `bot_change_log.json` / `bak/ini/`（バックアップ）
+
+### サービス管理
+
+```bash
+sudo systemctl status dvswitch-web          # 状態確認
+sudo systemctl restart dvswitch-web         # 再起動
+journalctl -u dvswitch-web -n 30            # ログ確認
+```
+
 ---
 
 # 付録
@@ -884,6 +941,8 @@ crontab -e
 | `sudo monit status` が `Connection reset by peer` | monit httpd 無効 | 第12章 ステップ2 |
 | `:2812` が外部から開けない | `use address localhost` | `0.0.0.0` に変更して `monit reload` |
 | `monit reload` 後も「Does not exist」 | データ収集待ち | 十数秒待って再確認 |
+| dvswitch-web が起動しない | ポート競合 or flask 未インストール | `journalctl -u dvswitch-web -n 30` で確認 |
+| `:8081` にアクセスできない | サービス未起動 | `sudo systemctl status dvswitch-web` で確認 |
 
 ## 付録B：固定 WAV の個別コマンド生成
 
@@ -1019,6 +1078,7 @@ sudo systemctl restart apache2
 | 62031 | MMDVM_Bridge → TGIF（DMR） | UDP |
 | 80 | DVSwitch Dashboard（Apache） | TCP |
 | 2812 | Monit Service Manager | TCP |
+| 8081 | OpenCCVoice Web Dashboard（Flask） | TCP |
 
 ### 主要ファイルパス一覧
 
@@ -1034,7 +1094,9 @@ sudo systemctl restart apache2
 | `/opt/dvswitch_bot/bot_config.json` | Bot 設定 |
 | `/opt/dvswitch_bot/*.wav` | 固定 WAV |
 | `/opt/dvswitch_bot/bak/{ini,wav}/` | バックアップ |
+| `/opt/dvswitch_bot/web/app.py` | Web ダッシュボード本体 |
 | `/etc/systemd/system/dvswitch-bot.service` | systemd サービス定義 |
+| `/etc/systemd/system/dvswitch-web.service` | Web ダッシュボード systemd 定義 |
 | `/etc/monit/monitrc` | monit 設定 |
 | `/usr/local/sbin/platformDetect.sh` | Platform 判定スクリプト |
 
@@ -1050,6 +1112,11 @@ sudo systemctl status analog_bridge mmdvm_bridge md380-emu dvswitch-bot --no-pag
 # ログ
 sudo journalctl -u dvswitch-bot -f
 sudo tail -f /var/log/mmdvm/MMDVM_Bridge-$(date +%Y-%m-%d).log
+
+# Web ダッシュボード
+sudo systemctl status dvswitch-web
+sudo systemctl restart dvswitch-web
+journalctl -u dvswitch-web -n 30
 ```
 
 ### トラブル時の最速チェック
