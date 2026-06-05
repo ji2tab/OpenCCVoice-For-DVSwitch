@@ -272,194 +272,75 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenCCVoice for DVSwitch Web Dashboard</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap');
-
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
   :root {
-    --bg:      #0d1117;
-    --panel:   #161b22;
-    --border:  #30363d;
-    --accent:  #58a6ff;
-    --green:   #3fb950;
-    --red:     #f85149;
-    --amber:   #e3b341;
-    --text:    #c9d1d9;
-    --muted:   #8b949e;
-    --mono:    'Share Tech Mono', monospace;
-    --sans:    'Zen Kaku Gothic New', sans-serif;
+    --bg:    #0d1117;
+    --panel: #161b22;
+    --p2:    #1c2a3a;
+    --bd:    #30363d;
+    --bd2:   #21262d;
+    --acc:   #2563eb;
+    --grn:   #3fb950;
+    --red:   #f85149;
+    --amb:   #e3b341;
+    --blu:   #58a6ff;
+    --txt:   #c9d1d9;
+    --mut:   #8b949e;
+    --mono:  'Share Tech Mono', monospace;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    min-height: 100vh;
-    padding: 0 0 60px;
-  }
-
-  header {
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    position: sticky; top: 0; z-index: 100;
-  }
-  .logo {
-    font-family: var(--mono);
-    font-size: 1.15rem;
-    color: var(--accent);
-    letter-spacing: .08em;
-  }
-  .logo span { color: var(--green); }
-  .tagline { font-size: .78rem; color: var(--muted); }
-
-  .status-pill {
-    margin-left: auto;
-    display: flex; align-items: center; gap: 8px;
-    font-family: var(--mono);
-    font-size: .82rem;
-  }
-  .dot {
-    width: 10px; height: 10px; border-radius: 50%;
-    background: var(--muted);
-    box-shadow: 0 0 6px currentColor;
-    transition: background .4s;
-  }
-  .dot.active   { background: var(--green); }
-  .dot.failed   { background: var(--red); }
-  .dot.inactive { background: var(--amber); }
-
-  main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 0; display: grid; gap: 24px; }
-
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  @media(max-width:760px) { .grid2 { grid-template-columns: 1fr; } }
-
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-  .card-head {
-    padding: 12px 18px;
-    border-bottom: 1px solid var(--border);
-    font-size: .82rem;
-    font-family: var(--mono);
-    color: var(--accent);
-    letter-spacing: .06em;
-    display: flex; align-items: center; gap: 8px;
-  }
-  .card-head .icon { font-size: 1rem; }
-  .card-body { padding: 18px; }
-
-  .field { margin-bottom: 14px; }
-  label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 5px; }
-  input[type=text], input[type=number], input[type=password], select {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: .88rem;
-    padding: 7px 10px;
-    outline: none;
-    transition: border-color .2s;
-  }
-  input:focus, select:focus { border-color: var(--accent); }
-
-  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
-  .toggle-row {
-    display: flex; align-items: center; gap: 10px;
-    margin-bottom: 14px;
-  }
-  .toggle-label { font-size: .82rem; color: var(--text); }
-  input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
-
-  .btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 8px 18px;
-    border-radius: 6px;
-    border: none;
-    font-family: var(--mono);
-    font-size: .84rem;
-    cursor: pointer;
-    transition: opacity .15s, transform .1s;
-    text-decoration: none;
-  }
-  .btn:active { transform: scale(.97); }
-  .btn-primary { background: var(--accent); color: #0d1117; font-weight: 700; }
-  .btn-green   { background: var(--green); color: #0d1117; font-weight: 700; }
-  .btn-red     { background: var(--red); color: #fff; }
-  .btn-amber   { background: var(--amber); color: #0d1117; }
-  .btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  .btn:hover   { opacity: .85; }
-
-  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-
-  .svc-row {
-    display: flex; align-items: center; gap: 14px;
-    flex-wrap: wrap;
-  }
-  .svc-name { font-family: var(--mono); font-size: .9rem; color: var(--accent); }
-  .svc-status { font-family: var(--mono); font-size: .82rem; padding: 3px 10px;
-    border-radius: 20px; background: var(--bg); border: 1px solid var(--border); }
-  .svc-status.active   { color: var(--green); border-color: var(--green); }
-  .svc-status.failed   { color: var(--red);   border-color: var(--red); }
-  .svc-status.inactive { color: var(--amber); border-color: var(--amber); }
-
-
-  .msg, .err {
-    border-radius: 6px;
-    padding: 10px 16px;
-    font-size: .84rem;
-    margin-bottom: 4px;
-    font-family: var(--mono);
-  }
-  .msg { background: #1c2b1c; border: 1px solid var(--green); color: var(--green); }
-  .err { background: #2b1c1c; border: 1px solid var(--red);   color: var(--red); }
-
-  .bak-list { list-style: none; }
-  .bak-list li {
-    font-family: var(--mono);
-    font-size: .78rem;
-    color: var(--muted);
-    padding: 3px 0;
-    border-bottom: 1px solid #1e242c;
-  }
-  .bak-list li:last-child { border-bottom: none; }
-
-  .chg-list { list-style: none; }
-  .chg-list li {
-    font-family: var(--mono);
-    font-size: .78rem;
-    color: var(--text);
-    padding: 6px 0;
-    border-bottom: 1px solid #1e242c;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: baseline;
-  }
-  .chg-list li:last-child { border-bottom: none; }
-  .chg-time  { color: var(--muted); min-width: 140px; }
-  .chg-key   { color: var(--accent); }
-  .chg-arrow { color: var(--amber); }
-  .chg-new   { color: var(--green); }
-
-  .section-title {
-    font-size: .7rem;
-    font-family: var(--mono);
-    color: var(--muted);
-    letter-spacing: .15em;
-    text-transform: uppercase;
-    margin-bottom: 16px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
-  }
-  hr { border: none; border-top: 1px solid var(--border); margin: 6px 0 14px; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:12px;min-height:100vh;padding-bottom:40px}
+  header{background:var(--p2);border-bottom:2px solid var(--acc);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+  .logo{font-size:14px;color:#fff;letter-spacing:.08em}
+  .tagline{font-size:10px;color:var(--mut);margin-top:2px}
+  .status-pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--mut)}
+  .dot.active{background:var(--grn);box-shadow:0 0 5px var(--grn)}
+  .dot.failed{background:var(--red)}
+  .dot.inactive{background:var(--amb)}
+  main{max-width:1200px;margin:0 auto;padding:12px 16px;display:grid;gap:10px}
+  .card{background:var(--panel);border:1px solid var(--bd);border-radius:4px;overflow:hidden}
+  .card-head{background:var(--p2);padding:5px 12px;border-bottom:1px solid var(--bd);font-size:11px;color:var(--blu);letter-spacing:.08em;display:flex;align-items:center;gap:6px}
+  .card-body{padding:14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .field{margin-bottom:10px}
+  label{display:block;font-size:10px;color:var(--mut);margin-bottom:3px;letter-spacing:.05em}
+  input[type=text],input[type=number],input[type=password],select{width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:3px;color:var(--txt);font-family:var(--mono);font-size:12px;padding:5px 8px;outline:none}
+  input:focus,select:focus{border-color:var(--acc)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .toggle-label{font-size:11px;color:var(--txt)}
+  input[type=checkbox]{width:14px;height:14px;accent-color:var(--acc)}
+  .btn{display:inline-flex;align-items:center;gap:5px;padding:5px 14px;border-radius:3px;border:1px solid var(--bd);font-family:var(--mono);font-size:11px;cursor:pointer;transition:opacity .15s;background:var(--p2);color:var(--txt)}
+  .btn:hover{opacity:.8}
+  .btn:active{transform:scale(.97)}
+  .btn-primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn-green{background:#1a4a1a;border-color:var(--grn);color:var(--grn)}
+  .btn-red{background:#3a1a1a;border-color:var(--red);color:var(--red)}
+  .btn-amber{background:#3a2e0a;border-color:var(--amb);color:var(--amb)}
+  .btn-ghost{background:transparent;border-color:var(--bd);color:var(--mut)}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .svc-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .svc-name{font-size:12px;color:var(--blu)}
+  .svc-badge{font-size:10px;padding:2px 8px;border-radius:2px;border:1px solid var(--bd);background:var(--bg)}
+  .svc-badge.active{color:var(--grn);border-color:var(--grn);background:#1a4a1a}
+  .svc-badge.failed{color:var(--red);border-color:var(--red);background:#3a1a1a}
+  .svc-badge.inactive{color:var(--amb);border-color:var(--amb);background:#3a2e0a}
+  .msg,.err{border-radius:3px;padding:8px 14px;font-size:11px;margin-bottom:6px;border-left:3px solid}
+  .msg{background:#1a4a1a;border-color:var(--grn);color:var(--grn)}
+  .err{background:#3a1a1a;border-color:var(--red);color:var(--red)}
+  .bak-list{list-style:none}
+  .bak-list li{font-size:10px;color:var(--mut);padding:3px 0;border-bottom:1px solid var(--bd2)}
+  .bak-list li:last-child{border-bottom:none}
+  .chg-list{list-style:none}
+  .chg-list li{font-size:11px;padding:5px 0;border-bottom:1px solid var(--bd2);display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+  .chg-list li:last-child{border-bottom:none}
+  .chg-time{color:var(--mut);min-width:135px;font-size:10px}
+  .chg-key{color:var(--blu)}
+  .chg-arrow{color:var(--amb)}
+  .chg-new{color:var(--grn)}
+  .section-title{font-size:10px;color:var(--mut);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--bd)}
 </style>
 </head>
 <body>
@@ -484,21 +365,20 @@ TEMPLATE = r"""<!DOCTYPE html>
 <div class="err">✖ {{ err }}</div>
 {% endif %}
 
-<!-- サービス制御 -->
 <div class="card">
-  <div class="card-head"><span class="icon">⚙</span> サービス制御 — {{ service_name }}</div>
+  <div class="card-head">⚙ サービス制御 — {{ service_name }}</div>
   <div class="card-body">
     <div class="svc-row">
       <span class="svc-name">dvswitch-bot</span>
-      <span class="svc-status {{ status }}" id="svc-status">{{ status }}</span>
+      <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
       <div class="btn-row">
-        <form method="post" action="/service/start">
+        <form method="post" action="/service/start" style="display:inline">
           <button class="btn btn-green">▶ Start</button>
         </form>
-        <form method="post" action="/service/stop">
+        <form method="post" action="/service/stop" style="display:inline">
           <button class="btn btn-red">■ Stop</button>
         </form>
-        <form method="post" action="/service/restart">
+        <form method="post" action="/service/restart" style="display:inline">
           <button class="btn btn-amber">↺ Restart</button>
         </form>
         <button class="btn btn-ghost" onclick="refreshStatus()">⟳ 更新</button>
@@ -507,12 +387,10 @@ TEMPLATE = r"""<!DOCTYPE html>
   </div>
 </div>
 
-<!-- 2カラム: Bot設定 / DVSwitch設定 -->
 <div class="grid2">
 
-  <!-- Bot設定 -->
   <div class="card">
-    <div class="card-head"><span class="icon">🤖</span> Bot 設定 — bot_config.json</div>
+    <div class="card-head">🤖 Bot 設定 — bot_config.json</div>
     <div class="card-body">
       <form method="post" action="/bot_config">
         <div class="section-title">受信時間フィルタ</div>
@@ -528,7 +406,6 @@ TEMPLATE = r"""<!DOCTYPE html>
               value="{{ bot_cfg.get('RX_DURATION_MAX_SEC', 3.9) }}" required>
           </div>
         </div>
-
         <div class="section-title">定時アナウンス</div>
         <div class="field">
           <label>1時間あたりの放送回数</label>
@@ -538,7 +415,6 @@ TEMPLATE = r"""<!DOCTYPE html>
             {% endfor %}
           </select>
         </div>
-
         <div class="section-title">ナイトモード</div>
         <div class="toggle-row">
           <input type="checkbox" name="night_enabled" id="night_chk"
@@ -558,24 +434,21 @@ TEMPLATE = r"""<!DOCTYPE html>
               value="{{ bot_cfg.get('NIGHT_END_HOUR', 5) }}">
           </div>
         </div>
-
-        <div class="btn-row" style="margin-top:18px">
+        <div class="btn-row" style="margin-top:14px">
           <button class="btn btn-primary" type="submit">💾 保存</button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- DVSwitch設定 -->
   <div class="card">
-    <div class="card-head"><span class="icon">📡</span> DVSwitch 設定 — ini ファイル</div>
+    <div class="card-head">📡 DVSwitch 設定 — ini ファイル</div>
     <div class="card-body">
       <form method="post" action="/dvs_config">
         <div class="section-title">局識別情報 (MMDVM_Bridge.ini)</div>
         <div class="field">
           <label>Callsign</label>
-          <input type="text" name="callsign"
-            value="{{ dvs.callsign }}" placeholder="JJ2YYK" required>
+          <input type="text" name="callsign" value="{{ dvs.callsign }}" placeholder="JJ2YYK" required>
         </div>
         <div class="row2">
           <div class="field">
@@ -595,18 +468,15 @@ TEMPLATE = r"""<!DOCTYPE html>
           <label>TGIF Password</label>
           <input type="password" name="password" value="{{ dvs.password }}">
         </div>
-
         <div class="section-title">ルーティング (Analog_Bridge.ini)</div>
         <div class="field">
           <label>送信 TG（txTg）</label>
           <input type="text" name="txtg" value="{{ dvs.txtg }}" placeholder="168" required>
         </div>
-
-        <div style="font-size:.75rem; color:var(--muted); margin-bottom:14px">
+        <div style="font-size:10px;color:var(--mut);margin-bottom:12px">
           保存前に自動バックアップを作成します。<br>
           固定値: Address=tgif.network / txPort=51001 / rxPort=51000
         </div>
-
         <div class="btn-row">
           <button class="btn btn-primary" type="submit">💾 保存＆バックアップ</button>
         </div>
@@ -614,11 +484,10 @@ TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
-</div><!-- .grid2 -->
+</div>
 
-<!-- バックアップ一覧 -->
 <div class="card">
-  <div class="card-head"><span class="icon">🗄</span> ini バックアップ一覧</div>
+  <div class="card-head">🗄 ini バックアップ一覧</div>
   <div class="card-body">
     {% if backups %}
     <ul class="bak-list">
@@ -627,17 +496,16 @@ TEMPLATE = r"""<!DOCTYPE html>
       {% endfor %}
     </ul>
     {% if backups|length > 10 %}
-    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">（最新10件を表示）</div>
+    <div style="font-size:10px;color:var(--mut);margin-top:4px">（最新10件を表示）</div>
     {% endif %}
     {% else %}
-    <div style="font-size:.82rem;color:var(--muted)">バックアップはまだありません。</div>
+    <div style="font-size:11px;color:var(--mut)">バックアップはまだありません。</div>
     {% endif %}
   </div>
 </div>
 
-<!-- Bot設定 変更ログ -->
 <div class="card">
-  <div class="card-head"><span class="icon">📝</span> Bot設定 変更ログ</div>
+  <div class="card-head">📝 Bot設定 変更ログ</div>
   <div class="card-body">
     {% if change_log %}
     <ul class="chg-list">
@@ -646,7 +514,7 @@ TEMPLATE = r"""<!DOCTYPE html>
         <span class="chg-time">{{ e.time }}</span>
         {% for k, v in e.changes.items() %}
         <span class="chg-key">{{ k }}</span>
-        <span style="color:var(--muted)">{{ v.from }}</span>
+        <span style="color:var(--mut)">{{ v.from }}</span>
         <span class="chg-arrow">→</span>
         <span class="chg-new">{{ v.to }}</span>
         {% endfor %}
@@ -654,7 +522,7 @@ TEMPLATE = r"""<!DOCTYPE html>
       {% endfor %}
     </ul>
     {% else %}
-    <div style="font-size:.82rem;color:var(--muted)">変更履歴はまだありません。</div>
+    <div style="font-size:11px;color:var(--mut)">変更履歴はまだありません。</div>
     {% endif %}
   </div>
 </div>
@@ -662,33 +530,25 @@ TEMPLATE = r"""<!DOCTYPE html>
 </main>
 
 <script>
-function dotClass(s) {
-  if (s === "active") return "active";
-  if (s === "failed") return "failed";
+function dotClass(s){
+  if(s==="active") return "active";
+  if(s==="failed") return "failed";
   return "inactive";
 }
-
-function refreshStatus() {
-  fetch("/api/status").then(r=>r.json()).then(d => {
-    const s = d.status;
-    const dot = document.getElementById("dot");
-    const lbl = document.getElementById("svc-status-label");
-    const pill = document.getElementById("svc-status");
-    dot.className = "dot " + dotClass(s);
-    lbl.textContent = s;
-    if (pill) { pill.textContent = s; pill.className = "svc-status " + dotClass(s); }
+function refreshStatus(){
+  fetch("/api/status").then(r=>r.json()).then(d=>{
+    const s=d.status;
+    document.getElementById("dot").className="dot "+dotClass(s);
+    document.getElementById("svc-status-label").textContent=s;
+    const p=document.getElementById("svc-status");
+    if(p){p.textContent=s;p.className="svc-badge "+dotClass(s);}
   });
 }
-
-
-setInterval(refreshStatus, 20000);
-
-
-function toggleNight(on) {
-  document.getElementById("night-fields").style.display = on ? "" : "none";
+setInterval(refreshStatus,20000);
+function toggleNight(on){
+  document.getElementById("night-fields").style.display=on?"":"none";
 }
 </script>
-
 </body>
 </html>
 """
