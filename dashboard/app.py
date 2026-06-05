@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.59
+ app.py  V2.60
 
  変更履歴:
    V2.0  初版リリース
@@ -24,6 +24,7 @@
    V2.58 メッセージ頭切れ修正（main上余白追加）、status-pillのCSS typo修正
    V2.59 .btn/.section-title のCSS typo修正（ボタン肥大化）、ボタンを大きく、
          section-titleを通常フォント化（半角括弧を細く表示）
+   V2.60 サービス制御の5ボタンを同じ幅・高さに統一
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -488,8 +489,9 @@ font-weight:bold;
 
   /* ボタン */
   .btn{
-    display:inline-flex;align-items:center;gap:6px;
-    padding:9px 22px;border-radius:6px;
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    min-width:110px;
+    padding:9px 18px;border-radius:6px;
     font-family:arial,sans-serif;font-weight:bold;font-size:14px;
     cursor:pointer;transition:opacity .15s;border:1px solid #999;
     background:var(--bg2);color:var(--text);
@@ -555,7 +557,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.59</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.60</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
