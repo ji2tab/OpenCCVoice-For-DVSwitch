@@ -1,7 +1,7 @@
-# dvswitch_bot.py ソフトウェア仕様書（V1.61）
+# dvswitch_bot.py ソフトウェア仕様書（V1.62）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**バージョン:** V1.61（V1.60 デーモン版ベース／ナイトモード抑制ロジック改良）
+**バージョン:** V1.62（V1.61 ベース／起動アナウンス機能を追加）
 **役割:** MMDVM_Bridge のログを監視し、カーチャンク自動応答・時報・定時メッセージを
 USRP プロトコルで送出する常駐デーモン。
 
@@ -30,11 +30,12 @@ USRP プロトコルで送出する常駐デーモン。
 
 ## 1. 概要と責務
 
-`dvswitch_bot.py` は単一プロセスの常駐デーモンで、次の3つを行う。
+`dvswitch_bot.py` は単一プロセスの常駐デーモンで、次の処理を行う。
 
-1. **カーチャンク自動応答** — MMDVM_Bridge ログから短時間送信を検知し、応答音声を送出
-2. **時報** — 毎正時に「〇〇時です」を送出（ナイトモード突入時はアナウンスも）
-3. **定時メッセージ** — 1時間に 1〜3 回、001/002 を交互送出
+1. **起動アナウンス** — 起動後、一定秒数おいて「起動しました。」を1回送出（V1.62 で追加）
+2. **カーチャンク自動応答** — MMDVM_Bridge ログから短時間送信を検知し、応答音声を送出
+3. **時報** — 毎正時に「〇〇時です」を送出（ナイトモード突入時はアナウンスも）
+4. **定時メッセージ** — 1時間に 1〜3 回、001/002 を交互送出
 
 入出力の境界は次のとおり。
 
@@ -123,8 +124,13 @@ PID を付けるのは、複数プロセスや再起動時のファイル衝突�
 | `PRE_POST_PADDING_PACKETS` | `75` | 音声前後の無音パケット数（75×20ms＝1.5秒） |
 | `ROTATION_CHECK_INTERVAL` | `5.0` | ログ切替チェック間隔（秒） |
 | `GAP_AFTER_INTRO_SEC` | `0.5` | イントロ後の無音（連結時の「間」） |
+| `STARTUP_ANNOUNCE_DELAY_SEC` | `2.0` | 起動後この秒数おいて起動アナウンスを送出（V1.62） |
 | `TIME_SIGNAL_LEAD_SEC` | `7` | 時報を正時の何秒前に発火させるか |
 | `NIGHT_ANN_GAP_SEC` | `1.0` | 時報とナイトモードアナウンスの間隔 |
+
+> **注:** ソース冒頭のコメントには「既定 7.0 秒（5〜10 秒で調整可）」とあるが、実際の定数は
+> `2.0`。コメントは設計時の目安で、現行の値は 2.0 秒。MMDVM_Bridge / Analog_Bridge の起動が
+> 落ち着いてから送出する意図のため、環境に応じてこの値を調整してよい。
 
 ### カナ変換テーブル `CHAR_TO_KANA`
 
@@ -194,6 +200,7 @@ PID を付けるのは、複数プロセスや再起動時のファイル衝突�
 | `_get_trigger_minutes()` | 放送回数→発火する分のリスト | `[30]`/`[20,40]`/`[15,30,45]` |
 | `_announcement_scheduler()` | 時報・定時の発火を監視（別スレッド） | `_start_worker` を呼ぶ |
 | `_start_worker(mode, val, extra)` | 多重チェックして応答スレッド起動 | `is_talking` 制御 |
+| `_send_startup_announcement()` | 起動アナウンス送出（V1.62。`_start_worker` を経由せず直接実行） | USRP 送信＋一時ファイル削除 |
 | `_send_night_mode_announcement()` | ナイトモード突入アナウンス送出 | USRP 送信 |
 | `_reply_executor(mode, val, extra)` | 応答の実体（合成→送出→後始末） | 一時ファイル削除、抑制設定 |
 | `_generate_hybrid(intro, middle_text, outro)` | イントロ＋合成音声＋アウトロを結合 | bool（成功/失敗） |
@@ -225,13 +232,19 @@ flowchart TD
     sched --> findlog["_find_latest_log()<br/>最新ログを探す"]
     findlog --> open["_open_log_file()<br/>末尾へシーク"]
     open --> ready["'Bot ready' 出力"]
-    ready --> loop["ログ監視ループへ"]
+    ready --> timer["threading.Timer で<br/>起動アナウンスを予約<br/>(STARTUP_ANNOUNCE_DELAY_SEC 後)"]
+    timer --> loop["ログ監視ループへ"]
+    timer -.->|N秒後に別スレッドで| ann["_send_startup_announcement()<br/>「起動しました。」送出"]
 
     classDef act fill:#fff3e0,stroke:#fb8c00,color:#000
     classDef die fill:#fdecea,stroke:#d93025,color:#000
-    class cfg,info,sched,findlog,open act
+    class cfg,info,sched,findlog,open,timer,ann act
     class die die
 ```
+
+`Bot ready` 出力の直後に `threading.Timer(STARTUP_ANNOUNCE_DELAY_SEC, _send_startup_announcement)`
+で起動アナウンスを予約する。Timer は別スレッドで発火するため、メインのログ監視ループは
+待たずに続行する。
 
 ### 7-2. ログ監視ループ（カーチャンク検知）
 
@@ -272,6 +285,22 @@ flowchart LR
     classDef act fill:#fff3e0,stroke:#fb8c00,color:#000
     class a,b,c,d,e act
 ```
+
+### 7-4. 起動アナウンス（_send_startup_announcement, V1.62）
+
+デーモン起動後、ログ監視を開始する直前に `threading.Timer` で
+`STARTUP_ANNOUNCE_DELAY_SEC`（2.0 秒）遅延させ、「起動しました。」を**1回だけ**送出する。
+
+- **目的:** MMDVM_Bridge / Analog_Bridge の起動が落ち着いてから送出するため、固定の遅延を置く
+- **実装上のポイント:** `is_talking` フラグや `_reply_lock` と競合しないよう、`_start_worker` を
+  **経由せず** `_send_startup_announcement()` を直接呼ぶ。Timer 発火時にちょうど起動直後で
+  他の送出と重なりにくいため、専用に直接実行する設計
+- **音声:** `_generate_hybrid(FIXED_INTRO_WAV, "起動しました。", None)` で生成（アウトロなし）
+- **後始末:** `_reply_executor` の finally と同等に、一時ファイル（TEMP_FINAL ほか）を削除する
+- **中断時:** Timer 発火時に `should_exit` が立っていれば何もせず return する
+
+> 起動アナウンスは `is_talking` を立てないため、理論上は起動直後のカーチャンク応答と
+> 重なりうるが、起動直後の数秒に応答が走る可能性は低く、実用上の問題はない。
 
 ---
 
@@ -335,6 +364,7 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 |---|---|---|---|
 | kerchunk | fixed_intro | 「（カナ）局の、」 | fixed_outro |
 | time_signal | time_intro | 「〇〇時です」 | なし |
+| startup_announce | fixed_intro | 「起動しました。」 | なし |
 | night_announce | fixed_intro | 「ただいまより…ナイトモードに入ります。」 | なし |
 | fixed_file | — | （合成せず既成WAVをそのまま送出） | — |
 
@@ -391,6 +421,8 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 |---|---|
 | `Config loaded ...` | 設定読込成功 |
 | `Bot ready — monitoring DMR traffic` | 監視開始 |
+| `Startup ann scheduled in 2.0s` | 起動アナウンスを予約（V1.62） |
+| `TX Sending startup startup_announce` | 起動アナウンス送出（V1.62） |
 | `receive:Kerchunk detected: <CS> (0.9s) trigger` | カーチャンク検知・応答 |
 | `receive:suppressed: <CS> (..., remaining ...)` | 抑制中で無視 |
 | `receive:Normal QSO detected: <CS>` | 通常QSO（長い送信）扱い |
@@ -409,9 +441,11 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 | メイン | `monitor_and_reply` | ログ監視ループ |
 | スケジューラ | `_announcement_scheduler`（daemon） | 時報・定時の発火監視（1秒間隔） |
 | ワーカー | `_reply_executor`（daemon、都度生成） | 応答音声の合成・送出 |
+| 起動アナウンス | `threading.Timer` → `_send_startup_announcement` | 起動 N 秒後に1回だけ送出（V1.62） |
 
 ワーカーは応答の都度 `_start_worker` から生成される使い捨てスレッド。`is_talking`＋
-`_reply_lock` で同時実行は1つに制限。
+`_reply_lock` で同時実行は1つに制限。起動アナウンスの Timer はこのロック機構を経由せず
+直接送出する（起動直後の1回限りのため）。
 
 ### ログローテーション追従
 
@@ -453,9 +487,10 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 | **time_outro は未使用** | 定数は残るが現行ロジックで参照しない。将来再利用のための残置 |
 | **ログ時刻はタイムスタンプ差** | 受信時間はログの時刻差で測る。MMDVM のフレーム数長とは別物 |
 | **ログ選択はファイル名ベース** | `_find_latest_log()` は `key=os.path.basename`。`getctime` に戻すと日跨ぎで旧ログに化ける |
+| **起動アナウンスは直接実行** | `_send_startup_announcement` は `is_talking`/`_start_worker` を経由しない。組み込み方を変えるとロック競合を招きうる。遅延は `STARTUP_ANNOUNCE_DELAY_SEC`（実値 2.0、コメントは 7.0 の食い違いに注意） |
 
 ---
 
-*dvswitch_bot.py ソフトウェア仕様書 V1.61*
+*dvswitch_bot.py ソフトウェア仕様書 V1.62*
 *対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（daemon, based on V1.60）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
