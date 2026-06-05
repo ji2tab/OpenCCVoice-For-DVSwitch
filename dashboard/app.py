@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.57
+ app.py  V2.58
 
  変更履歴:
    V2.0  初版リリース
@@ -21,6 +21,7 @@
    V2.56 配置コメントを実態（/opt/dvswitch_bot/web）に修正
    V2.57 3カードを一括保存に統合、保存ボタンをサービス制御行へ、変更ログ非表示、
          保存時に dvswitch-bot/analog_bridge/mmdvm_bridge を一括再起動
+   V2.58 メッセージ頭切れ修正（main上余白追加）、status-pillのCSS typo修正
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -432,13 +433,13 @@ TEMPLATE = r"""<!DOCTYPE html>
   }
   .logo{font-weight:bold;color:var(--orange);font-family:var(--mono);letter-spacing:.06em}
   .tagline{color:var(--muted);margin-top:2px}
-  .status-pill{display:flex;align-items:center;gap:6pxcolor:var(--muted)}
+  .status-pill{display:flex;align-items:center;gap:6px;color:var(--muted)}
   .dot{width:10px;height:10px;border-radius:50%;background:#ccc}
   .dot.active{background:var(--green3);box-shadow:0 0 4px var(--green3)}
   .dot.failed{background:var(--red)}
   .dot.inactive{background:var(--amber)}
 
-  main{max-width:1100px;margin:0 auto;padding:14px 16px;display:grid;gap:12px}
+  main{max-width:1100px;margin:0 auto;padding:20px 16px;display:grid;gap:12px}
 
   /* カード */
   .card{
@@ -551,7 +552,7 @@ color:var(--muted);
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.57</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.58</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
