@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenCCVoice for DVSwitch Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/dvswitch_bot/web
+ExecStart=/usr/bin/python3 /opt/dvswitch_bot/web/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
