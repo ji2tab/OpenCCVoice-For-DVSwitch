@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.63
+ app.py  V2.64
 
  変更履歴:
    V2.0  初版リリース
@@ -28,6 +28,7 @@
    V2.61 ボタンに固定height/box-sizing追加で完全同一サイズ化
    V2.62 ボタンサイズ縮小（幅120→84px、高さ42→34px）
    V2.63 通常/変更モード追加（通常は閲覧専用＋変更ボタンのみ、変更で編集＋操作ボタン表示）
+   V2.64 サービス状態を●(緑)active / ●(赤)inactive の丸印表現に変更
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -514,12 +515,19 @@ font-weight:bold;
   .svc-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .svc-name{font-weight:bold;color:var(--orange2);font-family:var(--mono)}
   .svc-badge{
-padding:2px 10px;border-radius:4px;
-    border:1px solid #999;background:var(--bg3);font-weight:bold;
+    display:inline-flex;align-items:center;gap:6px;
+    font-weight:bold;font-family:arial,sans-serif;font-size:13px;
   }
-  .svc-badge.active{color:#030;background:#bfb;border-color:var(--green)}
-  .svc-badge.failed{color:#fff;background:#a02020;border-color:#701010}
-  .svc-badge.inactive{color:#630;background:#ffeedd;border-color:var(--amber)}
+  .svc-badge::before{
+    content:"";width:11px;height:11px;border-radius:50%;
+    display:inline-block;background:#999;
+  }
+  .svc-badge.active{color:#1a6b1a}
+  .svc-badge.active::before{background:#12AD2A;box-shadow:0 0 4px #12AD2A}
+  .svc-badge.inactive{color:#a02020}
+  .svc-badge.inactive::before{background:#e02020}
+  .svc-badge.failed{color:#a02020}
+  .svc-badge.failed::before{background:#e02020}
 
   /* メッセージ */
   .msg,.err{
@@ -578,7 +586,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.63</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.64</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
