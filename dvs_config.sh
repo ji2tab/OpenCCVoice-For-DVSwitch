@@ -1,15 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # DVSwitch 設定対話ツール  dvs_config.sh
-#   配置: /opt/dvswitch_bot/bin/dvs_config.sh
 #   TGIF 接続を前提に、ユーザ毎の可変項目を対話入力し、3つの ini を更新する。
-#   編集前に /opt/bak/YYMMDDHHMMSS/ へ 3ファイルをまとめてバックアップする。
+#   編集前に /opt/dvswitch_bot/bak/ini/YYMMDDHHMMSS/ へ 3ファイルをまとめてバックアップする。
 #
-#   使い方（bin ディレクトリに cd して実行、または絶対パスで実行）:
-#     cd /opt/dvswitch_bot/bin && sudo ./dvs_config.sh   対話編集（編集前に自動バックアップ）
-#     sudo /opt/dvswitch_bot/bin/dvs_config.sh           （絶対パスでも可）
+#   使い方:
+#     sudo ./dvs_config.sh        対話編集（編集前に自動バックアップ）
 #     sudo ./dvs_config.sh -r     バックアップから復元（日付フォルダを選択）
-#     sudo ./dvs_config.sh -d     /opt/bak/ 配下のバックアップを全削除
+#     sudo ./dvs_config.sh -d     /opt/dvswitch_bot/bak/ini/ 配下のバックアップを全削除
 #     sudo ./dvs_config.sh -h     ヘルプ
 #
 #   対象ファイル:
@@ -41,7 +39,7 @@ DVSWITCH_INI="/opt/MMDVM_Bridge/DVSwitch.ini"
 ANALOG_INI="/opt/Analog_Bridge/Analog_Bridge.ini"
 TARGET_FILES=("$MMDVM_INI" "$DVSWITCH_INI" "$ANALOG_INI")
 
-BAK_ROOT="/opt/bak"
+BAK_ROOT="/opt/dvswitch_bot/bak/ini"
 
 FIX_ADDRESS="tgif.network"
 FIX_USRP_TXPORT="51001"
@@ -78,7 +76,7 @@ DVSwitch 設定対話ツール dvs_config.sh （TGIF 接続前提）
 使い方:
   sudo ./dvs_config.sh        対話形式で ini を編集（編集前に自動バックアップ）
   sudo ./dvs_config.sh -r     バックアップから復元（日付フォルダを選択して一括リストア）
-  sudo ./dvs_config.sh -d     /opt/bak/ 配下のバックアップをすべて削除
+  sudo ./dvs_config.sh -d     /opt/dvswitch_bot/bak/ini/ 配下のバックアップをすべて削除
   sudo ./dvs_config.sh -h     このヘルプを表示
 
 対話入力する項目:
@@ -89,7 +87,7 @@ DVSwitch 設定対話ツール dvs_config.sh （TGIF 接続前提）
   Analog [USRP] txPort=51001 / rxPort=51000 / usrpAudio=AUDIO_USE_GAIN / tlvAudio=AUDIO_USE_GAIN
 
 バックアップ先:
-  /opt/bak/YYMMDDHHMMSS/ に 3つの ini をまとめて保存します。
+  /opt/dvswitch_bot/bak/ini/YYMMDDHHMMSS/ に 3つの ini をまとめて保存します。
 
 編集／復元の最後に、サービス再起動を y/N で確認します。
 
@@ -116,6 +114,8 @@ do_backup() {
       echo "       ! 見つからないためスキップ: $f"
     fi
   done
+  # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
+  chown -R ocv:ocv /opt/dvswitch_bot/bak 2>/dev/null || true
   echo ""
 }
 

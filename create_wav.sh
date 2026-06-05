@@ -8,12 +8,12 @@
 #   使い方:
 #     sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
 #     sudo ./create_wav.sh -r     バックアップから復元（日付フォルダを選択）
-#     sudo ./create_wav.sh -d     /opt/bak/ 配下の WAV バックアップを全削除
+#     sudo ./create_wav.sh -d     /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
 #     sudo ./create_wav.sh -h     ヘルプ
 #
 #   バックアップ:
-#     上書き直前に、既存の *.wav を /opt/bak/wav_YYMMDDHHMMSS/ へ自動退避する。
-#     （dvs_config.sh と同じ /opt/bak/ 配下にまとめる）
+#     上書き直前に、既存の *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避する。
+#     （dvs_config.sh と同じ /opt/dvswitch_bot/bak/ 配下にまとめる）
 # ==============================================================================
 
 # 定数定義 (Open JTalkの設定)
@@ -21,7 +21,7 @@ DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
 VOICE_MODEL="/usr/share/hts-voice/mei/mei_normal.htsvoice"
 OUT_DIR="/opt/dvswitch_bot"
 TMP_DIR="/tmp"
-BAK_ROOT="/opt/bak"
+BAK_ROOT="/opt/dvswitch_bot/bak/wav"
 
 # 管理対象の WAV（バックアップ／復元の対象。time_outro は未使用だが拾う）
 WAV_FILES=(fixed_intro.wav fixed_outro.wav time_intro.wav 001.wav 002.wav time_outro.wav)
@@ -47,7 +47,7 @@ DVSwitch bot 固定WAV 作成ツール create_wav.sh
 使い方:
   sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
   sudo ./create_wav.sh -r     バックアップから復元（日付フォルダを選択）
-  sudo ./create_wav.sh -d     /opt/bak/ 配下の WAV バックアップを全削除
+  sudo ./create_wav.sh -d     /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
   sudo ./create_wav.sh -h     このヘルプを表示
 
 生成されるWAV（/opt/dvswitch_bot/ 直下に上書き）:
@@ -58,7 +58,7 @@ DVSwitch bot 固定WAV 作成ツール create_wav.sh
   ※ time_outro.wav は現行 bot では未使用（生成はするが無害）
 
 バックアップ:
-  作成（上書き）の直前に、既存の *.wav を /opt/bak/wav_YYMMDDHHMMSS/ へ自動退避します。
+  作成（上書き）の直前に、既存の *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避します。
   運用中に作り直して失敗しても、 -r で元のWAVセットに戻せます。
 
 備考:
@@ -67,12 +67,12 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
-# バックアップ（既存 *.wav を /opt/bak/wav_YYMMDDHHMMSS/ へ退避）
+# バックアップ（既存 *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ退避）
 # ------------------------------------------------------------------------------
 backup_wavs() {
   local ts dir f found=0
   ts="$(date +%y%m%d%H%M%S)"
-  dir="${BAK_ROOT}/wav_${ts}"
+  dir="${BAK_ROOT}/${ts}"
 
   # 退避対象が1つでもあるか確認
   for f in "${WAV_FILES[@]}"; do
@@ -91,6 +91,8 @@ backup_wavs() {
       echo "       - ${f}"
     fi
   done
+  # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
+  chown -R ocv:ocv /opt/dvswitch_bot/bak 2>/dev/null || true
   echo ""
 }
 
@@ -102,9 +104,9 @@ do_restore() {
     echo "[ERROR] バックアップディレクトリがありません: $BAK_ROOT"
     exit 1
   fi
-  mapfile -t DIRS < <(find "$BAK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'wav_*' -printf '%f\n' | sort -r)
+  mapfile -t DIRS < <(find "$BAK_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r)
   if [ "${#DIRS[@]}" -eq 0 ]; then
-    echo "[INFO] 復元できる WAV バックアップがありません（wav_* フォルダなし）。"
+    echo "[INFO] 復元できる WAV バックアップがありません。"
     exit 0
   fi
 
@@ -153,15 +155,15 @@ do_delete() {
     exit 0
   fi
   local cnt
-  cnt="$(find "$BAK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'wav_*' | wc -l)"
+  cnt="$(find "$BAK_ROOT" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   if [ "$cnt" -eq 0 ]; then
-    echo "[INFO] wav_* バックアップはありません。"
+    echo "[INFO] WAV バックアップはありません。"
     exit 0
   fi
-  echo "[WARN] $BAK_ROOT 配下の WAV バックアップ（wav_* フォルダ ${cnt}個）を削除します。"
+  echo "[WARN] $BAK_ROOT 配下の WAV バックアップ（${cnt}個）を削除します。"
   read -ep "本当に削除しますか？ (y/N): " CONFIRM
   if [[ "${CONFIRM,,}" == "y" ]]; then
-    find "$BAK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'wav_*' -exec rm -rf {} +
+    find "$BAK_ROOT" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
     echo "[完了] 削除しました。"
   else
     echo "キャンセルしました。"
@@ -287,7 +289,7 @@ if [[ "${CONFIRM^^}" == "N" ]]; then
 fi
 
 echo ""
-# 上書きの直前に、既存のWAVを /opt/bak/wav_YYMMDDHHMMSS/ へ自動退避
+# 上書きの直前に、既存のWAVを /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避
 backup_wavs
 
 echo "WAVファイルを生成中..."
