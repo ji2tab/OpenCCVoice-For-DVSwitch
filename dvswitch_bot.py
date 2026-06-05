@@ -17,6 +17,13 @@
     V1.60 では定時メッセージも N1+1 時からの抑制だったため、22:20 等が
     送出されてしまっていた。これを修正。
   - 起動ログに時報／定時それぞれの抑制時間帯を表示するようにした。
+  - 🔴 ログローテーション選択を getctime からファイル名ベースに修正。
+    _find_latest_log() が max(logs, key=os.path.getctime) のままだったため、
+    日付切替後に旧ログが touch されると「古いファイルが最新」に化け、
+    新しい日付のログを監視できない問題があった（V2.0 で方針確定済みだが
+    分離版に未反映だった）。max(..., key=os.path.basename) に変更し、
+    日付付きログ（YYYY-MM-DD）を辞書順＝日付順で確実に選ぶ。日付付きが
+    無い場合のみ MMDVM_Bridge.log にフォールバックする。
 
 【V1.60 からの変更点（デーモン化）】
   - 起動時の対話設定（_interactive_setup）を廃止し、
@@ -589,13 +596,18 @@ def _log_startup_info():
 # ログファイル管理（ローテーション対応）
 # ============================================================
 def _find_latest_log():
-    logs = glob.glob(os.path.join(LOG_DIR, LOG_PATTERN))
+    # 日付付きログ（MMDVM_Bridge-YYYY-MM-DD.log）を優先。
+    # ファイル名の辞書順 = 日付の昇順なので max() で最新日付を選ぶ。
+    # getctime（作成時刻）は、ローテーション後に旧ファイルが touch されると
+    # 古いファイルが「最新」に化けるため使わない。
+    dated_logs = glob.glob(os.path.join(LOG_DIR, LOG_PATTERN))
+    if dated_logs:
+        return max(dated_logs, key=os.path.basename)
+    # 日付付きが無い場合のみ、日付なしの標準ログにフォールバック
     standard_log = os.path.join(LOG_DIR, "MMDVM_Bridge.log")
     if os.path.exists(standard_log):
-        logs.append(standard_log)
-    if not logs:
-        return None
-    return max(logs, key=os.path.getctime)
+        return standard_log
+    return None
 
 
 def _open_log_file(path):
