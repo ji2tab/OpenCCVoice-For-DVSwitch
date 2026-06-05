@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.65
+ app.py  V2.66
 
  変更履歴:
    V2.0  初版リリース
@@ -30,6 +30,7 @@
    V2.63 通常/変更モード追加（通常は閲覧専用＋変更ボタンのみ、変更で編集＋操作ボタン表示）
    V2.64 サービス状態を●(緑)active / ●(赤)inactive の丸印表現に変更
    V2.65 操作ボタンをPi-star風テキストボタン（オレンジ統一・| 区切り）に変更
+   V2.66 操作ボタンを右寄せ、アイコン削除（テキストのみ）
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -598,7 +599,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.65</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.66</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -621,28 +622,28 @@ margin-bottom:6px;border-left:4px solid;
     <div class="svc-row">
       <span class="svc-name">dvswitch-bot</span>
       <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
-      <div class="btn-row" style="align-items:center">
+      <div class="btn-row" style="align-items:center;margin-left:auto">
         <!-- 通常モード: 変更ボタンのみ -->
         <button class="mode-link" id="btn-edit" onclick="enterEdit()">✎ 変更</button>
         <!-- 変更モード: 操作ボタン群（初期非表示） -->
         <div id="edit-buttons" class="tbtn-row" style="display:none">
           <form method="post" action="/service/start" class="tbtn-form">
-            <button class="tbtn">▶ Start</button>
+            <button class="tbtn">Start</button>
           </form>
           <span class="tbtn-sep">|</span>
           <form method="post" action="/service/stop" class="tbtn-form">
-            <button class="tbtn">■ Stop</button>
+            <button class="tbtn">Stop</button>
           </form>
           <span class="tbtn-sep">|</span>
           <form method="post" action="/service/restart" class="tbtn-form">
-            <button class="tbtn">↺ Restart</button>
+            <button class="tbtn">Restart</button>
           </form>
           <span class="tbtn-sep">|</span>
-          <button class="tbtn" type="button" onclick="refreshStatus()">⟳ 更新</button>
+          <button class="tbtn" type="button" onclick="refreshStatus()">更新</button>
           <span class="tbtn-sep">|</span>
-          <button class="tbtn" type="submit" form="save-form">💾 保存</button>
+          <button class="tbtn" type="submit" form="save-form">保存</button>
           <span class="tbtn-sep">|</span>
-          <button class="tbtn" type="button" onclick="cancelEdit()">✖ 取消</button>
+          <button class="tbtn" type="button" onclick="cancelEdit()">取消</button>
         </div>
       </div>
     </div>
