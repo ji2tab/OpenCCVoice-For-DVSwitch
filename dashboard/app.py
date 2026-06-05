@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.62
+ app.py  V2.63
 
  変更履歴:
    V2.0  初版リリース
@@ -27,6 +27,7 @@
    V2.60 サービス制御の5ボタンを同じ幅・高さに統一
    V2.61 ボタンに固定height/box-sizing追加で完全同一サイズ化
    V2.62 ボタンサイズ縮小（幅120→84px、高さ42→34px）
+   V2.63 通常/変更モード追加（通常は閲覧専用＋変更ボタンのみ、変更で編集＋操作ボタン表示）
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -547,6 +548,22 @@ margin-bottom:6px;border-left:4px solid;
   .chg-arrow{color:var(--muted)}
   .chg-new{color:#1a6b1a;font-weight:bold}
 
+
+  /* モード切替リンク風ボタン */
+  .mode-link{
+    background:none;border:none;color:var(--orange2);
+    font-family:arial,sans-serif;font-size:13px;font-weight:bold;
+    cursor:pointer;padding:4px 8px;letter-spacing:.05em;
+  }
+  .mode-link:hover{text-decoration:underline}
+  /* 閲覧専用時の入力欄 */
+  .view-mode input,.view-mode select{
+    background:transparent;border:1px solid transparent;
+    color:var(--text);pointer-events:none;padding-left:0;
+  }
+  .view-mode input[type=checkbox]{opacity:.6}
+  .view-mode .edit-only{display:none}
+
   .section-title{
     color:var(--muted);
     font-family:arial,sans-serif;
@@ -561,7 +578,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.62</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.63</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -569,7 +586,7 @@ margin-bottom:6px;border-left:4px solid;
   </div>
 </header>
 
-<main>
+<main class="view-mode" id="main">
 
 {% if msg %}
 <div class="msg">✔ {{ msg }}</div>
@@ -585,17 +602,23 @@ margin-bottom:6px;border-left:4px solid;
       <span class="svc-name">dvswitch-bot</span>
       <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
       <div class="btn-row" style="align-items:center">
-        <form method="post" action="/service/start" style="display:inline;margin:0">
-          <button class="btn btn-green">▶ Start</button>
-        </form>
-        <form method="post" action="/service/stop" style="display:inline;margin:0">
-          <button class="btn btn-red">■ Stop</button>
-        </form>
-        <form method="post" action="/service/restart" style="display:inline;margin:0">
-          <button class="btn btn-amber">↺ Restart</button>
-        </form>
-        <button class="btn btn-ghost" onclick="refreshStatus()">⟳ 更新</button>
-        <button class="btn btn-primary" type="submit" form="save-form">💾 保存</button>
+        <!-- 通常モード: 変更ボタンのみ -->
+        <button class="mode-link" id="btn-edit" onclick="enterEdit()">✎ 変更</button>
+        <!-- 変更モード: 操作ボタン群（初期非表示） -->
+        <div id="edit-buttons" style="display:none;gap:8px;align-items:center;flex-wrap:wrap">
+          <form method="post" action="/service/start" style="display:inline;margin:0">
+            <button class="btn btn-green">▶ Start</button>
+          </form>
+          <form method="post" action="/service/stop" style="display:inline;margin:0">
+            <button class="btn btn-red">■ Stop</button>
+          </form>
+          <form method="post" action="/service/restart" style="display:inline;margin:0">
+            <button class="btn btn-amber">↺ Restart</button>
+          </form>
+          <button class="btn btn-ghost" type="button" onclick="refreshStatus()">⟳ 更新</button>
+          <button class="btn btn-primary" type="submit" form="save-form">💾 保存</button>
+          <button class="btn btn-ghost" type="button" onclick="cancelEdit()">✖ 取消</button>
+        </div>
       </div>
     </div>
   </div>
@@ -768,6 +791,15 @@ function refreshStatus(){
 setInterval(refreshStatus,20000);
 function toggleNight(on){
   document.getElementById("night-fields").style.display=on?"":"none";
+}
+function enterEdit(){
+  document.getElementById("main").classList.remove("view-mode");
+  document.getElementById("btn-edit").style.display="none";
+  document.getElementById("edit-buttons").style.display="flex";
+}
+function cancelEdit(){
+  // 変更を破棄して通常モードへ（再読み込みで元の値に戻す）
+  location.href="/";
 }
 </script>
 </body>
