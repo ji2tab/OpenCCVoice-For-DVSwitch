@@ -3,14 +3,30 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.62 —
+ — JJ2YYK デジピーター自動応答システム  V1.63 —
 
- 本ファイルは V1.61 をベースに、起動アナウンス機能を追加したもの。
+ 本ファイルは V1.62 をベースに、ログファイル選択ロジックを堅牢化したもの。
+
+【V1.63 での変更点】
+  - 🔴 _find_latest_log() を「0バイトファイルをスキップ」するよう改良。
+    従来は max(dated_logs, key=os.path.basename) で「ファイル名が最大」を
+    無条件に選んでいたため、セットアップ残骸や切り替わり直前に作られた
+    0バイトの日付付きログ（例: MMDVM_Bridge-YYYY-MM-DD.log が空）を
+    監視対象に選んでしまい、実際に書かれている前日ログを見落として
+    DMRトラフィックを一切検知できない事故が起きた（2026-06-06 に実機で発生）。
+    対策: glob 結果のうち os.path.getsize(p) > 0 のものだけを候補にし、
+    その中から名前最大を選ぶ。
+    フォールバック: 候補が全て0バイト（=中身のあるログが1つも無い）の場合のみ、
+    従来どおり全日付付きログから名前最大を選ぶ（起動直後など正規の空ファイル
+    しか無い状況で監視対象を見失わないため）。
+    補足: MMDVM_Bridge はログ日付を UTC 基準で切るため、JST 深夜0時〜午前9時は
+    UTC 前日のファイルに書き続ける（これは仕様であり異常ではない）。本改良は
+    その挙動とは独立に、空ファイルを掴まないことを保証する。
 
 【V1.62 での変更点】
   - 🔴 起動アナウンスを追加。
     デーモン起動後、ログ監視を開始する直前に threading.Timer で
-    STARTUP_ANNOUNCE_DELAY_SEC（既定 5.0 秒）遅延して
+    STARTUP_ANNOUNCE_DELAY_SEC（既定 7.0 秒）遅延して
     「起動しました。」を 1 回だけ送出する。
     意図: MMDVM_Bridge / Analog_Bridge の起動が落ち着いてから送出する
     ため、固定の遅延を入れている（5〜10 秒程度で調整可）。
@@ -75,7 +91,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.62 (daemon, based on V1.60)
+ Document Version: V1.63 (daemon, based on V1.60)
  Last Updated: 2026-06-06
 ================================================================================
 """
@@ -589,7 +605,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.62 (daemon, based on V1.60) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.63 (daemon, based on V1.60) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -642,8 +658,27 @@ def _find_latest_log():
     # ファイル名の辞書順 = 日付の昇順なので max() で最新日付を選ぶ。
     # getctime（作成時刻）は、ローテーション後に旧ファイルが touch されると
     # 古いファイルが「最新」に化けるため使わない。
+    #
+    # 🔴 V1.63: 0バイトファイルをスキップする。
+    # セットアップ残骸や、日付切り替わり直前に作られた空の日付付きログを
+    # 「名前が最大だから」という理由で掴んでしまい、実際に書かれている
+    # 前日ログを見失う事故を防ぐ（2026-06-06 実機で発生）。
+    # 中身のあるログ（size>0）の中から名前最大を選ぶ。
     dated_logs = glob.glob(os.path.join(LOG_DIR, LOG_PATTERN))
     if dated_logs:
+        non_empty = []
+        for p in dated_logs:
+            try:
+                if os.path.getsize(p) > 0:
+                    non_empty.append(p)
+            except OSError:
+                continue
+        if non_empty:
+            return max(non_empty, key=os.path.basename)
+        # フォールバック: 候補が全て0バイト（中身のあるログが1つも無い）。
+        # 起動直後などで正規の空ファイルしか無い状況。監視対象を見失わない
+        # よう、従来どおり全日付付きログから名前最大を選んでおく
+        # （最初の行が書かれた時点で size>0 となり、次回チェックで正しく選ばれる）。
         return max(dated_logs, key=os.path.basename)
     # 日付付きが無い場合のみ、日付なしの標準ログにフォールバック
     standard_log = os.path.join(LOG_DIR, "MMDVM_Bridge.log")
