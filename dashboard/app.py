@@ -666,12 +666,12 @@ margin-bottom:6px;border-left:4px solid;
     cursor:pointer;padding:4px 8px;letter-spacing:.05em;
   }
   .mode-link:hover{text-decoration:underline}
-  /* 閲覧専用時の入力欄 */
+  /* 閲覧専用時の入力欄：枠あり・グレーアウト */
   .view-mode input,.view-mode select{
-    background:transparent;border:1px solid transparent;
-    color:var(--text);pointer-events:none;padding-left:0;
+    background:#e8e8e8;border:1px solid var(--border);
+    color:#888;pointer-events:none;
   }
-  .view-mode input[type=checkbox]{opacity:.6}
+  .view-mode input[type=checkbox]{opacity:.5}
   .view-mode .edit-only{display:none}
 
   .section-title{
