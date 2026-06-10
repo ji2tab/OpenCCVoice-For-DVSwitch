@@ -13,7 +13,10 @@
 【対話で設定する項目】
    RX_DURATION_MIN_SEC : 最小受信時間（秒, 0 < MIN < MAX）
    RX_DURATION_MAX_SEC : 最大受信時間（秒, カーチャンク上限）
-   ANNOUNCE_FREQ       : 1時間あたりの放送回数（1 / 2 / 3）
+   TIME_SIGNAL_MODE    : 時刻案内モード（0=なし / 1=毎正時 / 2=毎正時+毎30分）
+   ANNOUNCE_FREQ       : 定時メッセージ（001/002交互）の頻度
+                         ※選択肢は TIME_SIGNAL_MODE に依存
+                           mode0: 0/1/2/3/4  mode1: 0/1/2/3  mode2: 0/2
    NIGHT_MODE_ENABLED  : ナイトモード（true / false）
    NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
    NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
@@ -41,6 +44,7 @@ CONFIG_PATH = f"{BOT_DIR}/bot_config.json"
 DEFAULTS = {
     "RX_DURATION_MIN_SEC": 0.5,
     "RX_DURATION_MAX_SEC": 3.9,
+    "TIME_SIGNAL_MODE": 1,
     "ANNOUNCE_FREQ": 2,
     "NIGHT_MODE_ENABLED": True,
     "NIGHT_START_HOUR": 22,
@@ -65,6 +69,7 @@ def validate(cfg):
     try:
         rx_min = float(cfg["RX_DURATION_MIN_SEC"])
         rx_max = float(cfg["RX_DURATION_MAX_SEC"])
+        ts_mode = int(cfg["TIME_SIGNAL_MODE"])
         freq = int(cfg["ANNOUNCE_FREQ"])
         n1 = int(cfg["NIGHT_START_HOUR"])
         n2 = int(cfg["NIGHT_END_HOUR"])
@@ -79,8 +84,14 @@ def validate(cfg):
         errors.append(f"RX_DURATION_MIN_SEC は 0 より大きい必要（現在 {rx_min}）")
     if not (rx_min < rx_max):
         errors.append(f"MIN < MAX である必要（現在 {rx_min} / {rx_max}）")
-    if freq not in (1, 2, 3):
-        errors.append(f"ANNOUNCE_FREQ は 1/2/3（現在 {freq}）")
+    if ts_mode not in (0, 1, 2):
+        errors.append(f"TIME_SIGNAL_MODE は 0/1/2（現在 {ts_mode}）")
+    else:
+        valid_freq = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}[ts_mode]
+        if freq not in valid_freq:
+            errors.append(
+                f"ANNOUNCE_FREQ は TIME_SIGNAL_MODE={ts_mode} のとき "
+                f"{'/'.join(map(str, valid_freq))}（現在 {freq}）")
     if not (0 <= n1 <= 23):
         errors.append(f"NIGHT_START_HOUR は 0〜23（現在 {n1}）")
     if not (0 <= n2 <= 23):
@@ -201,8 +212,43 @@ def do_edit():
     cfg = {}
     cfg["RX_DURATION_MIN_SEC"] = ask_float("最小受信時間 (秒)", base["RX_DURATION_MIN_SEC"])
     cfg["RX_DURATION_MAX_SEC"] = ask_float("最大受信時間/カーチャンク (秒)", base["RX_DURATION_MAX_SEC"])
-    cfg["ANNOUNCE_FREQ"] = ask_int("1時間あたりの放送回数 (1/2/3) ※正時除く",
-                                   base["ANNOUNCE_FREQ"], choices=(1, 2, 3))
+
+    # --- 時刻案内モード ---
+    print("\n--- 時刻案内（時報）モード ---")
+    print("  0 : 時刻案内しない")
+    print("  1 : 毎正時のみ「○○時です」")
+    print("  2 : 毎正時「○○時です」＋毎30分「○○時30分です」")
+    ts_base = base.get("TIME_SIGNAL_MODE", 1)
+    cfg["TIME_SIGNAL_MODE"] = ask_int("時刻案内モード (0/1/2)", ts_base, choices=(0, 1, 2))
+
+    # --- 定時メッセージ（001/002 交互）---
+    # 選択肢は時刻案内モードに依存する。時刻案内が占有する分は除外。
+    ts = cfg["TIME_SIGNAL_MODE"]
+    print("\n--- 定時メッセージ（001/002 を交互再生）---")
+    if ts == 0:
+        print("  0 : なし")
+        print("  1 : 正時（:00）")
+        print("  2 : 正時 + 30分（:00, :30）")
+        print("  3 : 20分・40分（:20, :40）")
+        print("  4 : 15分・30分・45分（:15, :30, :45）")
+        freq_choices = (0, 1, 2, 3, 4)
+    elif ts == 1:
+        print("  ※ 正時（:00）は時刻案内が占有します")
+        print("  0 : なし")
+        print("  1 : 30分（:30）")
+        print("  2 : 20分・40分（:20, :40）")
+        print("  3 : 15分・30分・45分（:15, :30, :45）")
+        freq_choices = (0, 1, 2, 3)
+    else:  # ts == 2
+        print("  ※ 正時（:00）と30分（:30）は時刻案内が占有します")
+        print("  0 : なし")
+        print("  2 : 15分・45分（:15, :45）")
+        freq_choices = (0, 2)
+    # 既存値が今回の選択肢に無ければデフォルトに丸める
+    freq_base = base.get("ANNOUNCE_FREQ", 2)
+    if freq_base not in freq_choices:
+        freq_base = freq_choices[0]
+    cfg["ANNOUNCE_FREQ"] = ask_int(f"定時メッセージ {freq_choices}", freq_base, choices=freq_choices)
 
     print("\n--- ナイトモード設定 ---")
     print("  ナイトモード中は時報・定時メッセージを抑制します")
@@ -220,12 +266,24 @@ def do_edit():
         cfg["NIGHT_END_HOUR"] = base["NIGHT_END_HOUR"]
 
     # 確認表示
+    ts = cfg["TIME_SIGNAL_MODE"]
+    ts_label = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}[ts]
+    # 定時メッセージの実トリガー分（dvswitch_bot.py の _get_trigger_minutes と同一表）
+    _msg_table = {
+        0: {0: [], 1: [0], 2: [0, 30], 3: [20, 40], 4: [15, 30, 45]},
+        1: {0: [], 1: [30], 2: [20, 40], 3: [15, 30, 45]},
+        2: {0: [], 2: [15, 45]},
+    }
+    msg_minutes = _msg_table[ts].get(cfg["ANNOUNCE_FREQ"], [])
+    msg_str = "なし" if not msg_minutes else "・".join(f":{m:02d}" for m in msg_minutes)
+
     print("\n----------------------------------------------------------")
     print(" 以下の内容で保存します")
     print("----------------------------------------------------------")
     print(f"   最小受信時間   : {cfg['RX_DURATION_MIN_SEC']} 秒")
     print(f"   最大受信時間   : {cfg['RX_DURATION_MAX_SEC']} 秒")
-    print(f"   放送回数       : {cfg['ANNOUNCE_FREQ']} 回/h（正時外）")
+    print(f"   時刻案内       : mode {ts}（{ts_label}）")
+    print(f"   定時メッセージ : {cfg['ANNOUNCE_FREQ']}（{msg_str}）001/002交互")
     if cfg["NIGHT_MODE_ENABLED"]:
         resume = (cfg["NIGHT_END_HOUR"] + 1) % 24
         sup_start = (cfg["NIGHT_START_HOUR"] + 1) % 24

@@ -3,9 +3,30 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.63 —
+ — JJ2YYK デジピーター自動応答システム  V1.64 —
 
- 本ファイルは V1.62 をベースに、ログファイル選択ロジックを堅牢化したもの。
+ 本ファイルは V1.63 をベースに、時刻案内（時報）を 30 分にも対応させたもの。
+
+【V1.64 での変更点】
+  - 🔴 TIME_SIGNAL_MODE（0/1/2）を新設。時刻案内の頻度を選べるようにした。
+      * 0 : 時刻案内しない
+      * 1 : 毎正時のみ「○○時です」（従来動作）
+      * 2 : 毎正時「○○時です」＋毎30分「○○時30分です」
+    30 分案内は新モード half_hour_signal として _reply_executor に追加。
+    TIME_INTRO_WAV を流用し、中間テキストを "{時}時30分です" とする。
+  - 🔴 _get_trigger_minutes() を TIME_SIGNAL_MODE 依存に再設計。
+    定時メッセージ(001/002交互)の選択肢を ANNOUNCE_FREQ で表す:
+      * mode 0: 0=なし 1=[0] 2=[0,30] 3=[20,40] 4=[15,30,45]
+      * mode 1: 0=なし 1=[30] 2=[20,40] 3=[15,30,45]
+      * mode 2: 0=なし 2=[15,45]
+    時刻案内が占有する分（mode1:0 / mode2:0,30）は定時メッセージ表に含めない。
+  - 🔴 スケジューラを :00 / :30 の両境界で lead 発火するよう一般化。
+    また、:00 の定時メッセージ（mode0 で ANNOUNCE_FREQ が 0 を含む場合）を
+    許可するため、従来の "m != 0" ガードを撤去した。
+  - 🔵 30分案内のナイトモード抑制は「定時メッセージと同じ窓（N1時〜N2時）」を
+    採用。N1:00 の突入アナウンス後に N1:30 が鳴るのを防ぐため。
+  - 🔵 TIME_SIGNAL_MODE は任意キー。未設定の既存 bot_config.json は従来動作
+    （mode 1）として扱い、起動を拒否しない（アップグレード互換）。
 
 【V1.63 での変更点】
   - 🔴 _find_latest_log() を「0バイトファイルをスキップ」するよう改良。
@@ -91,7 +112,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.63 (daemon, based on V1.60)
+ Document Version: V1.64 (daemon, based on V1.63)
  Last Updated: 2026-06-06
 ================================================================================
 """
@@ -172,6 +193,7 @@ _reply_lock = threading.Lock()
 RX_DURATION_MIN_SEC = None
 RX_DURATION_MAX_SEC = None
 ANNOUNCE_FREQ = None
+TIME_SIGNAL_MODE = None
 NIGHT_MODE_ENABLED = None
 NIGHT_START_HOUR = None
 NIGHT_END_HOUR = None
@@ -225,7 +247,7 @@ def _load_config():
     """bot_config.json を読み込み、厳格に検証してグローバルへ反映する。
     無い / 壊れている / 必須キー欠落 / 値が不正 のいずれでも exit(1)。
     """
-    global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ
+    global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ, TIME_SIGNAL_MODE
     global NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
 
     # 1) 存在確認
@@ -252,6 +274,14 @@ def _load_config():
         rx_min = float(cfg["RX_DURATION_MIN_SEC"])
         rx_max = float(cfg["RX_DURATION_MAX_SEC"])
         freq = int(cfg["ANNOUNCE_FREQ"])
+        # TIME_SIGNAL_MODE は任意キー。無い既存設定は従来動作(=毎正時の時報)である
+        # mode 1 として扱う（アップグレード時に起動を拒否しないため）。
+        if "TIME_SIGNAL_MODE" in cfg:
+            ts_mode = int(cfg["TIME_SIGNAL_MODE"])
+        else:
+            ts_mode = 1
+            logger.info(_fmt("..", "Config", "TIME_SIGNAL_MODE",
+                             "未設定のため既定値 1（毎正時の時報）を使用"))
         night_enabled = cfg["NIGHT_MODE_ENABLED"]
         n1 = int(cfg["NIGHT_START_HOUR"])
         n2 = int(cfg["NIGHT_END_HOUR"])
@@ -265,8 +295,15 @@ def _load_config():
         _fatal_config(f"RX_DURATION_MIN_SEC は 0 より大きい必要があります（現在: {rx_min}）")
     if not (rx_min < rx_max):
         _fatal_config(f"RX_DURATION_MIN_SEC < RX_DURATION_MAX_SEC である必要があります（現在: {rx_min} / {rx_max}）")
-    if freq not in (1, 2, 3):
-        _fatal_config(f"ANNOUNCE_FREQ は 1 / 2 / 3 のいずれかです（現在: {freq}）")
+    if ts_mode not in (0, 1, 2):
+        _fatal_config(f"TIME_SIGNAL_MODE は 0 / 1 / 2 のいずれかです（現在: {ts_mode}）")
+    # ANNOUNCE_FREQ の有効範囲は TIME_SIGNAL_MODE に依存する
+    #   mode 0: 0/1/2/3/4   mode 1: 0/1/2/3   mode 2: 0/2
+    _valid_freq = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}[ts_mode]
+    if freq not in _valid_freq:
+        _fatal_config(
+            f"ANNOUNCE_FREQ は TIME_SIGNAL_MODE={ts_mode} のとき "
+            f"{'/'.join(map(str, _valid_freq))} のいずれかです（現在: {freq}）")
     if not (0 <= n1 <= 23):
         _fatal_config(f"NIGHT_START_HOUR は 0〜23 です（現在: {n1}）")
     if not (0 <= n2 <= 23):
@@ -276,6 +313,7 @@ def _load_config():
     RX_DURATION_MIN_SEC = rx_min
     RX_DURATION_MAX_SEC = rx_max
     ANNOUNCE_FREQ = freq
+    TIME_SIGNAL_MODE = ts_mode
     NIGHT_MODE_ENABLED = night_enabled
     NIGHT_START_HOUR = n1
     NIGHT_END_HOUR = n2
@@ -382,17 +420,21 @@ TIME_SIGNAL_LEAD_SEC = 7
 
 
 def _get_trigger_minutes():
-    if ANNOUNCE_FREQ == 1:
-        return [30]
-    elif ANNOUNCE_FREQ == 2:
-        return [20, 40]
-    elif ANNOUNCE_FREQ == 3:
-        return [15, 30, 45]
-    return []
+    """定時メッセージ（001/002交互）のトリガー分を返す。
+    TIME_SIGNAL_MODE で占有される分（mode1:0 / mode2:0,30）は表に含めない。"""
+    if TIME_SIGNAL_MODE == 0:
+        table = {0: [], 1: [0], 2: [0, 30], 3: [20, 40], 4: [15, 30, 45]}
+    elif TIME_SIGNAL_MODE == 1:
+        table = {0: [], 1: [30], 2: [20, 40], 3: [15, 30, 45]}
+    elif TIME_SIGNAL_MODE == 2:
+        table = {0: [], 2: [15, 45]}
+    else:
+        table = {}
+    return table.get(ANNOUNCE_FREQ, [])
 
 
 def _announcement_scheduler():
-    fired_time_signal_for = None
+    fired_signal_key = None       # 直近に発火した時刻案内の境界キー (date, hour, minute)
     fired_message_minute = None
     msg_index = 0
 
@@ -401,24 +443,45 @@ def _announcement_scheduler():
     while not should_exit:
         now = datetime.now()
 
-        next_hour_dt = (now.replace(minute=0, second=0, microsecond=0)
-                        + timedelta(hours=1))
-        seconds_until_next_hour = (next_hour_dt - now).total_seconds()
+        # ---- 時刻案内（time_signal :00 / half_hour_signal :30）----
+        # lead 秒前に発火。mode1=:00 のみ、mode2=:00 と :30。
+        if TIME_SIGNAL_MODE >= 1:
+            boundary_minutes = [0] if TIME_SIGNAL_MODE == 1 else [0, 30]
+            for bmin in boundary_minutes:
+                cand = now.replace(minute=bmin, second=0, microsecond=0)
+                if cand <= now:
+                    cand += timedelta(hours=1)
+                secs = (cand - now).total_seconds()
+                if 0 < secs <= TIME_SIGNAL_LEAD_SEC:
+                    key = (cand.date(), cand.hour, bmin)
+                    if fired_signal_key != key:
+                        fired_signal_key = key
+                        target_hour = cand.hour
+                        if bmin == 0:
+                            # 時報: N1 時は送出（突入アナウンスのため）
+                            if _is_night_suppressed(target_hour):
+                                logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:00",
+                                                 "time_signal suppressed (night mode)"))
+                            else:
+                                logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:00",
+                                                 f"time_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
+                                _start_worker("time_signal", target_hour)
+                        else:
+                            # 30分案内: 定時メッセージと同じ抑制窓（N1時〜N2時）を使う。
+                            # → N1:00 の突入アナウンス後に N1:30 が鳴らないようにするため。
+                            if _is_night_suppressed_message(target_hour):
+                                logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:30",
+                                                 "half_hour_signal suppressed (night mode)"))
+                            else:
+                                logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:30",
+                                                 f"half_hour_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
+                                _start_worker("half_hour_signal", target_hour)
 
-        if 0 < seconds_until_next_hour <= TIME_SIGNAL_LEAD_SEC:
-            target_hour = next_hour_dt.hour
-            if fired_time_signal_for != target_hour:
-                fired_time_signal_for = target_hour
-                if _is_night_suppressed(target_hour):
-                    logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:00",
-                                     "time_signal suppressed (night mode)"))
-                else:
-                    logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:00",
-                                     f"time_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
-                    _start_worker("time_signal", target_hour)
-
+        # ---- 定時メッセージ（001/002 交互）----
+        # トリガー分ちょうどに発火（リード無し）。:00 は TIME_SIGNAL_MODE==0 のときのみ
+        # _get_trigger_minutes() に含まれる（mode1/2 では時刻案内が占有）。
         m = now.minute
-        if m != 0 and m in _get_trigger_minutes():
+        if m in _get_trigger_minutes():
             current_minute_key = (now.hour, m)
             if fired_message_minute != current_minute_key:
                 fired_message_minute = current_minute_key
@@ -534,6 +597,18 @@ def _reply_executor(mode, val, extra=None):
             else:
                 logger.error(_fmt("!!", "Gen failed", target_str, "time_signal"))
 
+        elif mode == "half_hour_signal":
+            middle = f"{val}時30分です"
+            target_str = f"{val:02d}:30"
+            logger.info(_fmt("TX", "Generate", target_str, "half_hour_signal"))
+            if _generate_hybrid(TIME_INTRO_WAV, middle, None):
+                logger.info(_fmt("TX", "Sending", target_str, "half_hour_signal"))
+                send_usrp_wav_with_padding(TEMP_FINAL)
+                elapsed = time.monotonic() - started_at
+                logger.info(_fmt("TX", "HalfHour", target_str, f"{elapsed:.1f}s"))
+            else:
+                logger.error(_fmt("!!", "Gen failed", target_str, "half_hour_signal"))
+
         elif mode == "fixed_file":
             basename = os.path.basename(val)
             if os.path.exists(val):
@@ -605,7 +680,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.63 (daemon, based on V1.60) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.64 (daemon, based on V1.63) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -615,8 +690,9 @@ def _log_startup_info():
     logger.info(f"  Suppress duration : {SUPPRESS_DURATION_SEC}s")
     logger.info(f"  Gap after intro   : {GAP_AFTER_INTRO_SEC}s")
     logger.info(f"  Startup announce  : {STARTUP_ANNOUNCE_DELAY_SEC}s 後に「起動しました。」を送出")
-    logger.info(f"  Announce freq     : {ANNOUNCE_FREQ}/h (at minutes {_get_trigger_minutes()})")
-    logger.info(f"  Time signal       : every hour at :00 (lead {TIME_SIGNAL_LEAD_SEC}s)")
+    logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
+    _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
+    logger.info(f"  Time signal mode  : {TIME_SIGNAL_MODE} ({_ts_desc}, lead {TIME_SIGNAL_LEAD_SEC}s)")
     if NIGHT_MODE_ENABLED:
         resume_hour = (NIGHT_END_HOUR + 1) % 24
         ts_suppress_start = (NIGHT_START_HOUR + 1) % 24   # 時報の抑制開始
@@ -627,6 +703,9 @@ def _log_startup_info():
                     f"(N1={NIGHT_START_HOUR:02d}:00 は送出)")
         logger.info(f"    - sched_message : suppress {msg_suppress_start:02d}-{NIGHT_END_HOUR:02d} "
                     f"(N1 時台から抑制)")
+        if TIME_SIGNAL_MODE == 2:
+            logger.info(f"    - half_hour     : suppress {msg_suppress_start:02d}:30-{NIGHT_END_HOUR:02d}:30 "
+                        f"(定時メッセージと同じ窓 / N1:30 から抑制)")
     else:
         logger.info(f"  Night mode        : OFF (24時間送出)")
     logger.info("-" * 70)
