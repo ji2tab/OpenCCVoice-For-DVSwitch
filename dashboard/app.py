@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.67
+ app.py  V2.70
 
  変更履歴:
    V2.0  初版リリース
@@ -32,6 +32,29 @@
    V2.65 操作ボタンをPi-star風テキストボタン（オレンジ統一・| 区切り）に変更
    V2.66 操作ボタンを右寄せ、アイコン削除（テキストのみ）
    V2.67 変更ボタンのアイコン削除・ラベルを「変更モード」に変更
+   V2.68 🔴 再起動ロジックを「同時 restart」から「依存順＋待機つきの順序 restart」へ変更。
+         背景: 従来は subprocess.run(["systemctl","restart","dvswitch-bot",
+         "analog_bridge","mmdvm_bridge"]) のように複数サービスを同時に再起動して
+         いたため、Analog_Bridge 起動時に相手側（MMDVM_Bridge / md380-emu）が
+         まだ準備できておらず、TLV/AMBE 経路の確立に失敗して「音が出ない・ケロる・
+         応答しない（プロセスは Started だが中身は半死）」状態に陥ることがあった
+         （2026-06-06 実機で発生）。さらに AMBE エンコードの相手である md380-emu が
+         再起動対象に含まれていなかった。
+         対策: safe_restart_services() を新設し、
+           md380-emu → analog_bridge → mmdvm_bridge → (dvswitch-bot)
+         の依存順に、各サービス間へ待機（RESTART_GAP_SEC）を挟んで再起動する。
+         save_all / dvs_config_save / info_config_save の3箇所をこの関数に統一。
+   V2.69 サービス制御カードの高さを通常モード/変更モードで統一（操作領域に
+         min-height を確保し、モード切替でカードが伸縮しないようにした）。
+         3カードヘッダーの絵文字アイコン（🤖📡📍）を削除。
+   V2.70 🔴 時刻案内モード（TIME_SIGNAL_MODE 0/1/2）に対応（dvswitch_bot.py V1.64）。
+         Bot設定カードに「時刻案内モード」プルダウンを追加し、「定時メッセージ」の
+         選択肢を時刻案内モードに連動して切り替え（JS rebuildFreq）。
+           mode0: 0/1/2/3/4   mode1: 0/1/2/3   mode2: 0/2
+         保存ルート（bot_config / save_all）に TIME_SIGNAL_MODE を追加し、
+         ANNOUNCE_FREQ 検証をモード依存（VALID_FREQ_BY_MODE）に変更。
+         旧キー未設定の bot_config.json は本体側が mode1 既定で扱うため、
+         フォーム既定値も 1 とした。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -41,11 +64,11 @@
 ================================================================================
 """
 
-import os, json, re, subprocess, glob
+import os, json, re, subprocess, glob, time
 from datetime import datetime
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 
-# ─── パス設定 ─────────────────────────────────────────────
+# qqq パス設定 qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 BOT_CONFIG   = "/opt/dvswitch_bot/bot_config.json"
 CHANGE_LOG   = "/opt/dvswitch_bot/bot_change_log.json"
 MMDVM_INI    = "/opt/MMDVM_Bridge/MMDVM_Bridge.ini"
@@ -54,6 +77,17 @@ ANALOG_INI   = "/opt/Analog_Bridge/Analog_Bridge.ini"
 LOG_DIR      = "/var/log/mmdvm"
 BAK_ROOT     = "/opt/dvswitch_bot/bak/ini"
 SERVICE_NAME = "dvswitch-bot"
+
+# 🔴 再起動の依存順と待機（V2.68）
+# Analog_Bridge は起動時に md380-emu(AMBE) へ接続し、MMDVM_Bridge と TLV 経路を張る。
+# 同時 restart だと相手未準備で経路確立に失敗するため、下から順に間隔を空けて起動する。
+RESTART_ORDER   = ["md380-emu", "analog_bridge", "mmdvm_bridge"]  # bot は include_bot で末尾追加
+RESTART_GAP_SEC = 3.0   # 各サービス再起動の間隔（経路確立を待つ）
+
+# 🔴 V2.70: 時刻案内モード別の定時メッセージ(ANNOUNCE_FREQ)の有効値。
+# dvswitch_bot.py V1.64 の _get_trigger_minutes() / 検証と同一の表。
+#   mode0: 0/1/2/3/4   mode1: 0/1/2/3   mode2: 0/2
+VALID_FREQ_BY_MODE = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}
 
 app = Flask(__name__)
 
@@ -70,7 +104,7 @@ def pop_flash():
     _flash["err"] = ""
     return m, e
 
-# ─── ユーティリティ ──────────────────────────────────────
+# qqq ユーティリティ qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 
 def read_json(path):
     try:
@@ -88,8 +122,8 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 def append_change_log(label, old_cfg, new_cfg):
-    import time
-    entry = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "label": label, "changes": {}}
+    import time as _time
+    entry = {"time": _time.strftime("%Y-%m-%d %H:%M:%S"), "label": label, "changes": {}}
     for k in new_cfg:
         o = old_cfg.get(k)
         n = new_cfg[k]
@@ -180,6 +214,42 @@ def service_action(action):
         return False, str(e)
 
 
+# 🔴 安全な順序再起動（V2.68）
+def safe_restart_services(include_bot=True):
+    """依存順に間隔を空けてサービスを再起動する。
+       md380-emu → analog_bridge → mmdvm_bridge → (dvswitch-bot)
+
+    同時 restart だと Analog_Bridge 起動時に相手（md380-emu / MMDVM_Bridge）が
+    未準備で、TLV/AMBE 経路の確立に失敗し「音が出ない・ケロる」状態になる。
+    これを防ぐため、各サービスの restart 間に RESTART_GAP_SEC の待機を挟む。
+
+    戻り値: (ok, detail)
+      ok     : 全サービスが returncode 0 なら True
+      detail : 失敗したサービスとエラーの説明（OK の場合は空文字）
+    """
+    seq = list(RESTART_ORDER)
+    if include_bot and SERVICE_NAME not in seq:
+        seq.append(SERVICE_NAME)
+
+    errors = []
+    for i, svc in enumerate(seq):
+        try:
+            r = subprocess.run(
+                ["sudo", "systemctl", "restart", svc],
+                capture_output=True, text=True, timeout=30
+            )
+            if r.returncode != 0:
+                errors.append(f"{svc}: {r.stderr.strip()}")
+        except Exception as e:
+            errors.append(f"{svc}: {e}")
+        # 最後のサービスの後は待たない
+        if i < len(seq) - 1:
+            time.sleep(RESTART_GAP_SEC)
+
+    ok = (len(errors) == 0)
+    return ok, "; ".join(errors)
+
+
 def list_backups():
     try:
         dirs = sorted(
@@ -190,7 +260,7 @@ def list_backups():
     except Exception:
         return []
 
-# ─── ルート ──────────────────────────────────────────────
+# qqq ルート qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 
 @app.route("/")
 def index():
@@ -253,6 +323,7 @@ def bot_config_save():
         cfg = {
             "RX_DURATION_MIN_SEC": float(request.form["rx_min"]),
             "RX_DURATION_MAX_SEC": float(request.form["rx_max"]),
+            "TIME_SIGNAL_MODE":    int(request.form.get("time_signal_mode", 1)),
             "ANNOUNCE_FREQ":       int(request.form["freq"]),
             "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
             "NIGHT_START_HOUR":    int(request.form["night_start"]),
@@ -260,7 +331,9 @@ def bot_config_save():
         }
         assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
         assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
-        assert cfg["ANNOUNCE_FREQ"] in (1, 2, 3), "放送回数は1/2/3"
+        assert cfg["TIME_SIGNAL_MODE"] in (0, 1, 2), "時刻案内モードは0/1/2"
+        _vf = VALID_FREQ_BY_MODE[cfg["TIME_SIGNAL_MODE"]]
+        assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
         assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
         assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
         old_cfg = read_json(BOT_CONFIG)
@@ -302,10 +375,13 @@ def dvs_config_save():
         set_ini_value(ANALOG_INI, "usrpAudio", "AUDIO_USE_GAIN", "[USRP]")
         set_ini_value(ANALOG_INI, "tlvAudio",  "AUDIO_USE_GAIN", "[USRP]")
 
-        # analog_bridge / mmdvm_bridge を自動再起動
-        subprocess.run(["sudo", "systemctl", "restart", "analog_bridge", "mmdvm_bridge"],
-                       capture_output=True, timeout=15)
-        set_flash(msg=f"DVSwitch設定を保存し、サービスを再起動しました（バックアップ: {ts}）"); return redirect("/")
+        # 🔴 V2.68: 依存順＋待機つきで再起動（bot は設定変更なしなので含めない）
+        ok, detail = safe_restart_services(include_bot=False)
+        if ok:
+            set_flash(msg=f"DVSwitch設定を保存し、サービスを順序再起動しました（バックアップ: {ts}）")
+        else:
+            set_flash(err=f"DVSwitch設定は保存しましたが、再起動に一部失敗: {detail}")
+        return redirect("/")
     except (AssertionError, ValueError) as e:
         set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
@@ -323,9 +399,14 @@ def info_config_save():
         set_ini_value(MMDVM_INI, "Location",    request.form["location"].strip(), "[Info]")
         set_ini_value(MMDVM_INI, "Description", request.form["desc"].strip(), "[Info]")
         set_ini_value(MMDVM_INI, "URL",         request.form["url"].strip(), "[Info]")
-        subprocess.run(["sudo", "systemctl", "restart", "mmdvm_bridge"],
-                       capture_output=True, timeout=15)
-        set_flash(msg="MMDVM Info を保存し、mmdvm_bridge を再起動しました"); return redirect("/")
+        # 🔴 V2.68: Info 変更は MMDVM_Bridge のみで足りるが、Analog_Bridge↔MMDVM_Bridge の
+        # TLV 経路を確実に張り直すため、依存順の順序再起動に統一する（bot は含めない）。
+        ok, detail = safe_restart_services(include_bot=False)
+        if ok:
+            set_flash(msg="MMDVM Info を保存し、サービスを順序再起動しました")
+        else:
+            set_flash(err=f"MMDVM Info は保存しましたが、再起動に一部失敗: {detail}")
+        return redirect("/")
     except (KeyError, ValueError) as e:
         set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
@@ -339,6 +420,7 @@ def save_all():
         cfg = {
             "RX_DURATION_MIN_SEC": float(request.form["rx_min"]),
             "RX_DURATION_MAX_SEC": float(request.form["rx_max"]),
+            "TIME_SIGNAL_MODE":    int(request.form.get("time_signal_mode", 1)),
             "ANNOUNCE_FREQ":       int(request.form["freq"]),
             "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
             "NIGHT_START_HOUR":    int(request.form["night_start"]),
@@ -346,7 +428,9 @@ def save_all():
         }
         assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
         assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
-        assert cfg["ANNOUNCE_FREQ"] in (1, 2, 3), "放送回数は1/2/3"
+        assert cfg["TIME_SIGNAL_MODE"] in (0, 1, 2), "時刻案内モードは0/1/2"
+        _vf = VALID_FREQ_BY_MODE[cfg["TIME_SIGNAL_MODE"]]
+        assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
         assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
         assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
         old_cfg = read_json(BOT_CONFIG)
@@ -388,18 +472,20 @@ def save_all():
         set_ini_value(MMDVM_INI, "Description", request.form["desc"].strip(), "[Info]")
         set_ini_value(MMDVM_INI, "URL",         request.form["url"].strip(), "[Info]")
 
-        # --- 3サービス一括再起動 ---
-        subprocess.run(
-            ["sudo", "systemctl", "restart", "dvswitch-bot", "analog_bridge", "mmdvm_bridge"],
-            capture_output=True, timeout=30
-        )
-        set_flash(msg="全設定を保存し、dvswitch-bot / analog_bridge / mmdvm_bridge を再起動しました")
+        # --- 🔴 V2.68: 依存順＋待機つきで全サービスを再起動（bot 含む） ---
+        # 旧: systemctl restart dvswitch-bot analog_bridge mmdvm_bridge（同時）
+        # 新: md380-emu → analog_bridge → mmdvm_bridge → dvswitch-bot（順序＋待機）
+        ok, detail = safe_restart_services(include_bot=True)
+        if ok:
+            set_flash(msg="全設定を保存し、md380-emu / analog_bridge / mmdvm_bridge / dvswitch-bot を順序再起動しました")
+        else:
+            set_flash(err=f"全設定は保存しましたが、再起動に一部失敗: {detail}")
         return redirect("/")
     except (AssertionError, ValueError, KeyError) as e:
         set_flash(err=f"入力エラー: {e}")
         return redirect("/")
 
-# ─── HTML テンプレート ────────────────────────────────────
+# qqq HTML テンプレート qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 
 TEMPLATE = r"""<!DOCTYPE html>
 <html lang="ja">
@@ -516,6 +602,8 @@ font-weight:bold;
 
   /* サービス */
   .svc-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  /* モード切替で高さが変わらないよう、操作領域の高さを確保（変更モード基準で統一） */
+  .svc-ctrl{display:flex;align-items:center;justify-content:flex-end;min-height:34px}
   .svc-name{font-weight:bold;color:var(--orange2);font-family:var(--mono)}
   .svc-badge{
     display:inline-flex;align-items:center;gap:6px;
@@ -600,7 +688,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.67</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.70</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -623,7 +711,7 @@ margin-bottom:6px;border-left:4px solid;
     <div class="svc-row">
       <span class="svc-name">dvswitch-bot</span>
       <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
-      <div class="btn-row" style="align-items:center;margin-left:auto">
+      <div class="svc-ctrl" style="margin-left:auto">
         <!-- 通常モード: 変更ボタンのみ -->
         <button class="mode-link" id="btn-edit" onclick="enterEdit()">変更モード</button>
         <!-- 変更モード: 操作ボタン群（初期非表示） -->
@@ -655,7 +743,7 @@ margin-bottom:6px;border-left:4px solid;
 <div class="grid3">
 
   <div class="card">
-    <div class="card-head">🤖 Bot 設定 — bot_config.json</div>
+    <div class="card-head">Bot 設定 — bot_config.json</div>
     <div class="card-body">
         <div class="section-title">受信時間フィルタ</div>
         <div class="field">
@@ -668,14 +756,19 @@ margin-bottom:6px;border-left:4px solid;
           <input type="number" name="rx_max" step="0.1" min="0.2" max="30"
             value="{{ bot_cfg.get('RX_DURATION_MAX_SEC', 3.9) }}" required>
         </div>
-        <div class="section-title">定時アナウンス</div>
+        <div class="section-title">時刻案内（時報）</div>
         <div class="field">
-          <label>1時間あたりの放送回数</label>
-          <select name="freq">
-            {% for v in [1,2,3] %}
-            <option value="{{ v }}" {% if bot_cfg.get('ANNOUNCE_FREQ',2)==v %}selected{% endif %}>{{ v }} 回/h</option>
-            {% endfor %}
+          <label>時刻案内モード</label>
+          <select name="time_signal_mode" id="ts_mode" onchange="rebuildFreq()">
+            <option value="0" {% if bot_cfg.get('TIME_SIGNAL_MODE',1)==0 %}selected{% endif %}>0: 時刻案内しない</option>
+            <option value="1" {% if bot_cfg.get('TIME_SIGNAL_MODE',1)==1 %}selected{% endif %}>1: 毎正時のみ「○○時です」</option>
+            <option value="2" {% if bot_cfg.get('TIME_SIGNAL_MODE',1)==2 %}selected{% endif %}>2: 毎正時＋毎30分「○○時30分です」</option>
           </select>
+        </div>
+        <div class="section-title">定時メッセージ（001/002 交互）</div>
+        <div class="field">
+          <label>送出する分</label>
+          <select name="freq" id="freq_sel"><!-- JS が時刻案内モードに応じて構築 --></select>
         </div>
         <div class="section-title">ナイトモード</div>
         <div class="toggle-row">
@@ -700,7 +793,7 @@ margin-bottom:6px;border-left:4px solid;
   </div>
 
   <div class="card">
-    <div class="card-head">📡 DVSwitch 設定 — ini ファイル</div>
+    <div class="card-head">DVSwitch 設定 — ini ファイル</div>
     <div class="card-body">
         <div class="section-title">局識別情報 (MMDVM_Bridge.ini)</div>
         <div class="field">
@@ -739,7 +832,7 @@ margin-bottom:6px;border-left:4px solid;
 
   <!-- MMDVM Info -->
   <div class="card">
-    <div class="card-head">📍 MMDVM Info — MMDVM_Bridge.ini [Info]</div>
+    <div class="card-head">MMDVM Info — MMDVM_Bridge.ini [Info]</div>
     <div class="card-body">
           <div class="section-title">周波数</div>
         <div class="row2">
@@ -794,7 +887,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.5
+  OpenCCVoice for DVSwitch Web Dashboard V2.70
 </div>
 </form>
 
@@ -819,6 +912,33 @@ setInterval(refreshStatus,20000);
 function toggleNight(on){
   document.getElementById("night-fields").style.display=on?"":"none";
 }
+
+// 🔴 V2.70: 定時メッセージの選択肢を時刻案内モードに連動させる
+// （dvswitch_bot.py V1.64 の _get_trigger_minutes と同一の対応表）
+var INIT_FREQ = {{ bot_cfg.get('ANNOUNCE_FREQ', 2) }};
+var FREQ_OPTS = {
+  0: [[0,"0: なし"],[1,"1: 正時 :00"],[2,"2: 正時+30分 :00,:30"],[3,"3: 20分・40分"],[4,"4: 15分・30分・45分"]],
+  1: [[0,"0: なし"],[1,"1: 30分 :30"],[2,"2: 20分・40分"],[3,"3: 15分・30分・45分"]],
+  2: [[0,"0: なし"],[2,"2: 15分・45分 :15,:45"]]
+};
+function rebuildFreq(){
+  var mode = parseInt(document.getElementById("ts_mode").value,10);
+  var sel  = document.getElementById("freq_sel");
+  // 既に選択がある場合はそれを、初回(空)は保存値を引き継ぐ
+  var prev = (sel.value!=="") ? parseInt(sel.value,10) : INIT_FREQ;
+  var opts = FREQ_OPTS[mode] || [];
+  sel.innerHTML="";
+  var matched=false;
+  opts.forEach(function(o){
+    var op=document.createElement("option");
+    op.value=o[0]; op.textContent=o[1];
+    if(o[0]===prev){op.selected=true;matched=true;}
+    sel.appendChild(op);
+  });
+  // 旧モードの値が新モードに無ければ先頭(0=なし)へ丸める
+  if(!matched && sel.options.length>0){sel.options[0].selected=true;}
+}
+rebuildFreq();
 function enterEdit(){
   document.getElementById("main").classList.remove("view-mode");
   document.getElementById("btn-edit").style.display="none";
