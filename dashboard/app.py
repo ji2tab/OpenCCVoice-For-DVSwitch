@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.71
+ app.py  V2.72
 
  変更履歴:
    V2.0  初版リリース
@@ -47,6 +47,7 @@
    V2.69 サービス制御カードの高さを通常モード/変更モードで統一（操作領域に
          min-height を確保し、モード切替でカードが伸縮しないようにした）。
          3カードヘッダーの絵文字アイコン（🤖📡📍）を削除。
+   V2.72 定時メッセージのプルダウン選択肢を簡潔な表記に変更（例: :00 :30）。
    V2.71 通常モードの入力欄を「枠あり・グレー背景・テキスト薄色」に変更。
          従来の「枠なし・透明背景」より視認性が向上し、編集不可であることが
          明確になった。
@@ -690,7 +691,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.71</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.72</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -889,7 +890,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.71
+  OpenCCVoice for DVSwitch Web Dashboard V2.72
 </div>
 </form>
 
@@ -919,9 +920,9 @@ function toggleNight(on){
 // （dvswitch_bot.py V1.64 の _get_trigger_minutes と同一の対応表）
 var INIT_FREQ = {{ bot_cfg.get('ANNOUNCE_FREQ', 2) }};
 var FREQ_OPTS = {
-  0: [[0,"0: なし"],[1,"1: 正時 :00"],[2,"2: 正時+30分 :00,:30"],[3,"3: 20分・40分"],[4,"4: 15分・30分・45分"]],
-  1: [[0,"0: なし"],[1,"1: 30分 :30"],[2,"2: 20分・40分"],[3,"3: 15分・30分・45分"]],
-  2: [[0,"0: なし"],[2,"2: 15分・45分 :15,:45"]]
+  0: [[0,"0: なし"],[1,"1: :00"],[2,"2: :00 :30"],[3,"3: :20 :40"],[4,"4: :15 :30 :45"]],
+  1: [[0,"0: なし"],[1,"1: :30"],[2,"2: :20 :40"],[3,"3: :15 :30 :45"]],
+  2: [[0,"0: なし"],[2,"2: :15 :45"]]
 };
 function rebuildFreq(){
   var mode = parseInt(document.getElementById("ts_mode").value,10);
