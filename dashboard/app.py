@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.70
+ app.py  V2.71
 
  変更履歴:
    V2.0  初版リリース
@@ -47,7 +47,9 @@
    V2.69 サービス制御カードの高さを通常モード/変更モードで統一（操作領域に
          min-height を確保し、モード切替でカードが伸縮しないようにした）。
          3カードヘッダーの絵文字アイコン（🤖📡📍）を削除。
-   V2.70 🔴 時刻案内モード（TIME_SIGNAL_MODE 0/1/2）に対応（dvswitch_bot.py V1.64）。
+   V2.71 通常モードの入力欄を「枠あり・グレー背景・テキスト薄色」に変更。
+         従来の「枠なし・透明背景」より視認性が向上し、編集不可であることが
+         明確になった。
          Bot設定カードに「時刻案内モード」プルダウンを追加し、「定時メッセージ」の
          選択肢を時刻案内モードに連動して切り替え（JS rebuildFreq）。
            mode0: 0/1/2/3/4   mode1: 0/1/2/3   mode2: 0/2
@@ -688,7 +690,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.70</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.71</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -887,7 +889,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.70
+  OpenCCVoice for DVSwitch Web Dashboard V2.71
 </div>
 </form>
 
