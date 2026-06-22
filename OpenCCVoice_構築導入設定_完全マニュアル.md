@@ -356,6 +356,9 @@ DMR ID・TGIF パスワード・送信 TG・USRP ポートを一括設定する�
 
 ```bash
 cd /opt/dvswitch_bot/bin
+# バックアップ先フォルダを事前に作成（無いとバックアップ時にエラーになる）
+sudo mkdir -p /opt/dvswitch_bot/bak/ini /opt/dvswitch_bot/bak/wav
+sudo chown -R ocv:ocv /opt/dvswitch_bot/bak
 sudo ./dvs_config.sh
 ```
 
