@@ -3,10 +3,18 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.70 —
+ — JJ2YYK デジピーター自動応答システム  V1.71 —
 
- 本ファイルは V1.69（V1.68 + 機械可読 __version__）に、watchdog 経路専用の
- カーチャンク上限 WATCHDOG_RX_MAX_SEC を追加したもの。
+ 本ファイルは V1.70（V1.69 + watchdog 専用カーチャンク上限）に、バージョン検出を
+ 妨げるコメント文字列を修正したもの。機能は V1.70 と同一。
+
+【V1.71 での変更点（バージョン誤検出の予防）】
+  - 🔵 変更履歴コメント内にあった例示文字列（__version__ への代入を引用符付きで
+    そのまま書いていた箇所）を、誤検出しない表記に修正した。
+    背景: ダッシュボード app.py が __version__ 行を探す際、このコメント内の例示が
+    本物の代入行より前にあったため V1.69 と誤表示された（2026-06-23）。app.py 側は
+    行頭固定の正規表現に修正（V2.76）。bot 側も本修正で二重に安全化する。
+    機能面は V1.70 と完全に同一（watchdog 専用上限など挙動変更なし）。
 
 【V1.70 での変更点（watchdog 経路の判定上限を分離）】
   - 🔴 watchdog 擬似終端経路のカーチャンク上限を、end 経路と別の専用定数
@@ -26,7 +34,7 @@
     任意キー化＋bot_setup.py / app.py 対応を別途行う。
 
 【V1.69 での変更点（機械可読バージョン __version__ の追加）】
-  - 🔵 ファイル冒頭付近（docstring 直後）に __version__ = "V1.69" を新設。
+  - 🔵 ファイル冒頭付近（docstring 直後）に機械可読の __version__ 行を新設（値は V1.69）。
     ダッシュボード app.py（V2.75〜）がこの固定行を最優先で参照してバージョンを
     表示する。docstring（人間向けの "Document Version:"）が長くなっても、版表示が
     取りこぼされないようにするための恒久対策。
@@ -163,7 +171,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.70 (daemon, V1.69 + watchdog-specific kerchunk max)
+ Document Version: V1.71 (daemon, V1.70 + comment fix for version detection)
  Last Updated: 2026-06-23
 ================================================================================
 """
@@ -174,7 +182,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.70"
+__version__ = "V1.71"
 
 import os
 import sys
@@ -858,7 +866,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.70 (daemon, V1.69 + watchdog-specific kerchunk max) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.71 (daemon, V1.70 + comment fix for version detection) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
