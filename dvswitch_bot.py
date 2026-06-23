@@ -3,10 +3,27 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.69 —
+ — JJ2YYK デジピーター自動応答システム  V1.70 —
 
- 本ファイルは V1.68（V1.67 + 送出音量ゲイン TX_GAIN）に、機械可読の固定
- バージョン行 __version__ を追加したもの。機能は V1.68 と同一。
+ 本ファイルは V1.69（V1.68 + 機械可読 __version__）に、watchdog 経路専用の
+ カーチャンク上限 WATCHDOG_RX_MAX_SEC を追加したもの。
+
+【V1.70 での変更点（watchdog 経路の判定上限を分離）】
+  - 🔴 watchdog 擬似終端経路のカーチャンク上限を、end 経路と別の専用定数
+    WATCHDOG_RX_MAX_SEC（既定 5.0 秒）で判定するようにした。
+    背景: watchdog 経過秒は MMDVM のタイムアウト（約2秒）を含んで長めに出るため、
+    短い SFR キーチャンクでも 2.6〜4.1 秒として記録される。これに end 用の
+    RX_DURATION_MAX_SEC（カーチャンク上限, 通常 2.5 前後）を当てると「Normal QSO」
+    に誤判定され、ID 応答しないばかりか 15 秒の抑制まで走り、後続の本物の
+    キーチャンク（例 2.3 秒）まで巻き添えで抑制された（2026-06-23 実機で確認）。
+    対策: _handle_rx_duration() で source="watchdog" のときだけ上限を
+    WATCHDOG_RX_MAX_SEC に差し替える。end 経路（source="eot"）は従来どおり
+    RX_DURATION_MAX_SEC を使い、挙動は一切変えない。
+    下限(MIN)は両経路とも RX_DURATION_MIN_SEC を据え置き。
+  - 実測（2026-06-23）の谷: SFR キーチャンクの watchdog 経過秒は 2.3〜4.1s、本物の
+    QSO は 8.8s 以上。5.0 はその中間で、両者を確実に分離できる。
+  - 🔵 本値はソース定数（bot_config.json では未管理）。将来 GUI 調整したくなったら
+    任意キー化＋bot_setup.py / app.py 対応を別途行う。
 
 【V1.69 での変更点（機械可読バージョン __version__ の追加）】
   - 🔵 ファイル冒頭付近（docstring 直後）に __version__ = "V1.69" を新設。
@@ -146,7 +163,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.69 (daemon, V1.68 + machine-readable __version__)
+ Document Version: V1.70 (daemon, V1.69 + watchdog-specific kerchunk max)
  Last Updated: 2026-06-23
 ================================================================================
 """
@@ -157,7 +174,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.69"
+__version__ = "V1.70"
 
 import os
 import sys
@@ -237,6 +254,15 @@ WATCHDOG_PSEUDO_END_ENABLED = True
 # 実ログの watchdog ロス分布（31〜75%）に合わせ既定 75。
 # さらに全部拾うなら 100（ロスガード事実上無効）、厳しくするなら 30〜50。
 WATCHDOG_MAX_LOSS_PCT = 75
+
+# 🔴 V1.70: watchdog 経路専用のカーチャンク上限（秒）。
+# watchdog 経過秒は MMDVM のタイムアウト（約2秒）を含んで長めに出るため、end 用の
+# RX_DURATION_MAX_SEC（カーチャンク上限, 通常 2.5 前後）をそのまま当てると、短い
+# キーチャンクが Normal QSO に誤判定される。watchdog 経路だけこの値で判定する。
+# 実測（2026-06-23）: SFR キーチャンクの watchdog 経過秒は 2.3〜4.1s、本物の QSO は
+# 8.8s 以上で、その間に谷がある。5.0 はその谷の中央＝両者をきれいに分離できる値。
+# end 経路（通常終端）はこの値を使わず RX_DURATION_MAX_SEC のまま（挙動不変）。
+WATCHDOG_RX_MAX_SEC = 5.0
 
 # ============================================================
 # 🔴 V1.68: 送出音量ゲイン（任意キー TX_GAIN）の既定値と有効範囲
@@ -613,22 +639,33 @@ def _handle_rx_duration(cs, dur, source="eot"):
 
     source : "eot"      = 正常終端（received network end of voice transmission）
              "watchdog" = 擬似終端（network watchdog has expired）
-             ログ表記の区別にのみ使う（挙動は同一）。
+
+    🔴 V1.70: watchdog 経路はカーチャンク上限を専用値 WATCHDOG_RX_MAX_SEC に
+    差し替える。watchdog 経過秒は MMDVM のタイムアウト（約2秒）を含んで長めに
+    出るため、end 用の RX_DURATION_MAX_SEC（カーチャンク上限）をそのまま当てると
+    短いキーチャンクが「Normal QSO」に誤判定され、応答せず＆15秒抑制まで走って
+    後続のキーチャンクも巻き添えになる（2026-06-23 実機で発生）。
+    end 経路（source="eot"）は従来どおり RX_DURATION_MAX_SEC を使い、挙動不変。
+    下限(MIN)は両経路とも RX_DURATION_MIN_SEC を据え置き（watchdog 値は最小でも
+    2s 超で MIN を余裕で超えるため取りこぼさない）。
     """
     global suppress_until
     now = time.monotonic()
     tag = "" if source == "eot" else " (watchdog)"
 
-    if RX_DURATION_MIN_SEC <= dur < RX_DURATION_MAX_SEC:
+    # カーチャンク上限を経路で選び分ける（end は据え置き / watchdog は専用値）
+    rx_max = RX_DURATION_MAX_SEC if source == "eot" else WATCHDOG_RX_MAX_SEC
+
+    if RX_DURATION_MIN_SEC <= dur < rx_max:
         if suppress_until - now <= 0:
             logger.info(f"receive:Kerchunk detected{tag}: {cs} ({dur:.1f}s) trigger")
             _start_worker("kerchunk", cs, extra=dur)
         else:
             remain = suppress_until - now
             logger.info(f"receive:suppressed{tag}: {cs} ({dur:.1f}s, remaining {remain:.1f}s)")
-    elif dur >= RX_DURATION_MAX_SEC:
+    elif dur >= rx_max:
         suppress_until = now + SUPPRESS_DURATION_SEC
-        logger.info(f"receive:Normal QSO detected{tag}: {cs} ({dur:.1f}s)")
+        logger.info(f"receive:Normal QSO detected{tag}: {cs} ({dur:.1f}s, max={rx_max}s)")
         logger.info(f"process:suppress start ({SUPPRESS_DURATION_SEC:.1f}s)　{cs}")
     else:
         logger.info(f"receive:Too short, ignored{tag}: {cs} ({dur:.1f}s, min={RX_DURATION_MIN_SEC}s)")
@@ -821,7 +858,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.69 (daemon, V1.68 + machine-readable __version__) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.70 (daemon, V1.69 + watchdog-specific kerchunk max) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -844,6 +881,8 @@ def _log_startup_info():
     if WATCHDOG_PSEUDO_END_ENABLED:
         logger.info(f"  Watchdog rescue   : ON  (watchdog を擬似終端として拾う / "
                     f"loss <= {WATCHDOG_MAX_LOSS_PCT}% のみ救済)")
+        logger.info(f"  Watchdog kerchunk : max={WATCHDOG_RX_MAX_SEC}s "
+                    f"(watchdog 専用上限 / end は {RX_DURATION_MAX_SEC}s)")
     else:
         logger.info(f"  Watchdog rescue   : OFF (end of voice transmission のみで判定)")
     if NIGHT_MODE_ENABLED:
