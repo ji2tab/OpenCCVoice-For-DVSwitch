@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.72
+ app.py  V2.73
 
  変更履歴:
    V2.0  初版リリース
@@ -58,6 +58,15 @@
          ANNOUNCE_FREQ 検証をモード依存（VALID_FREQ_BY_MODE）に変更。
          旧キー未設定の bot_config.json は本体側が mode1 既定で扱うため、
          フォーム既定値も 1 とした。
+   V2.73 🔵 サービス制御カードに dvswitch_bot 本体のバージョンを表示（active の右側）。
+         systemctl cat dvswitch-bot の ExecStart から「実際に起動中の」スクリプト
+         パスを特定し、その先頭ドキュメントの "Document Version: Vx.yy" を抽出して
+         表示する。これにより bin/ と直下の重複ファイルがあっても稼働中の版を
+         正しく表示できる（取得不能時は空表示）。/api/status にも bot_version を
+         追加し、状態ポーリング時に併せて更新する。
+         本機能は閲覧のみ。bot_config.json には一切影響しない。
+         ※ ここで言う「バージョン」は dvswitch_bot.py 本体（例 V1.67）であり、
+           本ダッシュボード app.py のバージョン（V2.73）とは別物である点に注意。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -80,6 +89,9 @@ ANALOG_INI   = "/opt/Analog_Bridge/Analog_Bridge.ini"
 LOG_DIR      = "/var/log/mmdvm"
 BAK_ROOT     = "/opt/dvswitch_bot/bak/ini"
 SERVICE_NAME = "dvswitch-bot"
+
+# 🔵 V2.73: bot 本体スクリプトのフォールバックパス（ExecStart 取得失敗時に使用）
+BOT_SCRIPT   = "/opt/dvswitch_bot/bin/dvswitch_bot.py"
 
 # 🔴 再起動の依存順と待機（V2.68）
 # Analog_Bridge は起動時に md380-emu(AMBE) へ接続し、MMDVM_Bridge と TLV 経路を張る。
@@ -217,6 +229,49 @@ def service_action(action):
         return False, str(e)
 
 
+# 🔵 V2.73: 起動中の dvswitch_bot 本体のバージョン取得
+def get_bot_script_path():
+    """systemctl cat dvswitch-bot の ExecStart から、実際に起動している bot
+    スクリプトのパスを取得する。取得できなければ BOT_SCRIPT にフォールバック。
+
+    こうすることで /opt/dvswitch_bot/bin/dvswitch_bot.py と /opt/dvswitch_bot/
+    dvswitch_bot.py のような重複ファイルがあっても、systemd が実際に起動して
+    いる方の版を確実に指せる（systemctl cat は read-only なので sudo 不要）。"""
+    try:
+        r = subprocess.run(
+            ["systemctl", "cat", SERVICE_NAME],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in r.stdout.splitlines():
+            s = line.strip()
+            if s.startswith("ExecStart="):
+                # 例) ExecStart=/usr/bin/python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
+                m = re.search(r"(\S+dvswitch_bot\.py)", s)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return BOT_SCRIPT
+
+def get_bot_version():
+    """bot スクリプト先頭ドキュメントからバージョン（例: V1.67）を抽出する。
+    見つからなければ空文字を返す。閲覧用途のみで設定には一切影響しない。"""
+    path = get_bot_script_path()
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            head = f.read(4000)   # 先頭のドキュメント部分だけで十分
+    except Exception:
+        return ""
+    m = re.search(r"Document Version:\s*(V[\d.]+)", head)
+    if m:
+        return m.group(1)
+    # フォールバック: 起動バナー行（"DVSwitch Bot V1.67 ..."）からも拾えるように
+    m = re.search(r"DVSwitch Bot (V[\d.]+)", head)
+    if m:
+        return m.group(1)
+    return ""
+
+
 # 🔴 安全な順序再起動（V2.68）
 def safe_restart_services(include_bot=True):
     """依存順に間隔を空けてサービスを再起動する。
@@ -276,6 +331,7 @@ def index():
     return render_template_string(TEMPLATE,
         status=status,
         bot_cfg=bot_cfg,
+        bot_version=get_bot_version(),
         dvs=get_dvs_values(),
         info=get_info_values(),
         backups=list_backups(),
@@ -307,7 +363,7 @@ def get_info_values():
 
 @app.route("/api/status")
 def api_status():
-    return jsonify({"status": get_service_status()})
+    return jsonify({"status": get_service_status(), "bot_version": get_bot_version()})
 
 
 @app.route("/service/<action>", methods=["POST"])
@@ -622,6 +678,11 @@ font-weight:bold;
   .svc-badge.inactive::before{background:#e02020}
   .svc-badge.failed{color:#a02020}
   .svc-badge.failed::before{background:#e02020}
+  /* 🔵 V2.73: bot 本体バージョン（active の右側に小さく表示） */
+  .svc-ver{
+    font-family:var(--mono);font-size:12px;color:var(--muted);
+    margin-left:4px;letter-spacing:.03em;
+  }
 
   /* メッセージ */
   .msg,.err{
@@ -691,7 +752,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.72</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.73</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -714,6 +775,7 @@ margin-bottom:6px;border-left:4px solid;
     <div class="svc-row">
       <span class="svc-name">dvswitch-bot</span>
       <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
+      <span class="svc-ver" id="svc-ver">{% if bot_version %}{{ bot_version }}{% endif %}</span>
       <div class="svc-ctrl" style="margin-left:auto">
         <!-- 通常モード: 変更ボタンのみ -->
         <button class="mode-link" id="btn-edit" onclick="enterEdit()">変更モード</button>
@@ -890,7 +952,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.72
+  OpenCCVoice for DVSwitch Web Dashboard V2.73
 </div>
 </form>
 
@@ -909,6 +971,8 @@ function refreshStatus(){
     document.getElementById("svc-status-label").textContent=s;
     const p=document.getElementById("svc-status");
     if(p){p.textContent=s;p.className="svc-badge "+dotClass(s);}
+    const v=document.getElementById("svc-ver");
+    if(v && d.bot_version!==undefined){v.textContent=d.bot_version||"";}
   });
 }
 setInterval(refreshStatus,20000);
