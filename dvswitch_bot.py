@@ -3,8 +3,36 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.67 —
+ — JJ2YYK デジピーター自動応答システム  V1.68 —
 
+ 本ファイルは V1.67（V1.64 + V1.65 watchdog 擬似終端）をベースに、
+ 送出音量ゲイン（任意キー TX_GAIN）を追加したもの。
+
+【V1.68 での変更点（送出音量ゲイン TX_GAIN の追加）】
+  - 🔴 bot が送出する音声すべて（カーチャンクID / 時報 / 30分案内 / 起動・ナイト
+    アナウンス / 定時メッセージ 001・002）の音量を、設定ファイルの任意キー
+    TX_GAIN（線形倍率, 1.0=等倍）で一律に調整できるようにした。
+    Analog_Bridge.ini の usrpGain と同じ「1.0=等倍」の倍率表現。主用途は減衰
+    （<1.0）。実装は SoX の vol 効果を 1 段付与する。
+      * 合成系（_generate_hybrid）: 最終結合コマンドに vol を付与。
+      * 固定再生（fixed_file=001/002）: _generate_hybrid を通らないため、送出前に
+        vol をかけた一時ファイルを作って送出する。
+    TX_GAIN == 1.0 のときは vol を付けない＝V1.67 と完全に同一の出力。
+  - 🔵 後方／前方互換（重要）:
+      * TX_GAIN は任意キー。REQUIRED_KEYS には入れない。
+      * 旧 JSON（TX_GAIN 無し）+ 新 bot → 既定 1.0（等倍）で動作。起動拒否しない。
+      * 新 JSON（TX_GAIN 有り）+ 旧 bot（V1.67以前）→ 旧 bot は未知キーを無視する
+        （REQUIRED_KEYS の欠落のみ検査）ため無影響。電波・動作に影響しない。
+  - 🔵 フェイルセーフ（音量は安全に直結しないため exit しない）:
+    TX_GAIN が「数値でない / 0以下 / 範囲外（>5.0）」の場合は、送出を止めず
+    1.0（等倍）にフォールバックし、警告ログを出す。RF パラメータ（TG/周波数）の
+    ような fatal 扱いはしない（音量の誤設定で送信そのものを止める方が有害なため）。
+  - ⚠️ 注意（永続性）: bot_setup.py / app.py（ダッシュボード）は現状 TX_GAIN を
+    認識せず、保存時に bot_config.json を「知っているキーだけで」書き直す。よって
+    手で TX_GAIN を入れても、それらのツールで保存し直すと消える。GUI/対話から
+    恒久的に扱いたい場合は bot_setup.py / app.py 側にも TX_GAIN 対応が必要。
+
+【V1.67 での変更点（V1.64 への watchdog 擬似終端の統合）】
  本ファイルは V1.64（JJ2YYK 系 / TIME_SIGNAL_MODE で時報を30分対応にした系統）
  をベースに、別系統 V1.65 の「watchdog 擬似終端」機能のみを統合したもの。
 
@@ -106,7 +134,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.67 (daemon, V1.64 + V1.65 watchdog pseudo-end)
+ Document Version: V1.68 (daemon, V1.67 + TX_GAIN output volume)
  Last Updated: 2026-06-23
 ================================================================================
 """
@@ -191,6 +219,16 @@ WATCHDOG_PSEUDO_END_ENABLED = True
 WATCHDOG_MAX_LOSS_PCT = 75
 
 # ============================================================
+# 🔴 V1.68: 送出音量ゲイン（任意キー TX_GAIN）の既定値と有効範囲
+# ============================================================
+# TX_GAIN は線形倍率（1.0=等倍）。Analog_Bridge.ini の usrpGain と同じ表現。
+# 主用途は減衰（<1.0）。bot が出す音すべて（ID/時報/30分案内/起動・ナイト案内/
+# 001・002）に一律で効く。bot_config.json の任意キーで、無ければ等倍。
+TX_GAIN_DEFAULT = 1.0
+TX_GAIN_MIN = 0.0    # これより大きいこと（0 以下は無効＝無音化を防ぐ）
+TX_GAIN_MAX = 5.0    # これ以下（usrpGain と同じ 0.0–5.0 レンジ。>1.0 はクリップ注意）
+
+# ============================================================
 # グローバル状態 / 設定値
 # ============================================================
 should_exit = False
@@ -203,6 +241,7 @@ RX_DURATION_MIN_SEC = None
 RX_DURATION_MAX_SEC = None
 ANNOUNCE_FREQ = None
 TIME_SIGNAL_MODE = None
+TX_GAIN = None
 NIGHT_MODE_ENABLED = None
 NIGHT_START_HOUR = None
 NIGHT_END_HOUR = None
@@ -257,7 +296,7 @@ def _load_config():
     無い / 壊れている / 必須キー欠落 / 値が不正 のいずれでも exit(1)。
     """
     global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ, TIME_SIGNAL_MODE
-    global NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
+    global TX_GAIN, NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
 
     # 1) 存在確認
     if not os.path.exists(CONFIG_PATH):
@@ -318,11 +357,35 @@ def _load_config():
     if not (0 <= n2 <= 23):
         _fatal_config(f"NIGHT_END_HOUR は 0〜23 です（現在: {n2}）")
 
+    # 🔴 V1.68: TX_GAIN（任意キー / 送出音量の線形倍率, 1.0=等倍）
+    # 無ければ等倍（=従来挙動）。値が不正でも送出は止めず 1.0 にフォールバックして
+    # 警告する（音量は RF 安全に直結しないため fatal にしない）。
+    tx_gain = TX_GAIN_DEFAULT
+    if "TX_GAIN" in cfg:
+        try:
+            _g = float(cfg["TX_GAIN"])
+        except (ValueError, TypeError):
+            _g = None
+        if _g is None or not (TX_GAIN_MIN < _g <= TX_GAIN_MAX):
+            logger.warning(_fmt("!!", "TX_GAIN", str(cfg.get("TX_GAIN")),
+                                 f"不正な値のため {TX_GAIN_DEFAULT}（等倍）にフォールバック "
+                                 f"（有効範囲: {TX_GAIN_MIN} 超 〜 {TX_GAIN_MAX} 以下）"))
+            tx_gain = TX_GAIN_DEFAULT
+        else:
+            tx_gain = _g
+            if tx_gain > 1.0:
+                logger.warning(_fmt("..", "TX_GAIN", f"{tx_gain}",
+                                    "1.0 超のため増幅（クリップに注意）"))
+    else:
+        logger.info(_fmt("..", "TX_GAIN", "未設定",
+                         f"既定 {TX_GAIN_DEFAULT}（等倍 / 音量変更なし）を使用"))
+
     # 5) 反映
     RX_DURATION_MIN_SEC = rx_min
     RX_DURATION_MAX_SEC = rx_max
     ANNOUNCE_FREQ = freq
     TIME_SIGNAL_MODE = ts_mode
+    TX_GAIN = tx_gain
     NIGHT_MODE_ENABLED = night_enabled
     NIGHT_START_HOUR = n1
     NIGHT_END_HOUR = n2
@@ -651,8 +714,23 @@ def _reply_executor(mode, val, extra=None):
         elif mode == "fixed_file":
             basename = os.path.basename(val)
             if os.path.exists(val):
+                # 🔴 V1.68: 固定再生（001/002）にも同じ送出音量ゲインを適用する。
+                # fixed_file は _generate_hybrid を通らないため、ここで個別に vol を
+                # かけた一時ファイルを作って送出する。失敗時は素のファイルで送る
+                # （音量調整に失敗しても無音化・送出停止は避ける）。
+                play_path = val
+                if TX_GAIN is not None and TX_GAIN != 1.0:
+                    try:
+                        subprocess.run(
+                            ["sox", val, TEMP_FINAL, "vol", f"{TX_GAIN}"],
+                            check=True,
+                        )
+                        play_path = TEMP_FINAL
+                    except subprocess.CalledProcessError as e:
+                        logger.error(_fmt("!!", "Gain failed", basename, f"rc={e.returncode}"))
+                        play_path = val
                 logger.info(_fmt("TX", "Sending", basename, "scheduled"))
-                send_usrp_wav_with_padding(val)
+                send_usrp_wav_with_padding(play_path)
                 elapsed = time.monotonic() - started_at
                 logger.info(_fmt("TX", "Scheduled", basename, f"{elapsed:.1f}s"))
             else:
@@ -699,6 +777,10 @@ def _generate_hybrid(intro, middle_text, outro):
         if outro is not None:
             concat_cmd.append(outro)
         concat_cmd.append(TEMP_FINAL)
+        # 🔴 V1.68: 送出音量ゲイン。1.0(等倍)以外のときだけ vol 効果を付与する。
+        # 結合後の出力全体（intro + 合成音 + outro）に一律で効く。
+        if TX_GAIN is not None and TX_GAIN != 1.0:
+            concat_cmd += ["vol", f"{TX_GAIN}"]
         subprocess.run(concat_cmd, check=True)
 
         return True
@@ -719,7 +801,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.67 (daemon, V1.64 + V1.65 watchdog pseudo-end) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.68 (daemon, V1.67 + TX_GAIN output volume) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -728,6 +810,12 @@ def _log_startup_info():
     logger.info(f"  RX duration       : min={RX_DURATION_MIN_SEC}s / max={RX_DURATION_MAX_SEC}s")
     logger.info(f"  Suppress duration : {SUPPRESS_DURATION_SEC}s")
     logger.info(f"  Gap after intro   : {GAP_AFTER_INTRO_SEC}s")
+    # 🔴 V1.68: 送出音量ゲインの状態
+    if TX_GAIN == 1.0:
+        logger.info(f"  TX gain           : {TX_GAIN} (等倍 / 音量変更なし)")
+    else:
+        _g_dir = "減衰" if TX_GAIN < 1.0 else "増幅(クリップ注意)"
+        logger.info(f"  TX gain           : {TX_GAIN} ({_g_dir} / vol 効果を全送出に付与)")
     logger.info(f"  Startup announce  : {STARTUP_ANNOUNCE_DELAY_SEC}s 後に「起動しました。」を送出")
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
     _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
