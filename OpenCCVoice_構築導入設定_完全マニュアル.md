@@ -111,10 +111,12 @@
 
 **このシステムができること:**
 1. カーチャンク自動応答（短い PTT を検知して自局名を応答）
-2. 毎正時の時報
-3. 定時メッセージ（001/002 を交互送出）
-4. ナイトモード（夜間は時報・定時を抑制。カーチャンク応答は24時間動作）
-5. ログローテーション自動追従（日付が変わっても監視を継続）
+2. 毎正時の時報（任意で毎30分の案内も追加可。`TIME_SIGNAL_MODE` で切替）
+3. 起動アナウンス（起動の数秒後に「起動しました。」を1回送出）
+4. 定時メッセージ（001/002 を交互送出）
+5. ナイトモード（夜間は時報・定時を抑制。カーチャンク応答は24時間動作）
+6. ログローテーション自動追従（日付が変わっても監視を継続）
+7. watchdog 擬似終端救済（SFR 中継で終端が落ちた送信も拾ってカーチャンク応答）
 
 ## 2. 事前準備チェックリスト
 
@@ -669,10 +671,28 @@ sudo python3 /opt/dvswitch_bot/bin/bot_setup.py
 |---|---|---|
 | 最小受信時間 (秒) | これ未満は無視 | 0.5 |
 | 最大受信時間 (秒) | これ以上はカーチャンクとしない（通常 QSO 扱い） | 3.9 |
-| 放送回数 (1/2/3) | 1時間あたりの定時メッセージ回数（正時除く） | 2 |
+| 放送回数 | 1時間あたりの定時メッセージ回数（有効範囲は時刻案内モード依存。下記参照） | 2 |
 | ナイトモード (y/n) | 夜間の時報・定時メッセージ抑制 | y |
 | N1（開始時） | この時刻の時報まで送出 → 以降抑制 | 22 |
 | N2（終了時） | この時刻まで抑制 → N2+1 時の時報で再開 | 5 |
+
+#### 時刻案内モード（`TIME_SIGNAL_MODE`）— V1.64〜
+
+時報の頻度を `bot_config.json` の `TIME_SIGNAL_MODE` で選べる（任意キー。未設定の旧設定は従来動作＝モード1）。
+
+| モード | 動作 |
+|---|---|
+| 0 | 時刻案内なし |
+| 1 | 毎正時のみ「○○時です」（従来動作） |
+| 2 | 毎正時「○○時です」＋毎30分「○○時30分です」 |
+
+**放送回数の有効範囲はモードに依存する**（正時/30分は時刻案内が占有するため）: モード0→0/1/2/3/4、モード1→0/1/2/3、モード2→0/2。
+
+#### ⚠️ 送出音量 `TX_GAIN`（手動設定・上級者向け）— V1.68〜
+
+bot が出す全音声の音量を線形倍率 `TX_GAIN`（`1.0`=等倍、主用途は減衰）で一律調整できる。`bot_config.json` の**任意キー**で、無ければ等倍。値が不正でも送出は止めず 1.0 にフォールバックする（有効範囲: 0 より大〜5.0 以下）。
+
+> ⚠️ **重要:** `TX_GAIN` は現状 `bot_setup.py` とダッシュボード（app.py）が認識しない。これらで設定を保存し直すと **消える**ため、手動で JSON に追記する前提の上級設定として扱うこと。
 
 確認:
 
@@ -699,7 +719,7 @@ python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```bash
 sudo tee /etc/systemd/system/dvswitch-bot.service > /dev/null << 'EOF'
 [Unit]
-Description=DVSwitch Bot (OpenCCVoice, daemon based on V1.60)
+Description=DVSwitch Bot (OpenCCVoice, daemon V1.69)
 After=network.target analog_bridge.service mmdvm_bridge.service md380-emu.service
 Wants=analog_bridge.service mmdvm_bridge.service md380-emu.service
 
@@ -879,7 +899,7 @@ Raspberry Pi 上の Flask アプリとして動作する。
 | 機能 | 説明 |
 |---|---|
 | サービス制御 | dvswitch-bot の Start / Stop / Restart |
-| Bot 設定 | `bot_config.json` の全項目をフォームで編集・保存 |
+| Bot 設定 | `bot_config.json` の項目をフォームで編集・保存（※ `TX_GAIN` は非対応。保存時に消えるため手動編集が必要） |
 | DVSwitch 設定 | `MMDVM_Bridge.ini` / `Analog_Bridge.ini` をフォームで編集 |
 | 自動バックアップ | DVSwitch 設定保存時に `/opt/dvswitch_bot/bak/ini/` へ自動バックアップ |
 | ログ表示 | MMDVM_Bridge ログ末尾5行を表示・30秒自動更新 |
@@ -940,6 +960,9 @@ journalctl -u dvswitch-web -n 30            # ログ確認
 | 音声がプツプツ・ケロケロ | UDP ドリフト | bot が `time.monotonic()` ベースの絶対時刻同期か確認 |
 | dvswitch-bot が `activating (auto-restart)` | 設定ファイル不正/未作成 | `journalctl` で確認 → `bot_setup.py` で作成 |
 | 手動起動の bot が `Config error` で停止 | bot_config.json 不正/欠落 | `bot_setup.py` で作成。`-s` で検証 |
+| SFR 中継でカーチャンクに反応しない | 終端パケット落ちで end が記録されない | V1.67 以降に更新。ログに `watchdog pseudo-end` が出れば救済動作中（`watchdog ignored (high loss)` はロス過大で対象外） |
+| 30分案内が出ない | `TIME_SIGNAL_MODE` が 2 でない | `bot_config.json` の `TIME_SIGNAL_MODE` を 2 に（放送回数の有効範囲も変わる・第17章） |
+| `TX_GAIN` が効かない／消えた | `bot_setup.py`・ダッシュボードが非対応 | `TX_GAIN` は手動キー。保存ツールで消えるため再追記（第17章）。不正値は等倍にフォールバック |
 | Quantar_Bridge 等が「Does not exist」 | monit httpd 無効＋未起動 | 第12章：httpd 有効化＋`enable --now`＋`monit reload` |
 | `sudo monit status` が `Connection reset by peer` | monit httpd 無効 | 第12章 ステップ2 |
 | `:2812` が外部から開けない | `use address localhost` | `0.0.0.0` に変更して `monit reload` |
