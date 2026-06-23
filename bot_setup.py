@@ -20,6 +20,7 @@
    NIGHT_MODE_ENABLED  : ナイトモード（true / false）
    NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
    NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
+   TX_GAIN             : 送出音量の倍率（1.0=等倍, 0.0超〜5.0以下。下げる方向が主用途）
 
 【配置】
    /opt/dvswitch_bot/bin/bot_setup.py
@@ -40,7 +41,7 @@ import json
 BOT_DIR = "/opt/dvswitch_bot"
 CONFIG_PATH = f"{BOT_DIR}/bot_config.json"
 
-# デフォルト値（V1.60 のコード初期値に準拠）
+# デフォルト値（V1.60 のコード初期値に準拠 / TX_GAIN は V1.68 で追加）
 DEFAULTS = {
     "RX_DURATION_MIN_SEC": 0.5,
     "RX_DURATION_MAX_SEC": 3.9,
@@ -49,9 +50,20 @@ DEFAULTS = {
     "NIGHT_MODE_ENABLED": True,
     "NIGHT_START_HOUR": 22,
     "NIGHT_END_HOUR": 5,
+    "TX_GAIN": 1.0,
 }
 
 REQUIRED_KEYS = list(DEFAULTS.keys())
+
+# 送出音量ゲイン TX_GAIN の有効範囲（dvswitch_bot.py V1.68 と同一基準）。
+# 1.0=等倍。0 以下は無効、>5.0 はクリップの恐れがあるため不可。
+TX_GAIN_MIN = 0.0   # これより大きいこと
+TX_GAIN_MAX = 5.0   # これ以下
+
+# TX_GAIN は任意キー（既定あり）。本体 dvswitch_bot.py と同様に「必須」とはしない
+# ため、既存ファイルの欠落チェック対象から外す（旧 config を不正と誤判定しない）。
+# DEFAULTS には残すので、新規作成・保存時は常に TX_GAIN を含めて書き出す。
+REQUIRED_KEYS = [k for k in DEFAULTS if k != "TX_GAIN"]
 
 
 # ------------------------------------------------------------
@@ -96,6 +108,18 @@ def validate(cfg):
         errors.append(f"NIGHT_START_HOUR は 0〜23（現在 {n1}）")
     if not (0 <= n2 <= 23):
         errors.append(f"NIGHT_END_HOUR は 0〜23（現在 {n2}）")
+
+    # TX_GAIN は任意キー。在る場合のみ厳格に範囲チェックする（書き出しツール側は
+    # 入口で弾く方針。本体側は不正でも 1.0 にフォールバックする最後の砦を持つ）。
+    if "TX_GAIN" in cfg:
+        try:
+            g = float(cfg["TX_GAIN"])
+        except (ValueError, TypeError):
+            errors.append(f"TX_GAIN は数値（現在 {cfg['TX_GAIN']!r}）")
+        else:
+            if not (TX_GAIN_MIN < g <= TX_GAIN_MAX):
+                errors.append(
+                    f"TX_GAIN は {TX_GAIN_MIN} 超 〜 {TX_GAIN_MAX} 以下（現在 {g}）")
 
     return errors
 
@@ -190,6 +214,26 @@ def ask_bool(prompt, cur):
         print("   → y または n で入力してください。")
 
 
+def ask_gain(prompt, cur):
+    """送出音量ゲイン（倍率）の入力。範囲外は厳格に弾いて再入力させる。"""
+    while True:
+        s = input(f"{prompt} [現在: {cur}]: ").strip()
+        if s == "":
+            v = cur
+        else:
+            try:
+                v = float(s)
+            except ValueError:
+                print("   → 数値（例 0.8）で入力してください。")
+                continue
+        if not (TX_GAIN_MIN < v <= TX_GAIN_MAX):
+            print(f"   → {TX_GAIN_MIN} より大きく {TX_GAIN_MAX} 以下で入力してください。")
+            continue
+        if v > 1.0:
+            print("   ※ 1.0 超は増幅です。クリップ（音割れ）に注意してください。")
+        return v
+
+
 # ------------------------------------------------------------
 # 対話本体
 # ------------------------------------------------------------
@@ -197,8 +241,8 @@ def do_edit():
     existing = load_existing()
     base = dict(DEFAULTS)
     if existing:
-        # 既存の有効な値だけ初期値に取り込む
-        for k in REQUIRED_KEYS:
+        # 既存の有効な値だけ初期値に取り込む（任意キー TX_GAIN も含めて拾う）
+        for k in DEFAULTS:
             if k in existing:
                 base[k] = existing[k]
         print(f"[INFO] 既存設定を読み込みました: {CONFIG_PATH}")
@@ -265,6 +309,13 @@ def do_edit():
         cfg["NIGHT_START_HOUR"] = base["NIGHT_START_HOUR"]
         cfg["NIGHT_END_HOUR"] = base["NIGHT_END_HOUR"]
 
+    # --- 送出音量ゲイン（V1.68）---
+    print("\n--- 送出音量（ゲイン倍率）---")
+    print("  bot が出す音すべて（ID/時報/30分案内/起動・ナイト案内/001・002）に効きます。")
+    print("  1.0 = 等倍（変更なし）。下げる方向が主用途。")
+    print("  目安: 0.8 控えめ / 0.7 はっきり小さく / 0.5 かなり小さく")
+    cfg["TX_GAIN"] = ask_gain("送出音量 (倍率 0.0超〜5.0以下)", base.get("TX_GAIN", 1.0))
+
     # 確認表示
     ts = cfg["TIME_SIGNAL_MODE"]
     ts_label = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}[ts]
@@ -291,6 +342,9 @@ def do_edit():
               f"(抑制 {sup_start:02d}〜{cfg['NIGHT_END_HOUR']:02d} / 再開 {resume:02d}:00)")
     else:
         print("   ナイトモード   : OFF（24時間送出）")
+    _g = cfg["TX_GAIN"]
+    _g_note = "等倍/変更なし" if _g == 1.0 else ("減衰" if _g < 1.0 else "増幅(クリップ注意)")
+    print(f"   送出音量       : {_g}（{_g_note}）")
     print("----------------------------------------------------------")
 
     # 検証
