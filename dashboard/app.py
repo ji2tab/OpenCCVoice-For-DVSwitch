@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.75
+ app.py  V2.76
 
  変更履歴:
    V2.0  初版リリース
@@ -84,6 +84,13 @@
               起動バナー」の順で探索し、先頭 20000 バイトで見つからなければ
               ファイル全体を読んで再探索するフォールバックを追加。
          これでヘッダがいくら伸びても版を取りこぼさない。表示のみで設定に影響なし。
+   V2.76 🔴 バージョン表示が V1.69 に化ける不具合を修正。
+         原因: __version__ 抽出の最優先パターンが行頭固定でなかったため、bot 本体の
+         変更履歴コメント内にあった例示文字列 __version__ = "V1.69"（説明用）に先に
+         マッチし、本物の代入行（__version__ = "V1.70"）より前で拾ってしまった。
+         対策: 最優先パターンを (?m)^__version__... と行頭固定にし、コメント中の
+         例示（先頭が空白/記号で始まる）を除外。本物の代入行だけを拾う。
+         併せて bot 本体 V1.71 でコメントの例示文字列も誤検出しない表記に修正。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -290,7 +297,9 @@ def get_bot_version():
 
     def _find(text):
         for pat in (
-            r"__version__\s*=\s*[\"'](V[\d.]+)[\"']",
+            # 行頭の代入行のみ。コメント中の「__version__ = "Vx.yy"」のような
+            # 例示文字列（先頭が空白や記号で始まる）を誤検出しないよう ^ で固定する。
+            r"(?m)^__version__\s*=\s*[\"'](V[\d.]+)[\"']",
             r"Document Version:\s*(V[\d.]+)",
             r"DVSwitch Bot (V[\d.]+)",
         ):
@@ -800,7 +809,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.75</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.76</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1006,7 +1015,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.75
+  OpenCCVoice for DVSwitch Web Dashboard V2.76
 </div>
 </form>
 
