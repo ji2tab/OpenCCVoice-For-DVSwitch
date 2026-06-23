@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.73
+ app.py  V2.74
 
  変更履歴:
    V2.0  初版リリース
@@ -67,6 +67,12 @@
          本機能は閲覧のみ。bot_config.json には一切影響しない。
          ※ ここで言う「バージョン」は dvswitch_bot.py 本体（例 V1.67）であり、
            本ダッシュボード app.py のバージョン（V2.73）とは別物である点に注意。
+   V2.74 🔴 Bot設定カードに「送出音量（TX_GAIN）」を追加（dvswitch_bot.py V1.68 対応）。
+         送出音量の線形倍率（1.0=等倍, 0.0超〜5.0以下）。bot が出す音すべてに効く。
+         bot_config / save_all の保存ルートに TX_GAIN を追加し、範囲を厳格に検証
+         （VALID 外は保存を弾く）。書き出し時は常に TX_GAIN を含めるため、保存し直しで
+         キーが消えることはない。旧 bot（V1.67以前）は未知キーを無視するため無影響。
+         未設定の旧 config に対してはフォーム既定 1.0 を表示する。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -103,6 +109,11 @@ RESTART_GAP_SEC = 3.0   # 各サービス再起動の間隔（経路確立を待
 # dvswitch_bot.py V1.64 の _get_trigger_minutes() / 検証と同一の表。
 #   mode0: 0/1/2/3/4   mode1: 0/1/2/3   mode2: 0/2
 VALID_FREQ_BY_MODE = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}
+
+# 🔴 V2.74: 送出音量ゲイン TX_GAIN の有効範囲（dvswitch_bot.py V1.68 と同一基準）。
+# 1.0=等倍の線形倍率。0 以下は無効、>5.0 はクリップの恐れがあるため不可。
+TX_GAIN_MIN = 0.0   # これより大きいこと
+TX_GAIN_MAX = 5.0   # これ以下
 
 app = Flask(__name__)
 
@@ -387,6 +398,7 @@ def bot_config_save():
             "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
             "NIGHT_START_HOUR":    int(request.form["night_start"]),
             "NIGHT_END_HOUR":      int(request.form["night_end"]),
+            "TX_GAIN":             float(request.form.get("tx_gain", 1.0)),
         }
         assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
         assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
@@ -395,6 +407,7 @@ def bot_config_save():
         assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
         assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
         assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
+        assert TX_GAIN_MIN < cfg["TX_GAIN"] <= TX_GAIN_MAX, f"送出音量は{TX_GAIN_MIN}超〜{TX_GAIN_MAX}以下"
         old_cfg = read_json(BOT_CONFIG)
         write_json(BOT_CONFIG, cfg)
         append_change_log("Bot設定", old_cfg, cfg)
@@ -484,6 +497,7 @@ def save_all():
             "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
             "NIGHT_START_HOUR":    int(request.form["night_start"]),
             "NIGHT_END_HOUR":      int(request.form["night_end"]),
+            "TX_GAIN":             float(request.form.get("tx_gain", 1.0)),
         }
         assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
         assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
@@ -492,6 +506,7 @@ def save_all():
         assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
         assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
         assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
+        assert TX_GAIN_MIN < cfg["TX_GAIN"] <= TX_GAIN_MAX, f"送出音量は{TX_GAIN_MIN}超〜{TX_GAIN_MAX}以下"
         old_cfg = read_json(BOT_CONFIG)
         write_json(BOT_CONFIG, cfg)
         append_change_log("Bot設定", old_cfg, cfg)
@@ -752,7 +767,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.73</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.74</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -834,6 +849,12 @@ margin-bottom:6px;border-left:4px solid;
         <div class="field">
           <label>送出する分</label>
           <select name="freq" id="freq_sel"><!-- JS が時刻案内モードに応じて構築 --></select>
+        </div>
+        <div class="section-title">送出音量</div>
+        <div class="field">
+          <label>音量倍率（1.0=等倍 / 0.0超〜5.0以下）</label>
+          <input type="number" name="tx_gain" step="0.05" min="0.05" max="5.0"
+            value="{{ bot_cfg.get('TX_GAIN', 1.0) }}" required>
         </div>
         <div class="section-title">ナイトモード</div>
         <div class="toggle-row">
@@ -952,7 +973,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.73
+  OpenCCVoice for DVSwitch Web Dashboard V2.74
 </div>
 </form>
 
