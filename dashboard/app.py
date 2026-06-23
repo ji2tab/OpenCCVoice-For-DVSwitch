@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.74
+ app.py  V2.75
 
  変更履歴:
    V2.0  初版リリース
@@ -73,6 +73,17 @@
          （VALID 外は保存を弾く）。書き出し時は常に TX_GAIN を含めるため、保存し直しで
          キーが消えることはない。旧 bot（V1.67以前）は未知キーを無視するため無影響。
          未設定の旧 config に対してはフォーム既定 1.0 を表示する。
+   V2.75 🔴 bot バージョン取得を堅牢化（V2.73 のバージョン表示が空になる不具合の修正）。
+         背景: get_bot_version() は先頭 4000 バイトだけを読んでいたが、bot 本体
+         V1.68 でヘッダ docstring が伸び、"Document Version:" 行が 9602 バイト目に
+         なって読み取り範囲外に落ち、表示が空になっていた。
+         対策(2点):
+           1) bot 本体ファイル冒頭付近に機械可読の固定行 __version__ = "Vx.yy" を
+              新設（dvswitch_bot.py V1.69〜）。docstring の長さに依存しない。
+           2) get_bot_version() を「__version__ を最優先 → Document Version: →
+              起動バナー」の順で探索し、先頭 20000 バイトで見つからなければ
+              ファイル全体を読んで再探索するフォールバックを追加。
+         これでヘッダがいくら伸びても版を取りこぼさない。表示のみで設定に影響なし。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -265,22 +276,44 @@ def get_bot_script_path():
     return BOT_SCRIPT
 
 def get_bot_version():
-    """bot スクリプト先頭ドキュメントからバージョン（例: V1.67）を抽出する。
-    見つからなければ空文字を返す。閲覧用途のみで設定には一切影響しない。"""
+    """bot スクリプトからバージョン（例: V1.68）を抽出する。見つからなければ空文字。
+    閲覧用途のみで設定には一切影響しない。
+
+    抽出は次の優先順で行う:
+      1) __version__ = "Vx.yy"   ← bot 冒頭付近の機械可読固定行（最優先・最も堅牢）
+      2) Document Version: Vx.yy ← docstring 内の人間向け表記
+      3) DVSwitch Bot Vx.yy      ← 起動バナー行
+    まず先頭 20000 バイトで探し、見つからなければファイル全体を読んで再探索する
+    （docstring が長くなって版の行が後方へ押し出されても取りこぼさないため）。
+    """
     path = get_bot_script_path()
+
+    def _find(text):
+        for pat in (
+            r"__version__\s*=\s*[\"'](V[\d.]+)[\"']",
+            r"Document Version:\s*(V[\d.]+)",
+            r"DVSwitch Bot (V[\d.]+)",
+        ):
+            m = re.search(pat, text)
+            if m:
+                return m.group(1)
+        return ""
+
     try:
         with open(path, encoding="utf-8", errors="ignore") as f:
-            head = f.read(4000)   # 先頭のドキュメント部分だけで十分
+            head = f.read(20000)
     except Exception:
         return ""
-    m = re.search(r"Document Version:\s*(V[\d.]+)", head)
-    if m:
-        return m.group(1)
-    # フォールバック: 起動バナー行（"DVSwitch Bot V1.67 ..."）からも拾えるように
-    m = re.search(r"DVSwitch Bot (V[\d.]+)", head)
-    if m:
-        return m.group(1)
-    return ""
+    ver = _find(head)
+    if ver:
+        return ver
+    # フォールバック: 先頭で見つからなければ全体を読んで再探索（長さ非依存）
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            full = f.read()
+    except Exception:
+        return ""
+    return _find(full)
 
 
 # 🔴 安全な順序再起動（V2.68）
@@ -767,7 +800,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.74</div>
+    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.75</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -973,7 +1006,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.74
+  OpenCCVoice for DVSwitch Web Dashboard V2.75
 </div>
 </form>
 
