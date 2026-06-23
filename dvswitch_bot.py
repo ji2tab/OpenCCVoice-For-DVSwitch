@@ -3,9 +3,47 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.64 —
+ — JJ2YYK デジピーター自動応答システム  V1.67 —
 
- 本ファイルは V1.63 をベースに、時刻案内（時報）を 30 分にも対応させたもの。
+ 本ファイルは V1.64（JJ2YYK 系 / TIME_SIGNAL_MODE で時報を30分対応にした系統）
+ をベースに、別系統 V1.65 の「watchdog 擬似終端」機能のみを統合したもの。
+
+ ⚠️ ブランチ注意（系統の整理）:
+   - V1.64 : JJ2YYK 系。TIME_SIGNAL_MODE で毎正時/30分の時報切替に対応。
+   - V1.66 : JJ2ZAR 系（実機稼働）。watchdog 擬似終端(V1.65) + late entry 救済(V1.66)。
+   本 V1.67 は「V1.64 + V1.65(watchdog 擬似終端のみ)」である。
+   🔵 V1.66 の late entry 開始イベント救済（LATE_ENTRY_AS_START）は
+      「擬似終端」ではなく「開始イベントの救済」であり、今回の統合対象外。
+      必要になった場合は別途追加すること。
+
+【V1.67 での変更点（V1.64 への watchdog 擬似終端の統合）】
+  - 🔴 network watchdog を擬似終端として扱う分岐を追加（V1.65 から移植）。
+    背景: DB40-D の SFR（単一周波数中継）で中継すると、入力 DMR ストリームの
+    終端パケットが落ち、MMDVM_Bridge が
+      "received network end of voice transmission"
+    を記録せず
+      "network watchdog has expired, X.X seconds, NN% packet loss"
+    で打ち切るケースが多発する。従来は end of voice transmission でしか dur を
+    計算しなかったため、watchdog で切れた送信はカーチャンク判定に到達せず
+    （last_cs が次のヘッダで上書きされて消えるだけ）応答できなかった。
+    対策: voice header を受けた後に watchdog 行が来たら、その行の経過秒を
+    擬似的な受信時間として扱い、従来の end of voice transmission と同じ
+    カーチャンク判定ルート（_handle_rx_duration）に流す。
+  - 🔴 過剰応答の防止ガード WATCHDOG_MAX_LOSS_PCT（既定 75%）を新設。
+    watchdog 行に出ている packet loss がこの値を超える送信は「壊れていて
+    用をなさない受信」とみなし、擬似終端として拾わない（無視）。
+    （V1.65 では既定 50% だったが、実ログのロス分布 31〜75% に合わせ 75% を採用。
+      全部拾うなら 100、厳しくするなら 30〜50 に調整可。）
+  - 🔴 WATCHDOG_PSEUDO_END_ENABLED（既定 True）で本機能を一括 ON/OFF できる。
+    False にすれば従来 V1.64 と完全に同一の挙動（end でのみ判定）に戻る。
+  - 🔵 カーチャンク判定/抑制ロジックを _handle_rx_duration() に切り出し、
+    end of voice transmission 経路と watchdog 経路で同一ロジックを共有する。
+    ログ表記は source 引数で "(watchdog)" を付して区別する（挙動は同一）。
+  - 🔵 watchdog の経過秒について:
+    MMDVM の watchdog タイムアウト（約2秒）を含むため、実際のキーダウン時間
+    より長めに出る点に注意。真のキーダウン時間ではなく「ヘッダ受信〜watchdog
+    までの経過」に近い。カーチャンク検知の目的（短時間キーアップの検出）には
+    十分だが、RX_DURATION の閾値はこの特性を踏まえて調整すること。
 
 【V1.64 での変更点】
   - 🔴 TIME_SIGNAL_MODE（0/1/2）を新設。時刻案内の頻度を選べるようにした。
@@ -15,77 +53,32 @@
     30 分案内は新モード half_hour_signal として _reply_executor に追加。
     TIME_INTRO_WAV を流用し、中間テキストを "{時}時30分です" とする。
   - 🔴 _get_trigger_minutes() を TIME_SIGNAL_MODE 依存に再設計。
-    定時メッセージ(001/002交互)の選択肢を ANNOUNCE_FREQ で表す:
-      * mode 0: 0=なし 1=[0] 2=[0,30] 3=[0,20,40] 4=[0,15,30,45]
-      * mode 1: 0=なし 1=[30] 2=[20,40] 3=[15,30,45]
-      * mode 2: 0=なし 2=[15,45]
-    時刻案内が占有する分（mode1:0 / mode2:0,30）は定時メッセージ表に含めない。
   - 🔴 スケジューラを :00 / :30 の両境界で lead 発火するよう一般化。
-    また、:00 の定時メッセージ（mode0 で ANNOUNCE_FREQ が 0 を含む場合）を
-    許可するため、従来の "m != 0" ガードを撤去した。
-  - 🔵 30分案内のナイトモード抑制は「定時メッセージと同じ窓（N1時〜N2時）」を
-    採用。N1:00 の突入アナウンス後に N1:30 が鳴るのを防ぐため。
+  - 🔵 30分案内のナイトモード抑制は「定時メッセージと同じ窓（N1時〜N2時）」を採用。
   - 🔵 TIME_SIGNAL_MODE は任意キー。未設定の既存 bot_config.json は従来動作
     （mode 1）として扱い、起動を拒否しない（アップグレード互換）。
 
 【V1.63 での変更点】
   - 🔴 _find_latest_log() を「0バイトファイルをスキップ」するよう改良。
-    従来は max(dated_logs, key=os.path.basename) で「ファイル名が最大」を
-    無条件に選んでいたため、セットアップ残骸や切り替わり直前に作られた
-    0バイトの日付付きログ（例: MMDVM_Bridge-YYYY-MM-DD.log が空）を
-    監視対象に選んでしまい、実際に書かれている前日ログを見落として
-    DMRトラフィックを一切検知できない事故が起きた（2026-06-06 に実機で発生）。
-    対策: glob 結果のうち os.path.getsize(p) > 0 のものだけを候補にし、
-    その中から名前最大を選ぶ。
-    フォールバック: 候補が全て0バイト（=中身のあるログが1つも無い）の場合のみ、
-    従来どおり全日付付きログから名前最大を選ぶ（起動直後など正規の空ファイル
-    しか無い状況で監視対象を見失わないため）。
-    補足: MMDVM_Bridge はログ日付を UTC 基準で切るため、JST 深夜0時〜午前9時は
-    UTC 前日のファイルに書き続ける（これは仕様であり異常ではない）。本改良は
-    その挙動とは独立に、空ファイルを掴まないことを保証する。
+    （2026-06-06 実機で発生した、空の日付付きログを掴んで前日ログを見失う
+    事故への対策。詳細は _find_latest_log() のコメント参照。）
 
 【V1.62 での変更点】
-  - 🔴 起動アナウンスを追加。
-    デーモン起動後、ログ監視を開始する直前に threading.Timer で
-    STARTUP_ANNOUNCE_DELAY_SEC（既定 7.0 秒）遅延して
-    「起動しました。」を 1 回だけ送出する。
-    意図: MMDVM_Bridge / Analog_Bridge の起動が落ち着いてから送出する
-    ため、固定の遅延を入れている（5〜10 秒程度で調整可）。
-    実装: is_talking フラグと競合しないよう _start_worker を経由せず
-    _send_startup_announcement() を直接呼ぶ。
+  - 🔴 起動アナウンスを追加（起動 N 秒後に「起動しました。」を 1 回送出）。
 
 【V1.61 での変更点】
-  - 🔴 ナイトモードの抑制を「時報」と「定時メッセージ」で分離した。
-      * 時報         : N1+1 時 〜 N2 時を抑制（N1 時の時報は送出）
-      * 定時メッセージ : N1 時 〜 N2 時を抑制（N1 時台から即抑制）
-    意図: N1 時は「最後の時報＋ナイトモード突入アナウンス」を出すが、
-    その後の同じ時間帯の定時メッセージ（例 N1=22 のとき 22:20）は出さない。
-    V1.60 では定時メッセージも N1+1 時からの抑制だったため、22:20 等が
-    送出されてしまっていた。これを修正。
-  - 起動ログに時報／定時それぞれの抑制時間帯を表示するようにした。
+  - 🔴 ナイトモードの抑制を「時報」と「定時メッセージ」で分離。
   - 🔴 ログローテーション選択を getctime からファイル名ベースに修正。
-    _find_latest_log() が max(logs, key=os.path.getctime) のままだったため、
-    日付切替後に旧ログが touch されると「古いファイルが最新」に化け、
-    新しい日付のログを監視できない問題があった（V2.0 で方針確定済みだが
-    分離版に未反映だった）。max(..., key=os.path.basename) に変更し、
-    日付付きログ（YYYY-MM-DD）を辞書順＝日付順で確実に選ぶ。日付付きが
-    無い場合のみ MMDVM_Bridge.log にフォールバックする。
 
 【V1.60 からの変更点（デーモン化）】
-  - 起動時の対話設定（_interactive_setup）を廃止し、
-    設定ファイル(JSON)を読み込む _load_config() に置き換えた。
-    → systemd 等の非対話環境でも EOFError で落ちない。
-  - 🔴 フェイルセーフ:
-    設定ファイルが「無い / 壊れている / 必須キー欠落 / 値が不正」の場合、
-    デフォルト値で誤動作させず、エラーログを出して sys.exit(1) で停止する。
-    （意図しない送信パラメータで電波を出すことを防ぐ安全策）
-    → 設定は必ず bot_setup.py で作成してから本デーモンを起動すること。
-  - 設定の置き場所: /opt/dvswitch_bot/bot_config.json
+  - 起動時の対話設定を廃止し、設定ファイル(JSON)読み込みに置き換え。
+  - 🔴 フェイルセーフ: 設定が無い/壊れ/欠落/不正なら exit(1)。
 
 【設定項目（bot_config.json）】
   RX_DURATION_MIN_SEC : 最小受信時間（秒, 0 < MIN < MAX）
   RX_DURATION_MAX_SEC : 最大受信時間（秒, カーチャンク上限）
-  ANNOUNCE_FREQ       : 1時間あたりの放送回数（1 / 2 / 3）
+  ANNOUNCE_FREQ       : 1時間あたりの放送回数（TIME_SIGNAL_MODE 依存）
+  TIME_SIGNAL_MODE    : 時刻案内モード（0/1/2, 任意キー。未設定なら 1）
   NIGHT_MODE_ENABLED  : ナイトモード有効（true / false）
   NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
   NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
@@ -94,8 +87,9 @@
   - 起動アナウンス（起動 N 秒後に「起動しました。」を 1 回送出）
   - ナイトモード（時報は N1+1時〜N2時を抑制／定時メッセージは N1時〜N2時を抑制。
     N1時は時報＋突入アナウンスを出す。kerchunk は24時間応答）
-  - 毎正時の時報（lead 秒前に発火）/ 定時メッセージ（001/002 交互）
+  - 毎正時の時報（lead 秒前に発火）/ 30分案内 / 定時メッセージ（001/002 交互）
   - カーチャンク検知応答 / 重複応答防止 / イントロ・アウトロ結合
+  - 🔴 watchdog 擬似終端救済（SFR 中継で end が落ちた送信を拾う）
   - 絶対時刻同期の UDP 送信（ドリフト補正）
   - ログローテーション対応 / Graceful shutdown
 
@@ -112,8 +106,8 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.64 (daemon, based on V1.63)
- Last Updated: 2026-06-06
+ Document Version: V1.67 (daemon, V1.64 + V1.65 watchdog pseudo-end)
+ Last Updated: 2026-06-23
 ================================================================================
 """
 
@@ -180,6 +174,21 @@ GAP_AFTER_INTRO_SEC = 0.5
 
 # 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
 STARTUP_ANNOUNCE_DELAY_SEC = 5.0
+
+# ============================================================
+# 🔴 V1.67: watchdog 擬似終端の設定（V1.65 から移植）
+# ============================================================
+# SFR 中継で終端パケットが落ち、end of voice transmission が記録されず
+# watchdog で打ち切られる送信を、擬似終端として拾ってカーチャンク判定に流すか。
+# False にすると V1.64 と完全に同一の挙動（end でのみ判定）に戻る。
+WATCHDOG_PSEUDO_END_ENABLED = True
+
+# watchdog 擬似終端のロス上限（%）。watchdog 行の packet loss がこの値を超える
+# 送信は「壊れていて用をなさない受信」とみなし、擬似終端として拾わない。
+# 例) 75 のとき: 75% 以下 → 救済 / 76〜100% loss → 無視。
+# 実ログの watchdog ロス分布（31〜75%）に合わせ既定 75。
+# さらに全部拾うなら 100（ロスガード事実上無効）、厳しくするなら 30〜50。
+WATCHDOG_MAX_LOSS_PCT = 75
 
 # ============================================================
 # グローバル状態 / 設定値
@@ -513,6 +522,36 @@ def _start_worker(mode, val, extra=None):
 
 
 # ============================================================
+# 🔴 V1.67: 受信時間に基づくカーチャンク判定/抑制（共通ロジック / V1.65 から移植）
+# ============================================================
+def _handle_rx_duration(cs, dur, source="eot"):
+    """受信時間 dur(秒) に基づいてカーチャンク判定・抑制を行う。
+    end of voice transmission 経路と watchdog 擬似終端経路で共有する。
+
+    source : "eot"      = 正常終端（received network end of voice transmission）
+             "watchdog" = 擬似終端（network watchdog has expired）
+             ログ表記の区別にのみ使う（挙動は同一）。
+    """
+    global suppress_until
+    now = time.monotonic()
+    tag = "" if source == "eot" else " (watchdog)"
+
+    if RX_DURATION_MIN_SEC <= dur < RX_DURATION_MAX_SEC:
+        if suppress_until - now <= 0:
+            logger.info(f"receive:Kerchunk detected{tag}: {cs} ({dur:.1f}s) trigger")
+            _start_worker("kerchunk", cs, extra=dur)
+        else:
+            remain = suppress_until - now
+            logger.info(f"receive:suppressed{tag}: {cs} ({dur:.1f}s, remaining {remain:.1f}s)")
+    elif dur >= RX_DURATION_MAX_SEC:
+        suppress_until = now + SUPPRESS_DURATION_SEC
+        logger.info(f"receive:Normal QSO detected{tag}: {cs} ({dur:.1f}s)")
+        logger.info(f"process:suppress start ({SUPPRESS_DURATION_SEC:.1f}s)　{cs}")
+    else:
+        logger.info(f"receive:Too short, ignored{tag}: {cs} ({dur:.1f}s, min={RX_DURATION_MIN_SEC}s)")
+
+
+# ============================================================
 # 🔴 起動アナウンス（V1.62）
 # ============================================================
 def _send_startup_announcement():
@@ -680,7 +719,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.64 (daemon, based on V1.63) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.67 (daemon, V1.64 + V1.65 watchdog pseudo-end) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -693,6 +732,12 @@ def _log_startup_info():
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
     _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
     logger.info(f"  Time signal mode  : {TIME_SIGNAL_MODE} ({_ts_desc}, lead {TIME_SIGNAL_LEAD_SEC}s)")
+    # 🔴 V1.67: watchdog 擬似終端の状態を表示
+    if WATCHDOG_PSEUDO_END_ENABLED:
+        logger.info(f"  Watchdog rescue   : ON  (watchdog を擬似終端として拾う / "
+                    f"loss <= {WATCHDOG_MAX_LOSS_PCT}% のみ救済)")
+    else:
+        logger.info(f"  Watchdog rescue   : OFF (end of voice transmission のみで判定)")
     if NIGHT_MODE_ENABLED:
         resume_hour = (NIGHT_END_HOUR + 1) % 24
         ts_suppress_start = (NIGHT_START_HOUR + 1) % 24   # 時報の抑制開始
@@ -789,6 +834,11 @@ def monitor_and_reply():
     start_pattern = re.compile(r"received network voice header from ([A-Z0-9/\-]+)")
     end_pattern = re.compile(r"received network end of voice transmission")
     ts_pattern = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})")
+    # 🔴 V1.67: watchdog 行から「経過秒」と「packet loss(%)」を抽出する（V1.65 から移植）。
+    #   例) "network watchdog has expired, 2.6 seconds, 40% packet loss, BER: 4.0%"
+    wd_pattern = re.compile(
+        r"network watchdog has expired, ([\d.]+) seconds, (\d+)% packet loss"
+    )
 
     current_path = None
     while not current_path and not should_exit:
@@ -851,29 +901,45 @@ def monitor_and_reply():
                         last_start_dt = datetime.strptime(m_t.group(1), "%Y-%m-%d %H:%M:%S.%f")
                 continue
 
+            # ---- 正常終端（received network end of voice transmission）----
             if end_pattern.search(line) and last_cs is not None and last_start_dt is not None:
                 m_t = ts_pattern.search(line)
                 if m_t:
                     end_dt = datetime.strptime(m_t.group(1), "%Y-%m-%d %H:%M:%S.%f")
                     dur = (end_dt - last_start_dt).total_seconds()
-                    now = time.monotonic()
-
-                    if RX_DURATION_MIN_SEC <= dur < RX_DURATION_MAX_SEC:
-                        if suppress_until - now <= 0:
-                            logger.info(f"receive:Kerchunk detected: {last_cs} ({dur:.1f}s) trigger")
-                            _start_worker("kerchunk", last_cs, extra=dur)
-                        else:
-                            remain = suppress_until - now
-                            logger.info(f"receive:suppressed: {last_cs} ({dur:.1f}s, remaining {remain:.1f}s)")
-                    elif dur >= RX_DURATION_MAX_SEC:
-                        suppress_until = now + SUPPRESS_DURATION_SEC
-                        logger.info(f"receive:Normal QSO detected: {last_cs} ({dur:.1f}s)")
-                        logger.info(f"process:suppress start ({SUPPRESS_DURATION_SEC:.1f}s)　{last_cs}")
-                    else:
-                        logger.info(f"receive:Too short, ignored: {last_cs} ({dur:.1f}s, min={RX_DURATION_MIN_SEC}s)")
+                    _handle_rx_duration(last_cs, dur, source="eot")
 
                 last_cs = None
                 last_start_dt = None
+                continue
+
+            # ---- 🔴 V1.67: 擬似終端（network watchdog has expired）----（V1.65 から移植）
+            # SFR 中継で終端パケットが落ち、end of voice transmission が記録され
+            # なかった送信を救済する。voice header を受けた後の watchdog のみ対象。
+            if WATCHDOG_PSEUDO_END_ENABLED:
+                m_wd = wd_pattern.search(line)
+                if m_wd and last_cs is not None and last_start_dt is not None:
+                    wd_dur = float(m_wd.group(1))
+                    wd_loss = int(m_wd.group(2))
+
+                    if wd_loss > WATCHDOG_MAX_LOSS_PCT:
+                        # ロスが大きすぎる＝壊れた受信。救済しない。
+                        logger.info(
+                            f"receive:watchdog ignored (high loss): "
+                            f"{last_cs} ({wd_dur:.1f}s, {wd_loss}% loss "
+                            f"> {WATCHDOG_MAX_LOSS_PCT}%)")
+                    else:
+                        # ロスが許容範囲。擬似終端として通常の判定に流す。
+                        # 注: wd_dur は MMDVM の watchdog タイムアウト(約2s)を
+                        #     含むため、真のキーダウン時間より長めに出る。
+                        logger.info(
+                            f"receive:watchdog pseudo-end: "
+                            f"{last_cs} ({wd_dur:.1f}s, {wd_loss}% loss)")
+                        _handle_rx_duration(last_cs, wd_dur, source="watchdog")
+
+                    last_cs = None
+                    last_start_dt = None
+                    continue
 
     except Exception as e:
         logger.error(f"monitor_and_reply error: {e}")
