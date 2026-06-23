@@ -3,10 +3,22 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.68 —
+ — JJ2YYK デジピーター自動応答システム  V1.69 —
 
- 本ファイルは V1.67（V1.64 + V1.65 watchdog 擬似終端）をベースに、
- 送出音量ゲイン（任意キー TX_GAIN）を追加したもの。
+ 本ファイルは V1.68（V1.67 + 送出音量ゲイン TX_GAIN）に、機械可読の固定
+ バージョン行 __version__ を追加したもの。機能は V1.68 と同一。
+
+【V1.69 での変更点（機械可読バージョン __version__ の追加）】
+  - 🔵 ファイル冒頭付近（docstring 直後）に __version__ = "V1.69" を新設。
+    ダッシュボード app.py（V2.75〜）がこの固定行を最優先で参照してバージョンを
+    表示する。docstring（人間向けの "Document Version:"）が長くなっても、版表示が
+    取りこぼされないようにするための恒久対策。
+    背景: app.py V2.73〜V2.74 は bot 先頭 4000 バイトだけを読んで版を抽出して
+    いたが、V1.68 で docstring が伸び "Document Version:" 行が 9600 バイト超に
+    なり、ダッシュボードのバージョン表示が空になった。app.py 側は全体読みの
+    フォールバックを入れて堅牢化（V2.75）。bot 側は本固定行で確実性を担保する。
+  - 機能面は V1.68 と完全に同一（watchdog 擬似終端 + TX_GAIN）。挙動変更なし。
+  - 版を更新する際は __version__ と "Document Version:" を必ず一致させること。
 
 【V1.68 での変更点（送出音量ゲイン TX_GAIN の追加）】
   - 🔴 bot が送出する音声すべて（カーチャンクID / 時報 / 30分案内 / 起動・ナイト
@@ -134,10 +146,18 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.68 (daemon, V1.67 + TX_GAIN output volume)
+ Document Version: V1.69 (daemon, V1.68 + machine-readable __version__)
  Last Updated: 2026-06-23
 ================================================================================
 """
+
+# ============================================================
+# 🔵 機械可読バージョン（固定行 / ダッシュボード app.py が最優先で参照）
+# ============================================================
+# この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
+# が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
+# 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
+__version__ = "V1.69"
 
 import os
 import sys
@@ -801,7 +821,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.68 (daemon, V1.67 + TX_GAIN output volume) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.69 (daemon, V1.68 + machine-readable __version__) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
