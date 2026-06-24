@@ -1,7 +1,7 @@
-# dvswitch_bot.py ソフトウェア仕様書（V1.62）
+# dvswitch_bot.py ソフトウェア仕様書（V1.73）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**バージョン:** V1.62（V1.61 ベース／起動アナウンス機能を追加）
+**バージョン:** V1.73（時刻案内モード・送出音量・カスタム音声に対応）
 **役割:** MMDVM_Bridge のログを監視し、カーチャンク自動応答・時報・定時メッセージを
 USRP プロトコルで送出する常駐デーモン。
 
@@ -103,6 +103,15 @@ USRP プロトコルで送出する常駐デーモン。
 | `TIME_OUTRO_WAV` | `time_outro.wav`（定義のみ。現行ロジックで未使用） |
 | `MSG_FILES` | `[001.wav, 002.wav]`（定時メッセージ） |
 
+### カスタム WAV（V1.73〜）
+
+標準 WAV の代わりに利用者が用意する差し替え音声。`USE_CSTM_*` が True かつ実ファイルが存在するときだけ使い、無ければ標準へフォールバックする（`_resolve_wav` 参照）。
+
+| 定数 | ファイル |
+|---|---|
+| `CSTM_INTRO_WAV` | `cstm_intro.wav`（intro の差し替え。3か所共通） |
+| `CSTM_MSG_FILES` | `[cstm_001.wav, cstm_002.wav]`（001/002 の差し替え） |
+
 ### 一時ファイル（PID 付き・/dev/shm）
 
 | 定数 | パス |
@@ -156,6 +165,20 @@ PID を付けるのは、複数プロセスや再起動時のファイル衝突�
 | `NIGHT_START_HOUR` | int | `0〜23` |
 | `NIGHT_END_HOUR` | int | `0〜23` |
 
+### 任意キー（`REQUIRED_KEYS` に含めない・後方互換）
+
+未設定でも起動できる任意キー。旧設定ファイルとの互換のため必須化していない。
+
+| キー | 型 | 既定 | 意味 |
+|---|---|---|---|
+| `TIME_SIGNAL_MODE` | int | 1 | 時刻案内モード（0=なし / 1=毎正時 / 2=毎正時+毎30分）。V1.64〜 |
+| `TX_GAIN` | float | 1.0 | 送出音量の線形倍率（0.0超〜5.0以下）。不正値は 1.0 にフォールバック。V1.68〜 |
+| `USE_CSTM_INTRO` | bool | false | intro にカスタム音声を使う。V1.73〜 |
+| `USE_CSTM_001` | bool | false | 001 にカスタム音声を使う。V1.73〜 |
+| `USE_CSTM_002` | bool | false | 002 にカスタム音声を使う。V1.73〜 |
+
+> 任意キーは検証で欠落してもエラーにせず既定値を採用する。`USE_CSTM_*` は bool 以外（不正値含む）を安全側に false（標準）として扱い、起動は止めない。
+
 ### 検証段階（順に実施し、いずれか失敗で即終了）
 
 1. ファイル存在確認（無ければ終了）
@@ -193,6 +216,7 @@ PID を付けるのは、複数プロセスや再起動時のファイル衝突�
 | `_fmt(tag, action, target, extra)` | ログ行を整形 | 整形済み文字列 |
 | `_fatal_config(msg)` | 設定エラーを出力し `exit(1)` | プロセス終了 |
 | `_load_config()` | JSON 読込・検証・グローバル反映 | 不正なら `exit(1)` |
+| `_resolve_wav(use_cstm, cstm_path, fixed_path, label)` | カスタム使用フラグと実ファイルの有無から実際に再生するパスを決める（V1.73） | カスタム有効＆存在→cstm、無ければ標準＋警告ログ。送出のたびに判定 |
 | `_handle_signal(signum, frame)` | SIGTERM/SIGINT で `should_exit=True` | 終了開始 |
 | `send_usrp_wav_with_padding(wav_path)` | WAV を USRP 送信（前後パディング＋絶対時刻同期） | UDP 送信。末尾で PTT OFF |
 | `_is_night_suppressed(hour)` | 時報の抑制判定 | bool |
@@ -485,12 +509,13 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 | **辞書パス** | `DICT_PATH` は `open-jtalk/` を含む正しいパスであること |
 | **ナイトモードの2関数** | 時報用と定時用で抑制範囲が違う。片方だけ直すと不整合になる |
 | **time_outro は未使用** | 定数は残るが現行ロジックで参照しない。将来再利用のための残置 |
+| **カスタム音声のフォールバック** | `_resolve_wav` は送出のたびに実ファイルの有無を見る。ON でもファイルが無ければ標準で鳴り、送出は止まらない。intro のカスタムはカーチャンク応答・起動・ナイトの3か所すべてに連動する |
 | **ログ時刻はタイムスタンプ差** | 受信時間はログの時刻差で測る。MMDVM のフレーム数長とは別物 |
 | **ログ選択はファイル名ベース** | `_find_latest_log()` は `key=os.path.basename`。`getctime` に戻すと日跨ぎで旧ログに化ける |
 | **起動アナウンスは直接実行** | `_send_startup_announcement` は `is_talking`/`_start_worker` を経由しない。組み込み方を変えるとロック競合を招きうる。遅延は `STARTUP_ANNOUNCE_DELAY_SEC`（実値 2.0、コメントは 7.0 の食い違いに注意） |
 
 ---
 
-*dvswitch_bot.py ソフトウェア仕様書 V1.62*
+*dvswitch_bot.py ソフトウェア仕様書 V1.73*
 *対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（daemon, based on V1.60）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
