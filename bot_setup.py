@@ -21,6 +21,11 @@
    NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
    NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
    TX_GAIN             : 送出音量の倍率（1.0=等倍, 0.0超〜5.0以下。下げる方向が主用途）
+   USE_CSTM_INTRO      : intro にカスタム音声 cstm_intro.wav を使う（true/false）
+   USE_CSTM_001        : 001 にカスタム音声 cstm_001.wav を使う（true/false）
+   USE_CSTM_002        : 002 にカスタム音声 cstm_002.wav を使う（true/false）
+                         ※カスタム選択時にファイルが無ければ本体が標準へ自動フォールバック
+                         ※カスタムファイルは利用者が /opt/dvswitch_bot/ 直下に用意する
 
 【配置】
    /opt/dvswitch_bot/bin/bot_setup.py
@@ -41,7 +46,7 @@ import json
 BOT_DIR = "/opt/dvswitch_bot"
 CONFIG_PATH = f"{BOT_DIR}/bot_config.json"
 
-# デフォルト値（V1.60 のコード初期値に準拠 / TX_GAIN は V1.68 で追加）
+# デフォルト値（V1.60 のコード初期値に準拠 / TX_GAIN は V1.68 / USE_CSTM_* は V1.73）
 DEFAULTS = {
     "RX_DURATION_MIN_SEC": 0.5,
     "RX_DURATION_MAX_SEC": 3.9,
@@ -51,6 +56,9 @@ DEFAULTS = {
     "NIGHT_START_HOUR": 22,
     "NIGHT_END_HOUR": 5,
     "TX_GAIN": 1.0,
+    "USE_CSTM_INTRO": False,
+    "USE_CSTM_001": False,
+    "USE_CSTM_002": False,
 }
 
 REQUIRED_KEYS = list(DEFAULTS.keys())
@@ -60,10 +68,13 @@ REQUIRED_KEYS = list(DEFAULTS.keys())
 TX_GAIN_MIN = 0.0   # これより大きいこと
 TX_GAIN_MAX = 5.0   # これ以下
 
-# TX_GAIN は任意キー（既定あり）。本体 dvswitch_bot.py と同様に「必須」とはしない
-# ため、既存ファイルの欠落チェック対象から外す（旧 config を不正と誤判定しない）。
-# DEFAULTS には残すので、新規作成・保存時は常に TX_GAIN を含めて書き出す。
-REQUIRED_KEYS = [k for k in DEFAULTS if k != "TX_GAIN"]
+# 任意キー（既定あり）。本体 dvswitch_bot.py と同様に「必須」とはしないため、
+# 既存ファイルの欠落チェック対象から外す（旧 config を不正と誤判定しない）。
+# DEFAULTS には残すので、新規作成・保存時は常にこれらを含めて書き出す。
+#   TX_GAIN        : V1.68 で追加
+#   USE_CSTM_*     : V1.73 で追加（intro/001/002 のカスタム音声選択）
+_OPTIONAL_KEYS = ("TX_GAIN", "USE_CSTM_INTRO", "USE_CSTM_001", "USE_CSTM_002")
+REQUIRED_KEYS = [k for k in DEFAULTS if k not in _OPTIONAL_KEYS]
 
 
 # ------------------------------------------------------------
@@ -120,6 +131,12 @@ def validate(cfg):
             if not (TX_GAIN_MIN < g <= TX_GAIN_MAX):
                 errors.append(
                     f"TX_GAIN は {TX_GAIN_MIN} 超 〜 {TX_GAIN_MAX} 以下（現在 {g}）")
+
+    # USE_CSTM_* は任意キー。在る場合のみ bool かを確認する（本体側は不正なら
+    # False にフォールバックする最後の砦を持つが、書き出しツールは入口で弾く）。
+    for k in ("USE_CSTM_INTRO", "USE_CSTM_001", "USE_CSTM_002"):
+        if k in cfg and not isinstance(cfg[k], bool):
+            errors.append(f"{k} は true / false（現在 {cfg[k]!r}）")
 
     return errors
 
@@ -316,6 +333,23 @@ def do_edit():
     print("  目安: 0.8 控えめ / 0.7 はっきり小さく / 0.5 かなり小さく")
     cfg["TX_GAIN"] = ask_gain("送出音量 (倍率 0.0超〜5.0以下)", base.get("TX_GAIN", 1.0))
 
+    # --- カスタム音声の選択（V1.73）---
+    # intro / 001 / 002 を個別に「カスタム(cstm)を使う / 標準(fixed)」で選ぶ。
+    # カスタムを選んでも実ファイル（cstm_intro.wav 等）が無ければ、本体側が
+    # 標準にフォールバックして送出を続ける（誤設定で止まらない）。
+    # カスタムファイルは利用者が自己責任で /opt/dvswitch_bot/ 直下に用意する。
+    print("\n--- カスタム音声（差し替え）---")
+    print("  intro / 001 / 002 を個別に、標準 or カスタムに切り替えできます。")
+    print("  カスタム選択時に対応ファイルが無ければ標準で鳴ります（自動フォールバック）。")
+    print("  カスタムファイル: cstm_intro.wav / cstm_001.wav / cstm_002.wav")
+    print("    intro …… カーチャンク応答・起動・ナイトの名乗りに共通で効きます")
+    cfg["USE_CSTM_INTRO"] = ask_bool("intro にカスタム音声(cstm_intro.wav)を使う？",
+                                     base.get("USE_CSTM_INTRO", False))
+    cfg["USE_CSTM_001"] = ask_bool("001 にカスタム音声(cstm_001.wav)を使う？",
+                                   base.get("USE_CSTM_001", False))
+    cfg["USE_CSTM_002"] = ask_bool("002 にカスタム音声(cstm_002.wav)を使う？",
+                                   base.get("USE_CSTM_002", False))
+
     # 確認表示
     ts = cfg["TIME_SIGNAL_MODE"]
     ts_label = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}[ts]
@@ -345,6 +379,9 @@ def do_edit():
     _g = cfg["TX_GAIN"]
     _g_note = "等倍/変更なし" if _g == 1.0 else ("減衰" if _g < 1.0 else "増幅(クリップ注意)")
     print(f"   送出音量       : {_g}（{_g_note}）")
+    _cstm = lambda b: "カスタム" if b else "標準"
+    print(f"   カスタム音声   : intro={_cstm(cfg['USE_CSTM_INTRO'])} "
+          f"001={_cstm(cfg['USE_CSTM_001'])} 002={_cstm(cfg['USE_CSTM_002'])}")
     print("----------------------------------------------------------")
 
     # 検証
