@@ -81,8 +81,10 @@ flowchart LR
 |---|---|---|
 | `BOT_DIR` | `/opt/dvswitch_bot` | 設定の基準ディレクトリ |
 | `CONFIG_PATH` | `{BOT_DIR}/bot_config.json` | 出力する設定ファイル |
-| `DEFAULTS` | 下表6項目 | デフォルト値（V1.60 のコード初期値準拠） |
-| `REQUIRED_KEYS` | `list(DEFAULTS.keys())` | 必須キー一覧 |
+| `DEFAULTS` | 下記11項目 | デフォルト値（V1.60 初期値 ＋ TIME_SIGNAL_MODE/TX_GAIN/USE_CSTM_*） |
+| `_OPTIONAL_KEYS` | `(TX_GAIN, USE_CSTM_INTRO, USE_CSTM_001, USE_CSTM_002)` | 任意キー（欠落可。V1.68/V1.73） |
+| `REQUIRED_KEYS` | `DEFAULTS から _OPTIONAL_KEYS を除いたもの` | 必須キー一覧 |
+| `TX_GAIN_MIN / TX_GAIN_MAX` | `0.0 / 5.0` | TX_GAIN の有効範囲（下限超〜上限以下） |
 
 ### DEFAULTS
 
@@ -90,10 +92,15 @@ flowchart LR
 {
   "RX_DURATION_MIN_SEC": 0.5,
   "RX_DURATION_MAX_SEC": 3.9,
+  "TIME_SIGNAL_MODE": 1,
   "ANNOUNCE_FREQ": 2,
   "NIGHT_MODE_ENABLED": True,
   "NIGHT_START_HOUR": 22,
   "NIGHT_END_HOUR": 5,
+  "TX_GAIN": 1.0,
+  "USE_CSTM_INTRO": False,
+  "USE_CSTM_001": False,
+  "USE_CSTM_002": False,
 }
 ```
 
@@ -109,6 +116,11 @@ flowchart LR
 | `NIGHT_MODE_ENABLED` | bool | ナイトモード有効 | True | 厳密に bool 型 |
 | `NIGHT_START_HOUR` | int | ナイトモード開始 N1 | 22 | `0〜23` |
 | `NIGHT_END_HOUR` | int | ナイトモード終了 N2 | 5 | `0〜23` |
+| `TIME_SIGNAL_MODE` | int | 時刻案内モード（0/1/2） | 1 | `0 / 1 / 2`。V1.64〜 |
+| `TX_GAIN` | float | 送出音量の線形倍率 | 1.0 | `0.0 超〜5.0 以下`。任意キー。V1.68〜 |
+| `USE_CSTM_INTRO` | bool | intro にカスタム音声を使う | False | bool。任意キー。V1.73〜 |
+| `USE_CSTM_001` | bool | 001 にカスタム音声を使う | False | bool。任意キー。V1.73〜 |
+| `USE_CSTM_002` | bool | 002 にカスタム音声を使う | False | bool。任意キー。V1.73〜 |
 
 > ナイトモードを OFF にした場合も、`NIGHT_START_HOUR` / `NIGHT_END_HOUR` には
 > 範囲内の値（既定値）を保持して保存する。本体の検証が全キーを要求するため、
@@ -240,10 +252,15 @@ os.replace(tmp, CONFIG_PATH)   # 原子的に置き換え
 {
   "RX_DURATION_MIN_SEC": 0.5,
   "RX_DURATION_MAX_SEC": 3.9,
+  "TIME_SIGNAL_MODE": 1,
   "ANNOUNCE_FREQ": 2,
   "NIGHT_MODE_ENABLED": true,
   "NIGHT_START_HOUR": 22,
-  "NIGHT_END_HOUR": 5
+  "NIGHT_END_HOUR": 5,
+  "TX_GAIN": 1.0,
+  "USE_CSTM_INTRO": false,
+  "USE_CSTM_001": false,
+  "USE_CSTM_002": false
 }
 ```
 
@@ -254,7 +271,8 @@ os.replace(tmp, CONFIG_PATH)   # 原子的に置き換え
 | 項目 | 注意 |
 |---|---|
 | **本体と検証を揃える** | `validate()` は本体 `_load_config()` と同一基準。片方だけ変えると「ツールではOKなのに本体が起動拒否」になる |
-| **キーを増やすとき** | `DEFAULTS` に追加すれば `REQUIRED_KEYS` も自動で増える。本体側の必須キー・検証も同時に更新 |
+| **キーを増やすとき** | `DEFAULTS` に追加。必須にするなら通常キー、欠落を許すなら `_OPTIONAL_KEYS` に入れる（`REQUIRED_KEYS` は差分で算出）。本体側の検証も同時に更新 |
+| **カスタム音声キー** | `USE_CSTM_*` は任意キー。bool 以外は本体側が安全に false 扱い。対応する `cstm_*.wav` が無ければ本体が標準へフォールバック |
 | **原子的書き込みを崩さない** | `save_config` の tmp→`os.replace` は設定破損防止。直接 open して書く方式に変えない |
 | **OFF でも N1/N2 を保持** | ナイトモード OFF でも範囲内の値を入れる。本体が全キーを検証するため |
 | **bool は厳密判定** | `NIGHT_MODE_ENABLED` は `isinstance(..., bool)`。1/0 や "true" 文字列は不可 |
