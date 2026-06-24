@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.83
+ app.py  V2.84
 
  変更履歴:
    V2.0  初版リリース
@@ -135,6 +135,9 @@
          の2カード縦積み（display:grid;gap:12px のラッパー）構成にした。
          チェックボックスの name 属性（use_cstm_*）は変更なしのため、保存ルート
          （bot_config / save_all）は無変更。表示位置の変更のみ。
+   V2.84 🔵 セクションタイトル（.section-title）の文字と下線の間隔を詰めた。
+         padding-bottom を 4px → 1px に変更。下線と次要素の間隔（margin-bottom:10px）
+         は据え置き。見た目のみの微調整。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -887,7 +890,7 @@ margin-bottom:6px;border-left:4px solid;
     color:var(--muted);
     font-family:arial,sans-serif;
     letter-spacing:.05em;
-    margin-bottom:10px;padding-bottom:4px;
+    margin-bottom:10px;padding-bottom:1px;
     border-bottom:1px solid var(--border2);
   }
 
@@ -926,7 +929,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.83</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.84</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1206,7 +1209,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.83
+  OpenCCVoice for DVSwitch Web Dashboard V2.84
 </div>
 </form>
 
