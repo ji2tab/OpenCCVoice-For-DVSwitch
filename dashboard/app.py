@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.82
+ app.py  V2.83
 
  変更履歴:
    V2.0  初版リリース
@@ -130,6 +130,11 @@
          チェックボックスは view-mode で自動グレーアウト（編集モードでのみ操作可）。
          任意キーのため常に書き出す。旧 bot は未知キーを無視するので無影響。
          実ファイル(cstm_*.wav)が無ければ本体が標準へ自動フォールバックする。
+   V2.83 🔵 「カスタム音声」を Bot設定カードから独立カードへ分離し、中央カラムの
+         DVSwitch設定カードの下に配置した。中央セルを「DVSwitch設定 + カスタム音声」
+         の2カード縦積み（display:grid;gap:12px のラッパー）構成にした。
+         チェックボックスの name 属性（use_cstm_*）は変更なしのため、保存ルート
+         （bot_config / save_all）は無変更。表示位置の変更のみ。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -921,7 +926,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.82</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.83</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1010,26 +1015,6 @@ margin-bottom:6px;border-left:4px solid;
           <input type="number" name="tx_gain" step="0.05" min="0.05" max="5.0"
             value="{{ bot_cfg.get('TX_GAIN', 1.0) }}" required>
         </div>
-        <div class="section-title">カスタム音声（差し替え）</div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">
-          ON にすると標準の代わりに cstm_*.wav を再生します。ファイルが無ければ
-          自動的に標準音声で鳴ります（要: 利用者がファイルを用意）。
-        </div>
-        <div class="toggle-row">
-          <input type="checkbox" name="use_cstm_intro" id="cstm_intro_chk"
-            {% if bot_cfg.get('USE_CSTM_INTRO', False) %}checked{% endif %}>
-          <label class="toggle-label" for="cstm_intro_chk">intro（名乗り）に cstm_intro.wav を使う</label>
-        </div>
-        <div class="toggle-row">
-          <input type="checkbox" name="use_cstm_001" id="cstm_001_chk"
-            {% if bot_cfg.get('USE_CSTM_001', False) %}checked{% endif %}>
-          <label class="toggle-label" for="cstm_001_chk">001 に cstm_001.wav を使う</label>
-        </div>
-        <div class="toggle-row">
-          <input type="checkbox" name="use_cstm_002" id="cstm_002_chk"
-            {% if bot_cfg.get('USE_CSTM_002', False) %}checked{% endif %}>
-          <label class="toggle-label" for="cstm_002_chk">002 に cstm_002.wav を使う</label>
-        </div>
         <div class="section-title">ナイトモード</div>
         <div class="toggle-row">
           <input type="checkbox" name="night_enabled" id="night_chk"
@@ -1052,6 +1037,8 @@ margin-bottom:6px;border-left:4px solid;
       </div>
   </div>
 
+  <!-- 🔵 V2.83: 中央セル＝DVSwitch設定 + カスタム音声 の2カード縦積み -->
+  <div style="display:grid;gap:12px;align-content:start">
   <div class="card">
     <div class="card-head">DVSwitch 設定 — ini ファイル</div>
     <div class="card-body">
@@ -1089,6 +1076,35 @@ margin-bottom:6px;border-left:4px solid;
         </div>
       </div>
   </div>
+
+  <!-- 🔵 V2.83: カスタム音声カード（DVSwitch設定の下・中央セル内） -->
+  <div class="card">
+    <div class="card-head">カスタム音声 — 差し替え</div>
+    <div class="card-body">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+          ON にすると標準の代わりに cstm_*.wav を再生します。ファイルが無ければ
+          自動的に標準音声で鳴ります（要: 利用者がファイルを用意）。
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" name="use_cstm_intro" id="cstm_intro_chk"
+            {% if bot_cfg.get('USE_CSTM_INTRO', False) %}checked{% endif %}>
+          <label class="toggle-label" for="cstm_intro_chk">intro（名乗り）に cstm_intro.wav を使う</label>
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" name="use_cstm_001" id="cstm_001_chk"
+            {% if bot_cfg.get('USE_CSTM_001', False) %}checked{% endif %}>
+          <label class="toggle-label" for="cstm_001_chk">001 に cstm_001.wav を使う</label>
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" name="use_cstm_002" id="cstm_002_chk"
+            {% if bot_cfg.get('USE_CSTM_002', False) %}checked{% endif %}>
+          <label class="toggle-label" for="cstm_002_chk">002 に cstm_002.wav を使う</label>
+        </div>
+    </div>
+  </div>
+
+  </div>
+  <!-- /中央セル -->
 
   <!-- MMDVM Info -->
   <div class="card">
@@ -1190,7 +1206,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.82
+  OpenCCVoice for DVSwitch Web Dashboard V2.83
 </div>
 </form>
 
