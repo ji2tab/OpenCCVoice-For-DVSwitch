@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.77
+ app.py  V2.78
 
  変更履歴:
    V2.0  初版リリース
@@ -97,6 +97,16 @@
          Analog_Bridge.ini の実値を表示するようにした。dvs は既に index() で
          テンプレートへ渡しているため Python 側の追加は不要。サーバー側
          レンダリングのため値の反映は保存→リロード時（ポーリング非追従）。表示のみ。
+   V2.78 🔵 3カラムの下に「読み上げ内容」カードを追加（wav_source.json 表示）。
+         create_wav.sh（V1.0〜）が記録する各WAVの実際の読み上げテキストを、
+         3カラム(grid3)の下に幅いっぱいの表示専用ブロックとして並べる。
+         get_wav_source() で wav_source.json を読み、texts の6項目（fixed_intro/
+         fixed_outro/time_intro/001/002/time_outro）を「ファイル名／用途／読み上げ
+         内容」の表で表示する。生成日時も併記。
+         本ブロックは input/select ではなく表示テキストのため、編集モードに
+         切り替えてもグレー系のまま編集不可で、フォーム送信・保存・再起動の対象に
+         一切ならない（save_all 等の保存ルートは無変更）。ファイルが無い場合は
+         案内文を表示する。閲覧のみで bot_config.json には無関係。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -113,6 +123,7 @@ from flask import Flask, render_template_string, request, jsonify, redirect, url
 # qqq パス設定 qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 BOT_CONFIG   = "/opt/dvswitch_bot/bot_config.json"
 CHANGE_LOG   = "/opt/dvswitch_bot/bot_change_log.json"
+WAV_SOURCE   = "/opt/dvswitch_bot/wav_source.json"
 MMDVM_INI    = "/opt/MMDVM_Bridge/MMDVM_Bridge.ini"
 DVSWITCH_INI = "/opt/MMDVM_Bridge/DVSwitch.ini"
 ANALOG_INI   = "/opt/Analog_Bridge/Analog_Bridge.ini"
@@ -393,6 +404,7 @@ def index():
         bot_version=get_bot_version(),
         dvs=get_dvs_values(),
         info=get_info_values(),
+        wav_source=get_wav_source(),
         backups=list_backups(),
         change_log=change_log,
         msg=_msg,
@@ -405,6 +417,41 @@ def get_dvs_values():
         "mmdvm_id": get_ini_value(MMDVM_INI, "Id"),
         "password": get_ini_value(MMDVM_INI, "Password"),
         "txtg":     get_ini_value(ANALOG_INI, "txTg"),
+    }
+
+# 🔵 V2.78: wav_source.json（create_wav.sh が記録する読み上げソース）を読み、
+# 各WAVが実際に喋る内容を表示用に整形して返す。閲覧専用。
+# create_wav.sh だけが書き込み、ダッシュボードは読むだけ（bot_config.json には無関係）。
+def get_wav_source():
+    """wav_source.json を読み、各WAVの読み上げテキストと生成時刻を返す。
+    ファイルが無い/壊れている場合は空表示用の辞書を返す（存在フラグ exists=False）。"""
+    data = read_json(WAV_SOURCE)
+    if not isinstance(data, dict) or not data:
+        return {"exists": False, "generated_at": "", "entries": []}
+    texts = data.get("texts", {})
+    if not isinstance(texts, dict):
+        texts = {}
+    # WAVファイル名と読み上げ内容の対応（表示順を固定）。
+    # time_outro は現行 bot では未使用だが、記録として併せて表示する。
+    order = [
+        ("fixed_intro.wav", "fixed_intro", "カーチャンク応答イントロ"),
+        ("fixed_outro.wav", "fixed_outro", "カーチャンク応答アウトロ"),
+        ("time_intro.wav",  "time_intro",  "時報イントロ"),
+        ("001.wav",         "001",         "定時メッセージ1"),
+        ("002.wav",         "002",         "定時メッセージ2"),
+        ("time_outro.wav",  "time_outro",  "時報アウトロ（現行 bot 未使用）"),
+    ]
+    entries = []
+    for fname, key, role in order:
+        entries.append({
+            "file": fname,
+            "role": role,
+            "text": texts.get(key, ""),
+        })
+    return {
+        "exists": True,
+        "generated_at": data.get("generated_at", ""),
+        "entries": entries,
     }
 
 def get_info_values():
@@ -808,6 +855,31 @@ margin-bottom:6px;border-left:4px solid;
     margin-bottom:10px;padding-bottom:4px;
     border-bottom:1px solid var(--border2);
   }
+
+  /* 🔵 V2.78: 読み上げ内容（wav_source.json）の表示専用ブロック。
+     入力欄ではなく表示テキストなので、編集モードでも常にグレー系のまま。
+     3カラム(grid3)の下に幅いっぱいで置く。保存・送信の対象ではない。 */
+  .wav-src-table{width:100%;border-collapse:collapse;font-size:11pt}
+  .wav-src-table th,.wav-src-table td{
+    padding:6px 10px;border-bottom:1px solid var(--border2);text-align:left;
+    vertical-align:top;
+  }
+  .wav-src-table th{
+    background:#ededed;color:var(--muted);font-weight:bold;white-space:nowrap;
+  }
+  .wav-src-table tr:last-child td{border-bottom:none}
+  .wav-src-file{
+    font-family:var(--mono);color:var(--orange2);white-space:nowrap;
+  }
+  .wav-src-role{color:var(--muted);white-space:nowrap}
+  /* 読み上げテキスト本体：グレーアウト表示（編集不可であることを視覚化） */
+  .wav-src-text{
+    font-family:var(--mono);color:#888;
+    background:#e8e8e8;border:1px solid var(--border);border-radius:4px;
+    padding:4px 8px;word-break:break-all;
+  }
+  .wav-src-empty{color:#aaa;font-style:italic}
+  .wav-src-meta{color:var(--muted);font-size:10px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -815,7 +887,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.77</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.78</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1018,10 +1090,52 @@ margin-bottom:6px;border-left:4px solid;
 
 </div>
 
+<!-- 🔵 V2.78: 読み上げ内容（wav_source.json）— 3カラムの下に幅いっぱいで表示。
+     create_wav.sh が記録した各WAVの実際の読み上げ内容。閲覧専用（編集不可）。 -->
+<div class="card">
+  <div class="card-head">読み上げ内容 — wav_source.json（閲覧専用）</div>
+  <div class="card-body">
+    {% if wav_source.exists %}
+    <table class="wav-src-table">
+      <thead>
+        <tr>
+          <th>WAVファイル</th>
+          <th>用途</th>
+          <th>読み上げ内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in wav_source.entries %}
+        <tr>
+          <td class="wav-src-file">{{ it.file }}</td>
+          <td class="wav-src-role">{{ it.role }}</td>
+          <td>
+            {% if it.text %}
+            <div class="wav-src-text">{{ it.text }}</div>
+            {% else %}
+            <span class="wav-src-empty">（記録なし）</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if wav_source.generated_at %}
+    <div class="wav-src-meta">生成日時: {{ wav_source.generated_at }}　/　create_wav.sh で作成・記録</div>
+    {% endif %}
+    {% else %}
+    <div class="wav-src-empty">
+      wav_source.json がまだありません。create_wav.sh でWAVを作成すると、
+      ここに各WAVの読み上げ内容が表示されます。
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.77
+  OpenCCVoice for DVSwitch Web Dashboard V2.78
 </div>
 </form>
 
