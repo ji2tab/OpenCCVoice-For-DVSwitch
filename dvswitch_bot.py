@@ -3,10 +3,30 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.72 —
+ — JJ2YYK デジピーター自動応答システム  V1.73 —
 
- 本ファイルは V1.71 に、ナイトモード突入アナウンスの「明朝」の読み崩れを修正した
- もの。機能・挙動は V1.71 と同一。
+ 本ファイルは V1.72 に、カスタム音声（cstm）の個別選択機能を追加したもの。
+
+【V1.73 での変更点（カスタム音声の個別選択 + 欠落フォールバック）】
+  - 🔴 intro / 001 / 002 を個別に「カスタム音声(cstm)を使う / 標準(fixed)」で
+    切り替えられるようにした。設定は bot_config.json の任意キー3つ:
+      USE_CSTM_INTRO / USE_CSTM_001 / USE_CSTM_002（いずれも bool・既定 False）
+    対応する実ファイルは利用者が自己責任で用意する:
+      cstm_intro.wav / cstm_001.wav / cstm_002.wav（BOT_DIR 直下）
+  - 🔵 intro の切り替えは fixed_intro.wav を使う3か所すべてに連動する
+    （カーチャンク応答 / 起動アナウンス / ナイトアナウンス）。これは intro が
+    ファイル単位で共用されているため。time_intro.wav（時報イントロ）は対象外。
+  - 🔴 欠落フォールバック: カスタム指定でも実ファイルが無ければ標準音声で鳴らし
+    続ける（_resolve_wav）。判定は送出のたびに行うため、後から cstm を置けば
+    再起動なしで次回送出から反映される。誤設定で送信が止まることはない。
+  - 🔵 後方互換: USE_CSTM_* は任意キー。REQUIRED_KEYS に入れない。未設定の旧
+    config は全て False（標準）として扱い、起動を拒否しない。bool 以外の不正値も
+    安全側に False とし、警告ログのみ出す（fatal にしない）。
+  - 🔵 起動時情報に各音声の選択状態（標準/カスタム/フォールバック）を表示する。
+  - ⚠️ 永続性: bot_setup.py / app.py（ダッシュボード）の USE_CSTM_* 対応は別段で
+    実装する。それまで本キーを手で入れても、それらのツールで保存し直すと消える
+    （TX_GAIN と同じ事情）。三位一体での対応が完了するまでの暫定状態。
+  - 機能の土台は V1.72 と同一（読み・時報・watchdog 等は挙動変更なし）。
 
 【V1.72 での変更点（合成音声の読み修正）】
   - 🔵 ナイトモード突入アナウンス（_send_night_mode_announcement）の固定文中、
@@ -155,6 +175,9 @@
   NIGHT_MODE_ENABLED  : ナイトモード有効（true / false）
   NIGHT_START_HOUR    : ナイトモード開始 N1（0〜23）
   NIGHT_END_HOUR      : ナイトモード終了 N2（0〜23）
+  USE_CSTM_INTRO      : intro にカスタム音声を使う（true/false, 任意キー。既定 false）
+  USE_CSTM_001        : 001 にカスタム音声を使う（true/false, 任意キー。既定 false）
+  USE_CSTM_002        : 002 にカスタム音声を使う（true/false, 任意キー。既定 false）
 
 【機能】
   - 起動アナウンス（起動 N 秒後に「起動しました。」を 1 回送出）
@@ -179,7 +202,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.72 (daemon, V1.71 + 「明朝」読み修正 みょうちょう)
+ Document Version: V1.73 (daemon, V1.72 + カスタム音声 cstm の個別選択+フォールバック)
  Last Updated: 2026-06-23
 ================================================================================
 """
@@ -190,7 +213,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.72"
+__version__ = "V1.73"
 
 import os
 import sys
@@ -226,6 +249,12 @@ FIXED_OUTRO_WAV = f"{BOT_DIR}/fixed_outro.wav"
 TIME_INTRO_WAV  = f"{BOT_DIR}/time_intro.wav"
 TIME_OUTRO_WAV  = f"{BOT_DIR}/time_outro.wav"
 MSG_FILES = [f"{BOT_DIR}/001.wav", f"{BOT_DIR}/002.wav"]
+
+# 🔵 V1.73: カスタム WAV のパス（利用者が自己責任で用意する差し替え音声）。
+# 設定 USE_CSTM_* が True かつ実ファイルが存在する場合のみ、標準の代わりに使う。
+# 無ければ標準へフォールバックする（_resolve_wav 参照）。
+CSTM_INTRO_WAV = f"{BOT_DIR}/cstm_intro.wav"
+CSTM_MSG_FILES = [f"{BOT_DIR}/cstm_001.wav", f"{BOT_DIR}/cstm_002.wav"]
 
 # 🔴 設定ファイル（bot_setup.py が作成する）
 CONFIG_PATH = f"{BOT_DIR}/bot_config.json"
@@ -307,6 +336,10 @@ TX_GAIN = None
 NIGHT_MODE_ENABLED = None
 NIGHT_START_HOUR = None
 NIGHT_END_HOUR = None
+# 🔵 V1.73: カスタム音声を使うか（intro / 001 / 002 を個別指定）。任意キー・既定 False。
+USE_CSTM_INTRO = None
+USE_CSTM_001 = None
+USE_CSTM_002 = None
 
 # コールサイン → カナ変換テーブル
 CHAR_TO_KANA = {
@@ -359,6 +392,7 @@ def _load_config():
     """
     global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ, TIME_SIGNAL_MODE
     global TX_GAIN, NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
+    global USE_CSTM_INTRO, USE_CSTM_001, USE_CSTM_002
 
     # 1) 存在確認
     if not os.path.exists(CONFIG_PATH):
@@ -442,6 +476,20 @@ def _load_config():
         logger.info(_fmt("..", "TX_GAIN", "未設定",
                          f"既定 {TX_GAIN_DEFAULT}（等倍 / 音量変更なし）を使用"))
 
+    # 🔵 V1.73: カスタム音声フラグ（任意キー / 既定 False）。
+    # intro / 001 / 002 を個別に「カスタムを使う(True) / 標準(False)」で指定する。
+    # bool 以外（未設定含む不正値）は安全側に False（標準）として扱い、起動は止めない。
+    def _as_bool(key):
+        v = cfg.get(key, False)
+        if isinstance(v, bool):
+            return v
+        logger.warning(_fmt("!!", key, str(v),
+                            "bool でないため False（標準音声）として扱う"))
+        return False
+    use_cstm_intro = _as_bool("USE_CSTM_INTRO")
+    use_cstm_001   = _as_bool("USE_CSTM_001")
+    use_cstm_002   = _as_bool("USE_CSTM_002")
+
     # 5) 反映
     RX_DURATION_MIN_SEC = rx_min
     RX_DURATION_MAX_SEC = rx_max
@@ -451,8 +499,31 @@ def _load_config():
     NIGHT_MODE_ENABLED = night_enabled
     NIGHT_START_HOUR = n1
     NIGHT_END_HOUR = n2
+    USE_CSTM_INTRO = use_cstm_intro
+    USE_CSTM_001 = use_cstm_001
+    USE_CSTM_002 = use_cstm_002
 
     logger.info(_fmt("..", "Config", "loaded", CONFIG_PATH))
+
+
+# 🔵 V1.73: カスタム/標準の WAV パス解決（欠落時フォールバック付き）
+def _resolve_wav(use_cstm, cstm_path, fixed_path, label=""):
+    """カスタム使用フラグと実ファイルの有無から、実際に再生するパスを返す。
+
+    - use_cstm が True かつ cstm_path が存在 → cstm_path（カスタムを使う）
+    - use_cstm が True だが cstm_path が無い → fixed_path（標準へフォールバック＋警告）
+    - use_cstm が False → fixed_path（標準）
+
+    こうして「カスタム指定したのにファイルが無い」事故でも送出を止めず、
+    標準音声で鳴らし続ける。判定は送出のたびに行う（後から cstm を置けば
+    再起動なしで次回から反映される）。
+    """
+    if use_cstm:
+        if os.path.exists(cstm_path):
+            return cstm_path
+        logger.warning(_fmt("!!", "CSTM missing", label or os.path.basename(cstm_path),
+                            f"{os.path.basename(cstm_path)} が無いため標準にフォールバック"))
+    return fixed_path
 
 
 def _handle_signal(signum, frame):
@@ -624,7 +695,12 @@ def _announcement_scheduler():
                                      f"{now.hour:02d}:{m:02d}",
                                      "scheduled_message suppressed (night mode)"))
                 else:
-                    target = MSG_FILES[msg_index % len(MSG_FILES)]
+                    # 🔵 V1.73: 001/002 を個別に cstm 解決（欠落時は標準へフォールバック）。
+                    _idx = msg_index % len(MSG_FILES)
+                    _use_cstm = USE_CSTM_001 if _idx == 0 else USE_CSTM_002
+                    target = _resolve_wav(
+                        _use_cstm, CSTM_MSG_FILES[_idx], MSG_FILES[_idx],
+                        os.path.basename(MSG_FILES[_idx]))
                     logger.info(_fmt("..", "Trigger",
                                      os.path.basename(target),
                                      "scheduled_message"))
@@ -699,7 +775,8 @@ def _send_startup_announcement():
     started_at = time.monotonic()
     middle_text = "起動しました。"
     logger.info(_fmt("TX", "Generate", "startup", "startup_announce"))
-    if _generate_hybrid(FIXED_INTRO_WAV, middle_text, None):
+    _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
+    if _generate_hybrid(_intro, middle_text, None):
         logger.info(_fmt("TX", "Sending", "startup", "startup_announce"))
         send_usrp_wav_with_padding(TEMP_FINAL)
         elapsed = time.monotonic() - started_at
@@ -730,7 +807,8 @@ def _send_night_mode_announcement():
     time.sleep(NIGHT_ANN_GAP_SEC)
 
     logger.info(_fmt("TX", "Generate", label, "night_announce"))
-    if _generate_hybrid(FIXED_INTRO_WAV, middle_text, None):
+    _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
+    if _generate_hybrid(_intro, middle_text, None):
         logger.info(_fmt("TX", "Sending", label, "night_announce"))
         send_usrp_wav_with_padding(TEMP_FINAL)
         elapsed = time.monotonic() - started_at
@@ -747,7 +825,8 @@ def _reply_executor(mode, val, extra=None):
             cs_kana = "".join([CHAR_TO_KANA.get(ch, ch) for ch in val.upper()])
             middle = f"{cs_kana}局の、"
             logger.info(_fmt("TX", "Generate", val))
-            if _generate_hybrid(FIXED_INTRO_WAV, middle, FIXED_OUTRO_WAV):
+            _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
+            if _generate_hybrid(_intro, middle, FIXED_OUTRO_WAV):
                 logger.info(_fmt("TX", "Sending", val))
                 send_usrp_wav_with_padding(TEMP_FINAL)
                 elapsed = time.monotonic() - started_at
@@ -874,7 +953,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.72 (daemon, V1.71 + 「明朝」読み修正 みょうちょう) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.73 (daemon, V1.72 + カスタム音声 cstm の個別選択+フォールバック) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -933,6 +1012,23 @@ def _log_startup_info():
             logger.info(f"  OK   Message     : {msg}")
         else:
             logger.error(f"  MISS Message     : {msg}  (NOT FOUND)")
+
+    # 🔵 V1.73: カスタム音声の選択状態と、実際に再生されるファイル（解決後）を表示。
+    # 「カスタム指定だが実ファイルが無い → 標準にフォールバック」も一目で分かる。
+    logger.info("-" * 70)
+    _cstm_items = [
+        ("intro", USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV),
+        ("001",   USE_CSTM_001,   CSTM_MSG_FILES[0], MSG_FILES[0]),
+        ("002",   USE_CSTM_002,   CSTM_MSG_FILES[1], MSG_FILES[1]),
+    ]
+    for name, use_cstm, cstm_path, fixed_path in _cstm_items:
+        if not use_cstm:
+            logger.info(f"  Voice {name:<5}     : 標準 ({os.path.basename(fixed_path)})")
+        elif os.path.exists(cstm_path):
+            logger.info(f"  Voice {name:<5}     : カスタム ({os.path.basename(cstm_path)})")
+        else:
+            logger.warning(f"  Voice {name:<5}     : カスタム指定だが {os.path.basename(cstm_path)} が無い "
+                           f"→ 標準 ({os.path.basename(fixed_path)}) にフォールバック")
 
     logger.info("=" * 70)
 
