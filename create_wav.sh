@@ -2,6 +2,7 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
+#   Version: V1.0 （初版。入力内容の wav_source.json 記録＋次回起動時プリフィルを含む）
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
 #   出力: /opt/dvswitch_bot/ 直下（fixed_intro/outro, time_intro, 001, 002 ほか）
 #
@@ -14,7 +15,33 @@
 #   バックアップ:
 #     上書き直前に、既存の *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避する。
 #     （dvs_config.sh と同じ /opt/dvswitch_bot/bak/ 配下にまとめる）
+#
+# ------------------------------------------------------------------------------
+#   🔵 改修（2026-06-24）: 入力内容（読み上げソーステキスト）の記録と再利用
+# ------------------------------------------------------------------------------
+#   従来このスクリプトは、入力した文字列をどこにも保存せず WAV だけを出力して
+#   いたため、「このWAVが何を喋っているのか」「次に作り直すとき同じ内容を再入力
+#   する」のが手間だった。本改修で次の2点を追加した。
+#
+#   (1) 生成時に入力内容を JSON へ保存
+#       生成のたびに、入力原文・確認後の読み仮名・実際に合成した最終テキストを
+#       /opt/dvswitch_bot/wav_source.json に書き出す。後から内容を完全に復元できる。
+#       ※ bot_config.json には追記しない。bot_config.json は dvswitch_bot.py /
+#         bot_setup.py / app.py が共有し、後者2つは「知っているキーだけ」で保存し
+#         直すため、無関係なキーを足すと消える。WAV のソースは性質が別物なので
+#         専用ファイル(wav_source.json)に分離している。
+#
+#   (2) 次回起動時に前回値をプリフィル
+#       wav_source.json があれば、各 read プロンプトの初期値(-i)に前回の入力を
+#       流し込む。そのまま Enter で前回と同じ内容を再生成できる。コールサイン等を
+#       変えなければ、手で直した読み仮名もそのまま再利用される。
+#
+#   JSON の読み書きは、日本語・記号のエスケープを安全に扱うため python3 を用いる
+#   （bot が python3 前提の環境なので追加依存はない）。
 # ==============================================================================
+
+# 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
+SCRIPT_VERSION="V1.0"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -22,6 +49,9 @@ VOICE_MODEL="/usr/share/hts-voice/mei/mei_normal.htsvoice"
 OUT_DIR="/opt/dvswitch_bot"
 TMP_DIR="/tmp"
 BAK_ROOT="/opt/dvswitch_bot/bak/wav"
+
+# 🔵 改修: 入力内容（読み上げソーステキスト）の保存先
+SRC_JSON="/opt/dvswitch_bot/wav_source.json"
 
 # 管理対象の WAV（バックアップ／復元の対象。time_outro は未使用だが拾う）
 WAV_FILES=(fixed_intro.wav fixed_outro.wav time_intro.wav 001.wav 002.wav time_outro.wav)
@@ -41,6 +71,8 @@ fi
 # ヘルプ
 # ------------------------------------------------------------------------------
 show_help() {
+  echo "create_wav.sh ${SCRIPT_VERSION}"
+  echo ""
   cat <<'EOF'
 DVSwitch bot 固定WAV 作成ツール create_wav.sh
 
@@ -57,9 +89,16 @@ DVSwitch bot 固定WAV 作成ツール create_wav.sh
   001.wav / 002.wav … 定時メッセージ
   ※ time_outro.wav は現行 bot では未使用（生成はするが無害）
 
+入力内容の記録（wav_source.json）:
+  生成時に、入力原文・読み仮名・合成テキストを /opt/dvswitch_bot/wav_source.json
+  へ保存します。次回起動時はこの内容を各入力欄の初期値として読み込むため、
+  そのまま Enter で前回と同じWAVを再生成できます。
+  （bot_config.json には一切追記しません。WAV のソースは別ファイルで管理します。）
+
 バックアップ:
-  作成（上書き）の直前に、既存の *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避します。
-  運用中に作り直して失敗しても、 -r で元のWAVセットに戻せます。
+  作成（上書き）の直前に、既存の *.wav と wav_source.json を
+  /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避します。
+  運用中に作り直して失敗しても、 -r で元のWAVセット（と入力記録）に戻せます。
 
 備考:
   bot は送出のたびにWAVを読み直すため、上書きすれば再起動なしで次の送出から反映されます。
@@ -67,17 +106,100 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
-# バックアップ（既存 *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ退避）
+# 🔵 改修: wav_source.json から前回の入力値を読み込む
+#   出力: 配列 PRIOR に 7 要素を格納（順序固定）
+#     [0]callsign [1]callsign_kana [2]location [3]msg1 [4]msg1_kana [5]msg2 [6]msg2_kana
+#   ファイルが無い／壊れている場合は全要素を空にする（プリフィル無しと同等）。
+#   フィールド区切りに US(0x1f)を用い、テキスト中の改行・記号で壊れないようにする。
+# ------------------------------------------------------------------------------
+PRIOR=()
+load_prior() {
+  PRIOR=("" "" "" "" "" "" "")
+  [ -f "$SRC_JSON" ] || return 0
+  mapfile -t -d $'\x1f' PRIOR < <(python3 - "$SRC_JSON" <<'PYEOF'
+import json, sys
+keys = ["callsign", "callsign_kana", "location", "msg1", "msg1_kana", "msg2", "msg2_kana"]
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+    if not isinstance(d, dict):
+        d = {}
+except Exception:
+    d = {}
+sys.stdout.write("\x1f".join(str(d.get(k, "")) for k in keys))
+PYEOF
+)
+  # 要素数が欠けた場合に備えて 7 要素へ正規化
+  while [ "${#PRIOR[@]}" -lt 7 ]; do PRIOR+=(""); done
+}
+
+# ------------------------------------------------------------------------------
+# 🔵 改修: 入力内容を wav_source.json へ保存する
+#   値は環境変数経由で python3 に渡す（クォート事故を避けるため）。
+#   入力原文・読み仮名に加え、実際に合成した最終テキスト(texts)も残し、
+#   後から「何を喋っているWAVなのか」を完全に復元できるようにする。
+# ------------------------------------------------------------------------------
+save_source_json() {
+  GEN_AT="$(date '+%Y-%m-%d %H:%M:%S')" \
+  J_CALLSIGN="$CALLSIGN" \
+  J_CALLSIGN_KANA="$CALLSIGN_KANA" \
+  J_LOCATION="$LOCATION" \
+  J_MSG1="$MSG1" \
+  J_MSG1_KANA="$MSG1_KANA" \
+  J_MSG2="$MSG2" \
+  J_MSG2_KANA="$MSG2_KANA" \
+  J_FIXED_INTRO="$BASE_INTRO_TEXT" \
+  J_FIXED_OUTRO="カーチャンクです。" \
+  J_TIME_INTRO="こちらは、${CALLSIGN_KANA}、" \
+  J_TEXT_001="$TEXT_001" \
+  J_TEXT_002="$TEXT_002" \
+  J_TIME_OUTRO="です。" \
+  python3 - "$SRC_JSON" <<'PYEOF'
+import json, os, sys
+d = {
+    "generated_at":  os.environ.get("GEN_AT", ""),
+    "callsign":      os.environ.get("J_CALLSIGN", ""),
+    "callsign_kana": os.environ.get("J_CALLSIGN_KANA", ""),
+    "location":      os.environ.get("J_LOCATION", ""),
+    "msg1":          os.environ.get("J_MSG1", ""),
+    "msg1_kana":     os.environ.get("J_MSG1_KANA", ""),
+    "msg2":          os.environ.get("J_MSG2", ""),
+    "msg2_kana":     os.environ.get("J_MSG2_KANA", ""),
+    # 実際に Open JTalk へ渡した最終テキスト（合成内容の記録）
+    "texts": {
+        "fixed_intro": os.environ.get("J_FIXED_INTRO", ""),
+        "fixed_outro": os.environ.get("J_FIXED_OUTRO", ""),
+        "time_intro":  os.environ.get("J_TIME_INTRO", ""),
+        "001":         os.environ.get("J_TEXT_001", ""),
+        "002":         os.environ.get("J_TEXT_002", ""),
+        "time_outro":  os.environ.get("J_TIME_OUTRO", ""),
+    },
+}
+path = sys.argv[1]
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(d, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PYEOF
+  # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
+  chown ocv:ocv "$SRC_JSON" 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------
+# バックアップ（既存 *.wav と wav_source.json を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ退避）
 # ------------------------------------------------------------------------------
 backup_wavs() {
   local ts dir f found=0
   ts="$(date +%y%m%d%H%M%S)"
   dir="${BAK_ROOT}/${ts}"
 
-  # 退避対象が1つでもあるか確認
+  # 退避対象が1つでもあるか確認（WAV または ソースJSON）
   for f in "${WAV_FILES[@]}"; do
     [ -f "${OUT_DIR}/${f}" ] && found=1
   done
+  [ -f "$SRC_JSON" ] && found=1
+
   if [ "$found" -eq 0 ]; then
     echo "[INFO] 既存のWAVが無いため、バックアップはスキップします（初回作成）。"
     return 0
@@ -91,13 +213,20 @@ backup_wavs() {
       echo "       - ${f}"
     fi
   done
+  # 🔵 改修: 入力記録(wav_source.json)も WAV と同じ世代でバックアップする。
+  # 古いWAVセットへ復元したときに、対応する入力記録（＝プリフィル元）も一緒に
+  # 戻るようにし、WAV と記録がズレないようにする。
+  if [ -f "$SRC_JSON" ]; then
+    cp -p "$SRC_JSON" "$dir/"
+    echo "       - $(basename "$SRC_JSON")"
+  fi
   # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
   chown -R ocv:ocv /opt/dvswitch_bot/bak 2>/dev/null || true
   echo ""
 }
 
 # ------------------------------------------------------------------------------
-# 復元（-r）: 日付フォルダを選んで *.wav を戻す
+# 復元（-r）: 日付フォルダを選んで *.wav と wav_source.json を戻す
 # ------------------------------------------------------------------------------
 do_restore() {
   if [ ! -d "$BAK_ROOT" ]; then
@@ -141,6 +270,12 @@ do_restore() {
       echo "       - ${f} を復元"
     fi
   done
+  # 🔵 改修: 入力記録(wav_source.json)も対になっていれば一緒に復元する。
+  if [ -f "${src}/$(basename "$SRC_JSON")" ]; then
+    cp -p "${src}/$(basename "$SRC_JSON")" "$SRC_JSON"
+    chown ocv:ocv "$SRC_JSON" 2>/dev/null || true
+    echo "       - $(basename "$SRC_JSON") を復元"
+  fi
   echo ""
   echo "[完了] 復元しました。bot は次の送出から復元後のWAVを読みます（再起動不要）。"
   exit 0
@@ -189,7 +324,7 @@ if [ ! -d "$OUT_DIR" ]; then
 fi
 
 echo "=========================================================="
-echo " DVSwitch bot WAVファイル対話式ジェネレーター"
+echo " DVSwitch bot WAVファイル対話式ジェネレーター  ${SCRIPT_VERSION}"
 echo "=========================================================="
 echo ""
 
@@ -249,25 +384,46 @@ function msg_alphanum_to_kana() {
 # 2. ユーザー入力セッション
 # ------------------------------------------------------------------------------
 
-# コールサインの入力
-read -ep "1. コールサインを入力してください (例: JJ2YYK): " CALLSIGN
-AUTO_KANA=$(callsign_to_kana "$CALLSIGN")
-# -i オプションで変換後のテキストを初期値としてセット。そのままEnterでOK、矢印キーで修正も可能。
-read -ep "   -> 読み仮名を確認・修正してください: " -i "$AUTO_KANA" CALLSIGN_KANA
+# 🔵 改修: 前回の入力値を読み込む（あれば各入力欄の初期値に使う）
+load_prior
+if [ -f "$SRC_JSON" ]; then
+  echo "[INFO] 前回の入力内容を読み込みました（${SRC_JSON}）。"
+  echo "       各項目は前回値を初期表示します。変更なければそのまま Enter。"
+  echo ""
+fi
 
-# 地名の入力
-read -ep "2. 設置場所の地名を入力してください (漢字・ひらがな等 例: 尾張旭): " LOCATION
+# コールサインの入力（前回値があれば初期表示）
+read -ep "1. コールサインを入力してください (例: JJ2YYK): " -i "${PRIOR[0]}" CALLSIGN
+# 読み仮名の初期値: コールサインが前回と同一なら、手で直した前回の読み仮名を再利用。
+# 変わっていれば自動生成し直す。
+if [ -n "${PRIOR[1]}" ] && [ "$CALLSIGN" == "${PRIOR[0]}" ]; then
+  CALLSIGN_KANA_DEFAULT="${PRIOR[1]}"
+else
+  CALLSIGN_KANA_DEFAULT="$(callsign_to_kana "$CALLSIGN")"
+fi
+read -ep "   -> 読み仮名を確認・修正してください: " -i "$CALLSIGN_KANA_DEFAULT" CALLSIGN_KANA
+
+# 地名の入力（前回値があれば初期表示）
+read -ep "2. 設置場所の地名を入力してください (漢字・ひらがな等 例: 尾張旭): " -i "${PRIOR[2]}" LOCATION
 
 # メッセージの入力
 echo ""
-read -ep "3. 定時メッセージ1を入力してください: " MSG1
-AUTO_MSG1=$(msg_alphanum_to_kana "$MSG1")
-read -ep "   -> 読みを確認・修正してください: " -i "$AUTO_MSG1" MSG1_KANA
+read -ep "3. 定時メッセージ1を入力してください: " -i "${PRIOR[3]}" MSG1
+if [ -n "${PRIOR[4]}" ] && [ "$MSG1" == "${PRIOR[3]}" ]; then
+  MSG1_KANA_DEFAULT="${PRIOR[4]}"
+else
+  MSG1_KANA_DEFAULT="$(msg_alphanum_to_kana "$MSG1")"
+fi
+read -ep "   -> 読みを確認・修正してください: " -i "$MSG1_KANA_DEFAULT" MSG1_KANA
 
 echo ""
-read -ep "4. 定時メッセージ2を入力してください: " MSG2
-AUTO_MSG2=$(msg_alphanum_to_kana "$MSG2")
-read -ep "   -> 読みを確認・修正してください: " -i "$AUTO_MSG2" MSG2_KANA
+read -ep "4. 定時メッセージ2を入力してください: " -i "${PRIOR[5]}" MSG2
+if [ -n "${PRIOR[6]}" ] && [ "$MSG2" == "${PRIOR[5]}" ]; then
+  MSG2_KANA_DEFAULT="${PRIOR[6]}"
+else
+  MSG2_KANA_DEFAULT="$(msg_alphanum_to_kana "$MSG2")"
+fi
+read -ep "   -> 読みを確認・修正してください: " -i "$MSG2_KANA_DEFAULT" MSG2_KANA
 
 # 読み上げベーステキストの組み立て
 BASE_INTRO_TEXT="こちらは、${CALLSIGN_KANA}、${LOCATION} ディーエムアール デジピーターです。"
@@ -331,6 +487,12 @@ sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav"
 echo " [OK] time_outro.wav"
 
 # ------------------------------------------------------------------------------
+# 🔵 改修: 入力内容を wav_source.json へ保存（次回起動時のプリフィル元になる）
+# ------------------------------------------------------------------------------
+save_source_json
+echo " [OK] wav_source.json （入力内容を記録）"
+
+# ------------------------------------------------------------------------------
 # 4. 後処理・確認
 # ------------------------------------------------------------------------------
 
@@ -341,8 +503,10 @@ echo ""
 echo "=========================================================="
 echo " すべての処理が完了しました！"
 echo " 出力先: $OUT_DIR"
+echo " 入力記録: $SRC_JSON"
 echo "----------------------------------------------------------"
 echo " bot は送出のたびにWAVを読み直すため、再起動は不要です。"
 echo " 次のカーチャンク応答・時報・定時メッセージから新しい音声になります。"
+echo " 次回このスクリプトを起動すると、今回の入力が初期値として表示されます。"
 echo " 元に戻したいときは:  sudo ./create_wav.sh -r"
 echo "=========================================================="
