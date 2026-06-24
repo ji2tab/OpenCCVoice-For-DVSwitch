@@ -3,10 +3,18 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.71 —
+ — JJ2YYK デジピーター自動応答システム  V1.72 —
 
- 本ファイルは V1.70（V1.69 + watchdog 専用カーチャンク上限）に、バージョン検出を
- 妨げるコメント文字列を修正したもの。機能は V1.70 と同一。
+ 本ファイルは V1.71 に、ナイトモード突入アナウンスの「明朝」の読み崩れを修正した
+ もの。機能・挙動は V1.71 と同一。
+
+【V1.72 での変更点（合成音声の読み修正）】
+  - 🔵 ナイトモード突入アナウンス（_send_night_mode_announcement）の固定文中、
+    「明朝」を「みょうちょう」に変更した。
+    背景: Open JTalk（naist-jdic）は「明朝」を文脈により「みんちょう」（明朝体の
+    語彙）と読むことがあり、「みょうちょう（明朝＝翌朝）」の意図とずれていた。
+    カナで直接書くことで意図した読みに固定する。送出文言の意味は変えていない。
+    機能・挙動は V1.71 と完全に同一（テキストの表記のみの変更）。
 
 【V1.71 での変更点（バージョン誤検出の予防）】
   - 🔵 変更履歴コメント内にあった例示文字列（__version__ への代入を引用符付きで
@@ -171,7 +179,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.71 (daemon, V1.70 + comment fix for version detection)
+ Document Version: V1.72 (daemon, V1.71 + 「明朝」読み修正 みょうちょう)
  Last Updated: 2026-06-23
 ================================================================================
 """
@@ -182,7 +190,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.71"
+__version__ = "V1.72"
 
 import os
 import sys
@@ -716,7 +724,7 @@ NIGHT_ANN_GAP_SEC = 1.0
 def _send_night_mode_announcement():
     started_at = time.monotonic()
     resume_hour = (NIGHT_END_HOUR + 1) % 24
-    middle_text = f"ただいまより、このデジピーターは、明朝{resume_hour}時まで、ナイトモードに入ります。"
+    middle_text = f"ただいまより、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
     label = f"N1={NIGHT_START_HOUR:02d}"
 
     time.sleep(NIGHT_ANN_GAP_SEC)
@@ -866,7 +874,7 @@ def _generate_hybrid(intro, middle_text, outro):
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.71 (daemon, V1.70 + comment fix for version detection) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.72 (daemon, V1.71 + 「明朝」読み修正 みょうちょう) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
