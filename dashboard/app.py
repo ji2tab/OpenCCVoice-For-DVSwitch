@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.78
+ app.py  V2.80
 
  変更履歴:
    V2.0  初版リリース
@@ -107,6 +107,17 @@
          切り替えてもグレー系のまま編集不可で、フォーム送信・保存・再起動の対象に
          一切ならない（save_all 等の保存ルートは無変更）。ファイルが無い場合は
          案内文を表示する。閲覧のみで bot_config.json には無関係。
+   V2.79 🔵 読み上げ内容カードが上のグリッドにめり込んで見える不具合を修正。
+         原因: card は box-shadow（周囲8px）を持つが、3カラム(grid3)の直下に
+         余白ゼロで置いていたため、影同士が重なってカードがめり込んで見えた。
+         対策: 読み上げ内容カードに card-below-grid（margin-top:16px）を付与し、
+         grid3 との間に影が重ならない間隔を確保した。表示のみの修正。
+   V2.80 🔵 読み上げ内容カードの表示を主要3件に絞る。
+         fixed_outro（固定文言「カーチャンクです。」）/ time_intro（名乗りの一部で
+         fixed_intro と内容が冗長）/ time_outro（現行 bot 未使用）の3件を表示対象
+         から除外し、fixed_intro / 001 / 002 のみ表示するよう get_wav_source() の
+         order を整理した。wav_source.json 自体は全項目を保持（記録は従来どおり）。
+         表示の絞り込みのみで保存ルート・記録には影響しない。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -432,14 +443,13 @@ def get_wav_source():
     if not isinstance(texts, dict):
         texts = {}
     # WAVファイル名と読み上げ内容の対応（表示順を固定）。
-    # time_outro は現行 bot では未使用だが、記録として併せて表示する。
+    # 🔵 V2.80: 表示は「実際に喋る主要な3つ」に絞る。fixed_outro（固定文言
+    # 「カーチャンクです。」）/ time_intro（名乗りの一部で fixed_intro と冗長）/
+    # time_outro（現行 bot 未使用）の3件は表示しない。
     order = [
         ("fixed_intro.wav", "fixed_intro", "カーチャンク応答イントロ"),
-        ("fixed_outro.wav", "fixed_outro", "カーチャンク応答アウトロ"),
-        ("time_intro.wav",  "time_intro",  "時報イントロ"),
         ("001.wav",         "001",         "定時メッセージ1"),
         ("002.wav",         "002",         "定時メッセージ2"),
-        ("time_outro.wav",  "time_outro",  "時報アウトロ（現行 bot 未使用）"),
     ]
     entries = []
     for fname, key, role in order:
@@ -880,6 +890,10 @@ margin-bottom:6px;border-left:4px solid;
   }
   .wav-src-empty{color:#aaa;font-style:italic}
   .wav-src-meta{color:var(--muted);font-size:10px;margin-top:8px}
+  /* 🔵 V2.79: 上のグリッド(grid3)との間隔を確保。カードは box-shadow(周囲8px)を
+     持つため、間隔ゼロだと影同士が重なってめり込んで見える。grid3 内の gap(12px)
+     より広めの 16px を空けて、影が重ならないようにする。 */
+  .card-below-grid{margin-top:16px}
 </style>
 </head>
 <body>
@@ -887,7 +901,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.78</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.80</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1091,8 +1105,9 @@ margin-bottom:6px;border-left:4px solid;
 </div>
 
 <!-- 🔵 V2.78: 読み上げ内容（wav_source.json）— 3カラムの下に幅いっぱいで表示。
-     create_wav.sh が記録した各WAVの実際の読み上げ内容。閲覧専用（編集不可）。 -->
-<div class="card">
+     create_wav.sh が記録した各WAVの実際の読み上げ内容。閲覧専用（編集不可）。
+     🔵 V2.79: 上グリッドとの間隔確保のため card-below-grid（margin-top:16px）を付与。 -->
+<div class="card card-below-grid">
   <div class="card-head">読み上げ内容 — wav_source.json（閲覧専用）</div>
   <div class="card-body">
     {% if wav_source.exists %}
@@ -1135,7 +1150,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.78
+  OpenCCVoice for DVSwitch Web Dashboard V2.80
 </div>
 </form>
 
