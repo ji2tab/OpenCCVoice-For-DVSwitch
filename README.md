@@ -102,6 +102,7 @@ sudo systemctl enable --now dvswitch-bot
 |---|---|
 | [構築導入設定 完全マニュアル](OpenCCVoice_構築導入設定_完全マニュアル.md) | OS インストールから運用まで、新規構築を通しで再現できる実務マニュアル |
 | [操作マニュアル](OpenCCVoice_操作マニュアル.md) | 日常運用の逆引き（起動停止・設定変更・音声差し替え・トラブル対応） |
+| [カスタム音声マニュアル](カスタム音声.md) | 標準音声（intro／001／002）を自前の音声ファイルに差し替える手順（cstm 機能） |
 | [README_PROJECT](README_PROJECT.md) | プロジェクトの理念・背景・詳細説明 |
 
 ### ソフトウェア仕様書（[`specification/`](specification/)）
