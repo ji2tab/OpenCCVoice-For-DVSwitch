@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.76
+ app.py  V2.77
 
  変更履歴:
    V2.0  初版リリース
@@ -91,6 +91,12 @@
          対策: 最優先パターンを (?m)^__version__... と行頭固定にし、コメント中の
          例示（先頭が空白/記号で始まる）を除外。本物の代入行だけを拾う。
          併せて bot 本体 V1.71 でコメントの例示文字列も誤検出しない表記に修正。
+   V2.77 🔵 ヘッダーのコールサイン / 送信TG をベタ書きから実値表示に変更。
+         従来 tagline は "JJ2YYK / TGIF TG168" を固定文字列で持っていたが、
+         これを {{ dvs.callsign }} / TG{{ dvs.txtg }} に置換し、MMDVM_Bridge.ini /
+         Analog_Bridge.ini の実値を表示するようにした。dvs は既に index() で
+         テンプレートへ渡しているため Python 側の追加は不要。サーバー側
+         レンダリングのため値の反映は保存→リロード時（ポーリング非追従）。表示のみ。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -809,7 +815,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">JJ2YYK / TGIF TG168 管理パネル&nbsp;&nbsp;&nbsp;V2.76</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.77</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1015,7 +1021,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.76
+  OpenCCVoice for DVSwitch Web Dashboard V2.77
 </div>
 </form>
 
