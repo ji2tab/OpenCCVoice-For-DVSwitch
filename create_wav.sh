@@ -2,9 +2,16 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
-#   Version: V1.0 （初版。入力内容の wav_source.json 記録＋次回起動時プリフィルを含む）
+#   Version: V1.1 （所有者 chown を ocv 決め打ちから汎用化。V1.0 の記録/プリフィルを含む）
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
 #   出力: /opt/dvswitch_bot/ 直下（fixed_intro/outro, time_intro, 001, 002 ほか）
+#
+#   変更履歴:
+#     V1.0  初版。入力内容の wav_source.json 記録＋次回起動時プリフィル。
+#     V1.1  生成物の chown を ocv:ocv 決め打ちから汎用化。$SUDO_USER →
+#           UID 1000 の順で実ユーザーを特定し、その既定グループへ揃える
+#           （chown_owner ヘルパに集約）。複数ユーザー非想定・www-data 等の
+#           システムユーザー（UID<1000）は対象外、という構成前提に基づく。
 #
 #   使い方:
 #     sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
@@ -41,7 +48,7 @@
 # ==============================================================================
 
 # 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
-SCRIPT_VERSION="V1.0"
+SCRIPT_VERSION="V1.1"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -52,6 +59,37 @@ BAK_ROOT="/opt/dvswitch_bot/bak/wav"
 
 # 🔵 改修: 入力内容（読み上げソーステキスト）の保存先
 SRC_JSON="/opt/dvswitch_bot/wav_source.json"
+
+# ------------------------------------------------------------------------------
+# 🔵 V1.1: 生成物の所有者を汎用的に決定する（ocv 決め打ちを廃止）
+# ------------------------------------------------------------------------------
+# 本スクリプトは sudo（root）で動くため、何もしないと生成物が root 所有になり、
+# bot やダッシュボード（dvswitch-web）など非root プロセスから読めなくなる。
+# そこで生成物の所有者を「実ユーザー」に戻す。
+#
+# 前提（システム構成の制約）: root 以外の実ユーザーは1人だけ（raspberry/pi-star/
+# ocv 構成）。www-data 等のサービス用アカウントは UID < 1000 に割り当てられるため、
+# UID 1000（人間が最初に作る一般ユーザー）を見れば実ユーザーを一意に特定できる。
+#
+# 決定順:
+#   1) $SUDO_USER  … sudo した本人（通常はこれで確定。最も自然）
+#   2) UID 1000    … root 直実行などで $SUDO_USER が空のときの保険
+# どちらも取れない場合は空のままとし、所有者変更はスキップする（chown は
+# 末尾の "|| true" で握りつぶすため、スクリプトは止まらない）。
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+  OWNER_USER="$SUDO_USER"
+else
+  OWNER_USER="$(id -nu 1000 2>/dev/null)"
+fi
+
+# 所有者を OWNER_USER（の既定グループ）へ揃えるヘルパ。
+# グループは "ユーザー名:" とコロン止めで「そのユーザーの既定グループ」に任せる
+# （ocv:ocv のようにグループ名まで決め打ちすると、グループ名が異なる環境で外す）。
+# OWNER_USER が空のときは何もしない。
+chown_owner() {
+  [ -n "$OWNER_USER" ] || return 0
+  chown "$@" "${OWNER_USER}:" 2>/dev/null || true
+}
 
 # 管理対象の WAV（バックアップ／復元の対象。time_outro は未使用だが拾う）
 WAV_FILES=(fixed_intro.wav fixed_outro.wav time_intro.wav 001.wav 002.wav time_outro.wav)
@@ -182,8 +220,8 @@ with open(tmp, "w", encoding="utf-8") as f:
     f.write("\n")
 os.replace(tmp, path)
 PYEOF
-  # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
-  chown ocv:ocv "$SRC_JSON" 2>/dev/null || true
+  # 所有者を実ユーザー（の既定グループ）に揃える（sudo 実行で root 化するのを防ぐ）
+  chown_owner "$SRC_JSON"
 }
 
 # ------------------------------------------------------------------------------
@@ -220,8 +258,8 @@ backup_wavs() {
     cp -p "$SRC_JSON" "$dir/"
     echo "       - $(basename "$SRC_JSON")"
   fi
-  # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
-  chown -R ocv:ocv /opt/dvswitch_bot/bak 2>/dev/null || true
+  # 所有者を実ユーザー（の既定グループ）に揃える（sudo 実行で root 化するのを防ぐ）
+  chown_owner -R /opt/dvswitch_bot/bak
   echo ""
 }
 
@@ -273,7 +311,7 @@ do_restore() {
   # 🔵 改修: 入力記録(wav_source.json)も対になっていれば一緒に復元する。
   if [ -f "${src}/$(basename "$SRC_JSON")" ]; then
     cp -p "${src}/$(basename "$SRC_JSON")" "$SRC_JSON"
-    chown ocv:ocv "$SRC_JSON" 2>/dev/null || true
+    chown_owner "$SRC_JSON"
     echo "       - $(basename "$SRC_JSON") を復元"
   fi
   echo ""
