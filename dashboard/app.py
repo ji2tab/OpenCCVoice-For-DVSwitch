@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.81
+ app.py  V2.82
 
  変更履歴:
    V2.0  初版リリース
@@ -123,6 +123,13 @@
          wav_source.json の texts 全6項目（fixed_intro/fixed_outro/time_intro/
          001/002/time_outro）を表示するよう get_wav_source() の order を戻した。
          表示のみの変更で保存ルート・記録には影響しない。
+   V2.82 🔴 Bot設定カードに「カスタム音声（差し替え）」を追加（dvswitch_bot.py
+         V1.73 / bot_setup.py 対応）。intro / 001 / 002 を個別に標準⇄カスタム
+         (cstm)で切り替えるチェックボックス3つを追加。bot_config / save_all の
+         保存ルートに USE_CSTM_INTRO / USE_CSTM_001 / USE_CSTM_002（bool）を追加。
+         チェックボックスは view-mode で自動グレーアウト（編集モードでのみ操作可）。
+         任意キーのため常に書き出す。旧 bot は未知キーを無視するので無影響。
+         実ファイル(cstm_*.wav)が無ければ本体が標準へ自動フォールバックする。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -511,6 +518,9 @@ def bot_config_save():
             "NIGHT_START_HOUR":    int(request.form["night_start"]),
             "NIGHT_END_HOUR":      int(request.form["night_end"]),
             "TX_GAIN":             float(request.form.get("tx_gain", 1.0)),
+            "USE_CSTM_INTRO":      request.form.get("use_cstm_intro") == "on",
+            "USE_CSTM_001":        request.form.get("use_cstm_001") == "on",
+            "USE_CSTM_002":        request.form.get("use_cstm_002") == "on",
         }
         assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
         assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
@@ -610,6 +620,9 @@ def save_all():
             "NIGHT_START_HOUR":    int(request.form["night_start"]),
             "NIGHT_END_HOUR":      int(request.form["night_end"]),
             "TX_GAIN":             float(request.form.get("tx_gain", 1.0)),
+            "USE_CSTM_INTRO":      request.form.get("use_cstm_intro") == "on",
+            "USE_CSTM_001":        request.form.get("use_cstm_001") == "on",
+            "USE_CSTM_002":        request.form.get("use_cstm_002") == "on",
         }
         assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
         assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
@@ -908,7 +921,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.81</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.82</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -996,6 +1009,26 @@ margin-bottom:6px;border-left:4px solid;
           <label>音量倍率（1.0=等倍 / 0.0超〜5.0以下）</label>
           <input type="number" name="tx_gain" step="0.05" min="0.05" max="5.0"
             value="{{ bot_cfg.get('TX_GAIN', 1.0) }}" required>
+        </div>
+        <div class="section-title">カスタム音声（差し替え）</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">
+          ON にすると標準の代わりに cstm_*.wav を再生します。ファイルが無ければ
+          自動的に標準音声で鳴ります（要: 利用者がファイルを用意）。
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" name="use_cstm_intro" id="cstm_intro_chk"
+            {% if bot_cfg.get('USE_CSTM_INTRO', False) %}checked{% endif %}>
+          <label class="toggle-label" for="cstm_intro_chk">intro（名乗り）に cstm_intro.wav を使う</label>
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" name="use_cstm_001" id="cstm_001_chk"
+            {% if bot_cfg.get('USE_CSTM_001', False) %}checked{% endif %}>
+          <label class="toggle-label" for="cstm_001_chk">001 に cstm_001.wav を使う</label>
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" name="use_cstm_002" id="cstm_002_chk"
+            {% if bot_cfg.get('USE_CSTM_002', False) %}checked{% endif %}>
+          <label class="toggle-label" for="cstm_002_chk">002 に cstm_002.wav を使う</label>
         </div>
         <div class="section-title">ナイトモード</div>
         <div class="toggle-row">
@@ -1157,7 +1190,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.81
+  OpenCCVoice for DVSwitch Web Dashboard V2.82
 </div>
 </form>
 
