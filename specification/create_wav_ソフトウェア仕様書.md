@@ -93,6 +93,8 @@ fixed_intro.wav  fixed_outro.wav  time_intro.wav  001.wav  002.wav  time_outro.w
 すべて出力先は `OUT_DIR`（`/opt/dvswitch_bot/` 直下）。出力フォーマットは
 **8000Hz / モノラル / 16bit PCM**（`sox -r 8000 -c 1 -b 16`）。
 
+> 💡 **カスタム音声（cstm）との関係:** 本スクリプトは上記の**標準 WAV のみ**を生成する。intro/001/002 を差し替えるカスタム音声（`cstm_intro.wav`/`cstm_001.wav`/`cstm_002.wav`、V1.73〜）は利用者が同じフォーマットで用意するもので、本スクリプトの生成・バックアップ対象外。詳細は `カスタム音声.md` 参照。
+
 ---
 
 ## 5. コマンドライン仕様
