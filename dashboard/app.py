@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.80
+ app.py  V2.81
 
  変更履歴:
    V2.0  初版リリース
@@ -118,6 +118,11 @@
          から除外し、fixed_intro / 001 / 002 のみ表示するよう get_wav_source() の
          order を整理した。wav_source.json 自体は全項目を保持（記録は従来どおり）。
          表示の絞り込みのみで保存ルート・記録には影響しない。
+   V2.81 🔵 読み上げ内容カードを全6項目表示に戻す。
+         V2.80 で除外した fixed_outro / time_intro / time_outro を再表示し、
+         wav_source.json の texts 全6項目（fixed_intro/fixed_outro/time_intro/
+         001/002/time_outro）を表示するよう get_wav_source() の order を戻した。
+         表示のみの変更で保存ルート・記録には影響しない。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -443,13 +448,15 @@ def get_wav_source():
     if not isinstance(texts, dict):
         texts = {}
     # WAVファイル名と読み上げ内容の対応（表示順を固定）。
-    # 🔵 V2.80: 表示は「実際に喋る主要な3つ」に絞る。fixed_outro（固定文言
-    # 「カーチャンクです。」）/ time_intro（名乗りの一部で fixed_intro と冗長）/
-    # time_outro（現行 bot 未使用）の3件は表示しない。
+    # 🔵 V2.81: 全6項目を表示する（V2.80 で絞った3件を再表示）。
+    # time_outro は現行 bot では未使用だが、記録として併せて表示する。
     order = [
         ("fixed_intro.wav", "fixed_intro", "カーチャンク応答イントロ"),
+        ("fixed_outro.wav", "fixed_outro", "カーチャンク応答アウトロ"),
+        ("time_intro.wav",  "time_intro",  "時報イントロ"),
         ("001.wav",         "001",         "定時メッセージ1"),
         ("002.wav",         "002",         "定時メッセージ2"),
+        ("time_outro.wav",  "time_outro",  "時報アウトロ（現行 bot 未使用）"),
     ]
     entries = []
     for fname, key, role in order:
@@ -901,7 +908,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.80</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.81</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1150,7 +1157,7 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.80
+  OpenCCVoice for DVSwitch Web Dashboard V2.81
 </div>
 </form>
 
