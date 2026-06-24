@@ -137,7 +137,10 @@ flowchart TB
 ├── time_intro.wav            ← 時報イントロ
 ├── 001.wav                   ← 定時メッセージ1
 ├── 002.wav                   ← 定時メッセージ2
-└── time_outro.wav            ← (未使用・無害。create_wav.sh が生成)
+├── time_outro.wav            ← (未使用・無害。create_wav.sh が生成)
+├── cstm_intro.wav            ← (任意) intro のカスタム音声（利用者が用意。V1.73〜）
+├── cstm_001.wav              ← (任意) 001 のカスタム音声（利用者が用意）
+└── cstm_002.wav              ← (任意) 002 のカスタム音声（利用者が用意）
 ```
 
 > **設計のポイント:** Bot 本体のコードは `BOT_DIR = "/opt/dvswitch_bot"` を基準に
@@ -237,6 +240,11 @@ flowchart TB
 | `NIGHT_MODE_ENABLED` | 真偽 | ナイトモード有効/無効 | true | true / false |
 | `NIGHT_START_HOUR` | 整数 | ナイトモード開始時 N1 | 22 | 0〜23 |
 | `NIGHT_END_HOUR` | 整数 | ナイトモード終了時 N2 | 5 | 0〜23 |
+| `TIME_SIGNAL_MODE` | 整数 | 時刻案内モード（0=なし/1=毎正時/2=+毎30分）。任意キー | 1 | 0 / 1 / 2 |
+| `TX_GAIN` | 数値 | 送出音量の線形倍率。任意キー | 1.0 | 0.0超〜5.0以下 |
+| `USE_CSTM_INTRO` | 真偽 | intro にカスタム音声を使う。任意キー | false | true / false |
+| `USE_CSTM_001` | 真偽 | 001 にカスタム音声を使う。任意キー | false | true / false |
+| `USE_CSTM_002` | 真偽 | 002 にカスタム音声を使う。任意キー | false | true / false |
 
 **JSON の例:**
 
@@ -244,16 +252,25 @@ flowchart TB
 {
   "RX_DURATION_MIN_SEC": 0.5,
   "RX_DURATION_MAX_SEC": 3.9,
+  "TIME_SIGNAL_MODE": 1,
   "ANNOUNCE_FREQ": 2,
   "NIGHT_MODE_ENABLED": true,
   "NIGHT_START_HOUR": 22,
-  "NIGHT_END_HOUR": 5
+  "NIGHT_END_HOUR": 5,
+  "TX_GAIN": 1.0,
+  "USE_CSTM_INTRO": false,
+  "USE_CSTM_001": false,
+  "USE_CSTM_002": false
 }
 ```
 
-> **フェイルセーフ:** 6つのキーのいずれかが欠ける、型が違う、範囲外、という場合、
-> デーモン本体はエラーを表示して**起動しない**。意図しない送信パラメータで電波を
-> 出さないための安全策。
+> **フェイルセーフ:** 必須キー（受信時間・時刻案内モード・放送回数・ナイトモード関連）が
+> 欠ける、型が違う、範囲外、という場合、デーモン本体はエラーを表示して**起動しない**。
+> 意図しない送信パラメータで電波を出さないための安全策。
+>
+> **任意キー:** `TX_GAIN`・`USE_CSTM_*` は欠けても起動し、既定値を採用する（後方互換）。
+> `USE_CSTM_*` を true にしても対応する `cstm_*.wav` が無ければ標準音声へ自動フォールバック
+> する（詳細は `カスタム音声.md`）。
 
 ### 6-2. dvs_config.sh が設定する ini 項目
 
