@@ -133,12 +133,11 @@ PID を付けるのは、複数プロセスや再起動時のファイル衝突�
 | `PRE_POST_PADDING_PACKETS` | `75` | 音声前後の無音パケット数（75×20ms＝1.5秒） |
 | `ROTATION_CHECK_INTERVAL` | `5.0` | ログ切替チェック間隔（秒） |
 | `GAP_AFTER_INTRO_SEC` | `0.5` | イントロ後の無音（連結時の「間」） |
-| `STARTUP_ANNOUNCE_DELAY_SEC` | `2.0` | 起動後この秒数おいて起動アナウンスを送出（V1.62） |
+| `STARTUP_ANNOUNCE_DELAY_SEC` | `5.0` | 起動後この秒数おいて起動アナウンスを送出（V1.62） |
 | `TIME_SIGNAL_LEAD_SEC` | `7` | 時報を正時の何秒前に発火させるか |
 | `NIGHT_ANN_GAP_SEC` | `1.0` | 時報とナイトモードアナウンスの間隔 |
 
-> **注:** ソース冒頭のコメントには「既定 7.0 秒（5〜10 秒で調整可）」とあるが、実際の定数は
-> `2.0`。コメントは設計時の目安で、現行の値は 2.0 秒。MMDVM_Bridge / Analog_Bridge の起動が
+> **注:** 実際の定数は `5.0`。MMDVM_Bridge / Analog_Bridge の起動が
 > 落ち着いてから送出する意図のため、環境に応じてこの値を調整してよい。
 
 ### カナ変換テーブル `CHAR_TO_KANA`
@@ -313,7 +312,7 @@ flowchart LR
 ### 7-4. 起動アナウンス（_send_startup_announcement, V1.62）
 
 デーモン起動後、ログ監視を開始する直前に `threading.Timer` で
-`STARTUP_ANNOUNCE_DELAY_SEC`（2.0 秒）遅延させ、「起動しました。」を**1回だけ**送出する。
+`STARTUP_ANNOUNCE_DELAY_SEC`（5.0 秒）遅延させ、「起動しました。」を**1回だけ**送出する。
 
 - **目的:** MMDVM_Bridge / Analog_Bridge の起動が落ち着いてから送出するため、固定の遅延を置く
 - **実装上のポイント:** `is_talking` フラグや `_reply_lock` と競合しないよう、`_start_worker` を
@@ -445,7 +444,7 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 |---|---|
 | `Config loaded ...` | 設定読込成功 |
 | `Bot ready — monitoring DMR traffic` | 監視開始 |
-| `Startup ann scheduled in 2.0s` | 起動アナウンスを予約（V1.62） |
+| `Startup ann scheduled in 5.0s` | 起動アナウンスを予約（V1.62） |
 | `TX Sending startup startup_announce` | 起動アナウンス送出（V1.62） |
 | `receive:Kerchunk detected: <CS> (0.9s) trigger` | カーチャンク検知・応答 |
 | `receive:suppressed: <CS> (..., remaining ...)` | 抑制中で無視 |
@@ -512,7 +511,7 @@ time.sleep(max(0, next_send_time - time.monotonic()))
 | **カスタム音声のフォールバック** | `_resolve_wav` は送出のたびに実ファイルの有無を見る。ON でもファイルが無ければ標準で鳴り、送出は止まらない。intro のカスタムはカーチャンク応答・起動・ナイトの3か所すべてに連動する |
 | **ログ時刻はタイムスタンプ差** | 受信時間はログの時刻差で測る。MMDVM のフレーム数長とは別物 |
 | **ログ選択はファイル名ベース** | `_find_latest_log()` は `key=os.path.basename`。`getctime` に戻すと日跨ぎで旧ログに化ける |
-| **起動アナウンスは直接実行** | `_send_startup_announcement` は `is_talking`/`_start_worker` を経由しない。組み込み方を変えるとロック競合を招きうる。遅延は `STARTUP_ANNOUNCE_DELAY_SEC`（実値 2.0、コメントは 7.0 の食い違いに注意） |
+| **起動アナウンスは直接実行** | `_send_startup_announcement` は `is_talking`/`_start_worker` を経由しない。組み込み方を変えるとロック競合を招きうる。遅延は `STARTUP_ANNOUNCE_DELAY_SEC`（実値 5.0） |
 
 ---
 
