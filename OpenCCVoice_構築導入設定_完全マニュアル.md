@@ -733,7 +733,7 @@ python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```bash
 sudo tee /etc/systemd/system/dvswitch-bot.service > /dev/null << 'EOF'
 [Unit]
-Description=DVSwitch Bot (OpenCCVoice, daemon V1.69)
+Description=DVSwitch Bot (OpenCCVoice, daemon V1.92)
 After=network.target analog_bridge.service mmdvm_bridge.service md380-emu.service
 Wants=analog_bridge.service mmdvm_bridge.service md380-emu.service
 
