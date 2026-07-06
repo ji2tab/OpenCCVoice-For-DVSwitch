@@ -16,6 +16,7 @@
 > **対象構成:**
 > - OS: Raspberry Pi OS (Legacy, 32-bit) Lite — Debian Bookworm ベース
 > - ユーザー: `ocv`（配布ドキュメントの `pi-star` は読み替え）
+> - `ocv` 以外のユーザー名で構築する場合: 本書中の `chown ocv:ocv`、systemdユニットの `User=ocv`、`/home/ocv/` を含むパスなど、`ocv` と書かれている箇所はすべて実際に使用するユーザー名に読み替えること
 > - Bot: デーモン本体 `dvswitch_bot.py` ＋ 設定ツール `bot_setup.py`（分離構成）
 > - スクリプト配置: `/opt/dvswitch_bot/bin/` に集約
 > - 接続先: TGIF Network
@@ -171,6 +172,8 @@ Raspberry Pi Imager で **「Raspberry Pi OS Lite (Legacy, 32-bit)」**
 （"A port of Debian Bookworm ..." と表示されるもの）を選び、microSD に書き込む。
 "Legacy" の付かない最新版は trixie の可能性があるため選ばない。SSH・WiFi・ロケール等の
 初期設定を済ませてから起動する。
+
+> 💡 **ユーザー名について:** この初期設定（Imager の歯車アイコン「詳細な設定」）で作成するユーザー名を、本書では既定で `ocv` としている。別のユーザー名で作成した場合は、以降のコマンド例中の `ocv` をすべて実際に設定したユーザー名に読み替えること。
 
 #### OS イメージ直リンク（Imager から取れない場合）
 
