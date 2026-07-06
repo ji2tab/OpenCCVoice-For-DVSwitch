@@ -3,12 +3,44 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.90 —
+ — JJ2YYK デジピーター自動応答システム  V1.92 —
 
  本ファイルは V1.83 に「無音のノイズ充填」を追加したもの。パケットキャプチャ
  解析で確定した TGIF の先頭無音スキップ（＝ヘッダ喪失、MD-619 受信スタックの
  直接原因）への根本対策。判定・法令・watchdog・時報・キャッシュ・頭無音・
  終端多重化・SET_INFO は V1.83 と同一。
+
+【V1.92 での変更点（外部レビュー指摘の反映）】
+  - 🔵 記述訂正: V1.91 の「後着は待機し、順番に送出される」は言い過ぎだった。
+    正確な挙動は次のとおり:
+      * _start_worker 経由（ケロ応答・時報等）: 送信中は従来どおりスキップ
+        （is_talking 判定。デジピーターではキューよりスキップが適切）。
+      * 起動アナウンス（_start_worker 非経由の唯一の経路）と実行中送信の
+        衝突時のみ: _tx_lock で待機・直列化（報告された二重送信バグの修正点）。
+    _tx_lock は「最後の防壁」であり、通常経路のスキップ設計は不変。
+  - 🔴 掃除責任の明確化（レビュー案を採用）: 中間ファイル（TEMP_48K/8K/
+    INTRO_PADDED）の削除を _generate_hybrid の finally（_gen_lock 保持中）に
+    移動。生成と削除が同一ロック内になり競合が構造的に不可能。out_path
+    （TEMP_FINAL/キャッシュ）は呼び出し元が送信で読むため削除しない。
+    起動時の一括掃除（異常終了の残骸対策）は維持。
+  - 🔵 TX_GAIN のフォールバック（警告して1.0）は意図した設計として維持:
+    無人デジピーターでは設定ミス1つで停波するより警告して動き続ける方を取る。
+
+【V1.91 での変更点（送信直列化 / TEMP 競合の根治 — 報告いただいた2不具合の修正）】
+  - 🔴 不具合1（二重送信）: 起動アナウンスが他の送信と無ロックで並走でき、
+    起動直後に他局を受信すると応答と重なってストリームが壊れることがあった。
+    → 対策: 送信フロー全体を直列化する _tx_lock を新設。_reply_executor
+    （ケロ応答・時報・ナイト・10分ID）と起動アナウンスの全送信経路が
+    このロックを通る。後着は待機し（ログ [..] TX queue）、順番に送出される。
+  - 🔴 不具合2（sox FAIL / Race Condition）: 送信完了時の finally が共有
+    一時ファイル（TEMP_48K 等）を無条件削除しており、プリキャッシュ・
+    スレッドが _generate_hybrid で同じファイルを生成している最中に横から
+    消して sox を失敗させていた。
+    → 対策: 実行中の TEMP 削除を全廃。共有 TEMP は /dev/shm 上の小ファイルで
+    各生成が上書きするため実行中削除は不要。掃除は起動時の一括のみに変更。
+  - 🔵 ロック順序: 常に _tx_lock（外）→ _gen_lock（内）。プリキャッシュは
+    _gen_lock のみ（送信ではない）。順序が一方向のためデッドロックなし。
+  - 🔵 それ以外（V1.90 の TA 再主張・V1.89 のトーン・V1.88 の EOT 単発等）は同一。
 
 【V1.90 での変更点（Talker Alias 引きずり対策 / 自局アイデンティティ再主張）】
   - 🔴 症状: JJ2ZAR 等がネット経由でケロした際、OCV 応答の RF 表示が
@@ -502,7 +534,7 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.90 (daemon, V1.89 + 自局アイデンティティの再主張＝TA引きずり対策)
+ Document Version: V1.92 (daemon, V1.91 + レビュー指摘の反映：掃除責任の明確化・記述訂正)
  Last Updated: 2026-07-04
 ================================================================================
 """
@@ -513,7 +545,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.90"
+__version__ = "V1.92"
 
 import os
 import sys
@@ -720,6 +752,12 @@ _reply_lock = threading.Lock()
 # 🔵 V1.75: 合成パイプライン（共有一時ファイル使用）を直列化するロックと、
 # コールサイン単位のビルド用ロック群（プリキャッシュと応答の競合を防ぐ）。
 _gen_lock = threading.Lock()
+# 🔴 V1.91: 送信フロー全体（生成→送出）を直列化するロック。
+# 起動アナウンス・ケロ応答・時報・ナイト・10分ID が同時に走ることによる
+# 二重送信／共有 TEMP_FINAL の上書き競合／UDPストリーム混線を防ぐ。
+# ロック順序は常に _tx_lock（外）→ _gen_lock（内）。プリキャッシュは
+# _gen_lock のみ取得（送信ではないため _tx_lock は取らない）。デッドロックなし。
+_tx_lock = threading.Lock()
 _cache_build_locks = {}
 _cache_locks_guard = threading.Lock()
 
@@ -1354,27 +1392,23 @@ def _handle_qso_session(now):
 def _send_startup_announcement():
     """起動アナウンス。起動後 STARTUP_ANNOUNCE_DELAY_SEC 秒遅延して
     「起動しました。」を 1 回だけ送出する。
-    is_talking と競合しないよう _start_worker は経由せず直接実行する。"""
+    🔴 V1.91: _tx_lock で他の送信（起動直後の他局受信への応答等）と直列化。
+    従来は無ロックで、起動直後に他局を受信すると応答と二重送信になり
+    ストリームが壊れることがあった。TEMP の実行中削除も廃止（競合の元凶）。"""
     if should_exit:
         return
-    started_at = time.monotonic()
-    middle_text = "起動しました。"
-    logger.info(_fmt("TX", "Generate", "startup", "startup_announce"))
-    _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
-    if _generate_hybrid(_intro, middle_text, None):
-        logger.info(_fmt("TX", "Sending", "startup", "startup_announce"))
-        send_usrp_wav_with_padding(TEMP_FINAL)
-        elapsed = time.monotonic() - started_at
-        logger.info(_fmt("TX", "Startup", "startup", f"{elapsed:.1f}s"))
-    else:
-        logger.error(_fmt("!!", "Gen failed", "startup", "startup_announce"))
-    # 一時ファイルの後始末（_reply_executor の finally と同等）
-    for tmp in (TEMP_FINAL, TEMP_48K, TEMP_8K, TEMP_INTRO_PADDED):
-        if os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except OSError as e:
-                logger.error(_fmt("!!", "Tmp rm err", os.path.basename(tmp), str(e)))
+    with _tx_lock:
+        started_at = time.monotonic()
+        middle_text = "起動しました。"
+        logger.info(_fmt("TX", "Generate", "startup", "startup_announce"))
+        _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
+        if _generate_hybrid(_intro, middle_text, None):
+            logger.info(_fmt("TX", "Sending", "startup", "startup_announce"))
+            send_usrp_wav_with_padding(TEMP_FINAL)
+            elapsed = time.monotonic() - started_at
+            logger.info(_fmt("TX", "Startup", "startup", f"{elapsed:.1f}s"))
+        else:
+            logger.error(_fmt("!!", "Gen failed", "startup", "startup_announce"))
 
 
 # ============================================================
@@ -1558,6 +1592,12 @@ def _init_reply_cache():
 def _reply_executor(mode, val, extra=None):
     global is_talking, suppress_until
     started_at = time.monotonic()
+    # 🔴 V1.91: 送信フロー全体を直列化（二重送信・ストリーム破壊の防止）。
+    # 起動アナウンス・ケロ応答・時報・ナイト等が同時に走ると、UDP ストリームが
+    # 混ざる／共有 TEMP_FINAL を上書きし合う。ここで一本化する。
+    if not _tx_lock.acquire(blocking=False):
+        logger.info(_fmt("..", "TX queue", str(val), "waiting for current TX"))
+        _tx_lock.acquire()
     try:
         if mode == "kerchunk":
             # 🔵 V1.75: 応答はキャッシュ優先。ヘッダ受信時のプリ生成が間に合って
@@ -1666,12 +1706,12 @@ def _reply_executor(mode, val, extra=None):
     except Exception as e:
         logger.error(_fmt("!!", "Executor err", str(mode), str(e)))
     finally:
-        for tmp in (TEMP_FINAL, TEMP_48K, TEMP_8K, TEMP_INTRO_PADDED):
-            if os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError as e:
-                    logger.error(_fmt("!!", "Tmp rm err", os.path.basename(tmp), str(e)))
+        # 🔴 V1.91: 実行中の共有 TEMP_* 削除を廃止（Race Condition の元凶）。
+        # 従来はここで TEMP_48K 等を削除していたが、プリキャッシュ・スレッドが
+        # _generate_hybrid で同じファイルを生成している最中に横から消してしまい
+        # 「sox FAIL」を誘発していた。共有 TEMP は /dev/shm 上の小ファイルで、
+        # 各生成が上書きするため実行中の削除は不要。掃除は起動時のみ行う。
+        _tx_lock.release()
         with _reply_lock:
             is_talking = False
 
@@ -1728,6 +1768,14 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
         except Exception as e:
             logger.error(_fmt("!!", "Gen error", "", str(e)))
             return False
+        finally:
+            # 🔴 V1.92: 中間ファイルの掃除は「生成の責任」として _gen_lock 保持の
+            # ままここで行う（レビュー指摘の採用）。ロック内なので他スレッドの
+            # 生成と競合せず、作業ファイルの寿命が明確になる。
+            # 注意: out_path（TEMP_FINAL/キャッシュ）は呼び出し元が送信で読むため
+            # ここでは削除しない。
+            for _t in (TEMP_48K, TEMP_8K, TEMP_INTRO_PADDED):
+                _safe_remove(_t)
 
 
 # ============================================================
@@ -1735,7 +1783,7 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.90 (daemon, V1.89 + TA引きずり対策) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.92 (daemon, V1.91 + レビュー反映) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -1906,6 +1954,10 @@ def monitor_and_reply():
 
     logger.info(f"Monitoring log file: {current_path}")
     f, current_ino = _open_log_file(current_path)
+    # 🔴 V1.91: 前回異常終了で残った共有 TEMP を起動時に一括掃除
+    # （実行中の削除は廃止したため、掃除はここでのみ行う）
+    for _tmp in (TEMP_FINAL, TEMP_48K, TEMP_8K, TEMP_INTRO_PADDED):
+        _safe_remove(_tmp)
     logger.info("Bot ready — monitoring DMR traffic")
     # 🔴 V1.90: 起動時にも自局アイデンティティを主張しておく
     _assert_identity()
