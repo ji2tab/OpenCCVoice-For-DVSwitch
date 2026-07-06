@@ -1,6 +1,6 @@
 # OpenCCVoice / DVSwitch Bot 操作マニュアル（運用者向け）
 
-**対象システム:** Raspberry Pi OS (Bookworm) + DVSwitch-Server + デーモン分離版 Bot（V1.69）
+**対象システム:** Raspberry Pi OS (Bookworm) + DVSwitch-Server + デーモン分離版 Bot（V1.92）
 **スクリプト配置:** `/opt/dvswitch_bot/bin/`
 **サービス名:** `dvswitch-bot`（ハイフン）
 
@@ -121,6 +121,7 @@ sudo journalctl -u dvswitch-bot --since "1 hour ago" --no-pager  # 直近1時間
 | `NightSkip ... scheduled_message suppressed (night mode)` | ナイトモードで定時メッセージを抑制 |
 | `Config error ...` | 設定が不正。起動拒否（フェイルセーフ） |
 | `TX_GAIN ... フォールバック` | TX_GAIN の値が不正なので等倍(1.0)で動作（送出は止めない／V1.68〜） |
+| `Regulatory ID ... forcing fixed_intro.wav (#1, rule 30)` | 長時間 QSO が `QSO_ID_INTERVAL_SEC`（10分）を超えるたびに自局識別信号（intro）を強制送出（無線局運用規則第30条対応／V1.74〜） |
 
 ### 4-4. エラーだけ拾う
 ```bash
@@ -486,5 +487,5 @@ sudo systemctl restart analog_bridge mmdvm_bridge md380-emu
 ---
 
 OpenCCVoice / DVSwitch Bot 操作マニュアル（運用者向け）
-対象: Bookworm + DVSwitch-Server + デーモン分離版 V1.69 / `/opt/dvswitch_bot/bin/` 配置
+対象: Bookworm + DVSwitch-Server + デーモン分離版 V1.92 / `/opt/dvswitch_bot/bin/` 配置
 Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors
