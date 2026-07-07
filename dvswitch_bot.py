@@ -3,14 +3,14 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.92 —
+ — JJ2YYK デジピーター自動応答システム  V1.93 —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
  応答音声キャッシュ・頭無音・終端多重化・SET_INFO メタデータ送出など、主要な設計は
  すべてこのファイル内で完結している。
  
- バージョンごとの詳細な変更履歴（V1.60〜V1.92）は本ファイルには含めず、リポジトリ直下の
+ バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
  
  【設定項目（bot_config.json）】
@@ -48,8 +48,9 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.92 (daemon, V1.91 + レビュー指摘の反映：掃除責任の明確化・記述訂正)
- Last Updated: 2026-07-04
+ Document Version: V1.93 (daemon, V1.92 + 第30条セッションのギャップ判定バグ修正・
+                          QSO_SESSION_GAP_SEC を独立定数化し 60 秒へ変更)
+ Last Updated: 2026-07-07
 ================================================================================
 """
 
@@ -59,7 +60,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.92"
+__version__ = "V1.93"
 
 import os
 import sys
@@ -250,11 +251,14 @@ TX_GAIN_MAX = 5.0    # これ以下（usrpGain と同じ 0.0–5.0 レンジ。>
 # FIXED_INTRO_WAV を強制送信し、自局を識別する。セッションが続く限り繰り返す。
 QSO_ID_INTERVAL_SEC = 600.0   # 10分（アマチュア局の標準）
 
-# セッション継続とみなす無通信ギャップの上限（秒）。この秒数を超えて誰も
-# 長時間送信しなければセッション終了とみなし、次回はタイマーを 0 から再スタート
-# する。既存の SUPPRESS_DURATION_SEC（Normal QSO 検知直後の抑制時間）と同じ値を
-# 採用し、「抑制が切れる=一旦区切りがついた」という既存の考え方と整合させている。
-QSO_SESSION_GAP_SEC = SUPPRESS_DURATION_SEC   # 15秒
+# セッション継続とみなす無通信ギャップの上限（秒）。前回の Normal QSO 送信の
+# 「終了」から今回の送信の「開始」までの純粋な無音がこの秒数を超えたら、
+# セッションが途切れたとみなして積算をリセットし、次回はタイマーを 0 から
+# 再スタートする。
+# 🔴 V1.93: SUPPRESS_DURATION_SEC（15秒）のエイリアスをやめ独立定数化し、
+# 値を 60.0 に変更。既存 TGIFChanger の自TG復帰判定（無音60秒）と運用上の
+# 一貫性を優先し、本ソフト内での第30条運用定義として 60 秒を採用する。
+QSO_SESSION_GAP_SEC = 60.0
 
 # ============================================================
 # グローバル状態 / 設定値
@@ -844,7 +848,8 @@ def _handle_rx_duration(cs, dur, source="eot"):
         logger.info(f"process:suppress start ({SUPPRESS_DURATION_SEC:.1f}s)　{cs}")
         # 🔴 V1.74: 無線局運用規則 第30条対応。カーチャンクではなく Normal QSO
         # （長時間送信）のみをセッション判定・10分カウントの対象とする。
-        _handle_qso_session(now)
+        # 🔴 V1.93: 今回の送信時間 dur を渡し、ギャップ判定を純粋な無音時間で行う。
+        _handle_qso_session(now, dur)
     else:
         logger.info(f"receive:Too short, ignored{tag}: {cs} ({dur:.1f}s, min={RX_DURATION_MIN_SEC}s)")
 
@@ -852,15 +857,24 @@ def _handle_rx_duration(cs, dur, source="eot"):
 # ============================================================
 # 🔴 V1.74: 無線局運用規則 第30条対応（長時間通信セッション管理 + 識別信号強制送信）
 # ============================================================
-def _handle_qso_session(now):
+def _handle_qso_session(now, dur=0.0):
     """Normal QSO（長時間送信）が検知されるたびに呼ばれる。
 
-    無通信ギャップが QSO_SESSION_GAP_SEC（15秒）以内で連続している間は
+    前回の Normal QSO 送信の「終了」から今回の送信の「開始」までの純粋な
+    無通信ギャップが QSO_SESSION_GAP_SEC（60秒）以内で連続している間は
     同一の「長時間通信セッション」とみなし、セッション開始からの経過時間を
     積算する。経過時間が QSO_ID_INTERVAL_SEC（10分）の倍数を新たに跨ぐたびに、
     このタイミング（＝直前の送信が終わった、通話と通話の「間」）で
     FIXED_INTRO_WAV を強制送信して自局を識別する。セッションが続く限り
     10分おきに繰り返す（無線局運用規則 第30条）。
+
+    🔴 V1.93: ギャップ判定バグ修正。now は今回送信の「終了」時刻なので、
+    従来の (now - qso_session_last_end) は「無音＋今回の通話時間」となり、
+    無音が短くても通話が長いだけで誤ってセッションがリセットされていた。
+    今回の送信時間 dur を受け取り、tx_start = now - dur（今回送信の開始時刻の
+    近似）を求め、(tx_start - qso_session_last_end) で純粋な無音時間を評価する。
+    セッション開始時刻も tx_start に合わせ、最初の送信の通話時間も経過時間に
+    含める（経過時間の起点をギャップ判定の起点と一致させる）。
 
     識別信号の内容を法的に保証するため、USE_CSTM_INTRO の設定に関わらず
     必ず正規の FIXED_INTRO_WAV を送信する（カスタム音声には差し替えない）。
@@ -872,10 +886,15 @@ def _handle_qso_session(now):
     """
     global qso_session_start, qso_session_last_end, qso_session_id_count
 
-    if qso_session_last_end is None or (now - qso_session_last_end) > QSO_SESSION_GAP_SEC:
-        # 前回の Normal QSO から QSO_SESSION_GAP_SEC 超が経過している（無通信で
-        # 区切りがついた）、または今回が初回 → 新しいセッションとして 0 から開始。
-        qso_session_start = now
+    # 🔴 V1.93: 今回送信の開始時刻の近似（now は終了時刻）。
+    tx_start = now - dur
+
+    if qso_session_last_end is None or (tx_start - qso_session_last_end) > QSO_SESSION_GAP_SEC:
+        # 前回の Normal QSO の終了から今回の送信開始までの純粋な無音が
+        # QSO_SESSION_GAP_SEC 超（無通信で区切りがついた）、または今回が初回 →
+        # 新しいセッションとして 0 から開始。セッション開始は今回送信の開始時刻に
+        # 合わせ、最初の送信の通話時間も経過時間に含める。
+        qso_session_start = tx_start
         qso_session_id_count = 0
         logger.info(_fmt("..", "QSO session", "start",
                          f"long-transmission session began (10-min ID every {QSO_ID_INTERVAL_SEC/60:.0f}min)"))
@@ -1297,7 +1316,7 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.92 (daemon, V1.91 + レビュー反映) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.93 (daemon, V1.92 + 第30条ギャップ判定修正) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -1324,7 +1343,7 @@ def _log_startup_info():
                     f"(watchdog 専用上限 / end は {RX_DURATION_MAX_SEC}s)")
     else:
         logger.info(f"  Watchdog rescue   : OFF (end of voice transmission のみで判定)")
-    # 🔴 V1.74: 無線局運用規則 第30条対応（識別信号強制送信）の状態を表示
+    # 🔴 V1.74/V1.93: 無線局運用規則 第30条対応（識別信号強制送信）の状態を表示
     logger.info(f"  Regulatory ID     : ON  (rule 30 / interval={QSO_ID_INTERVAL_SEC/60:.0f}min, "
                 f"session gap={QSO_SESSION_GAP_SEC:.0f}s, always uses {os.path.basename(FIXED_INTRO_WAV)})")
     # 🔵 V1.75: コールサイン応答音声キャッシュ（即応答化）の状態を表示
