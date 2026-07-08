@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.84
+ app.py  V2.85
 
  変更履歴:
    V2.0  初版リリース
@@ -138,6 +138,12 @@
    V2.84 🔵 セクションタイトル（.section-title）の文字と下線の間隔を詰めた。
          padding-bottom を 4px → 1px に変更。下線と次要素の間隔（margin-bottom:10px）
          は据え置き。見た目のみの微調整。
+   V2.85 🔵 サービス制御カードに、外部サービスへのリンクを追加。
+         「DVSwitch Dashboard」（ポート80）と「Monit」（ポート2812）へのリンクを、
+         bot バージョン表示の右隣に置いた。リンク先のホスト名は、サーバー側では
+         埋め込まず、ブラウザの window.location.hostname から JS で組み立てる。
+         これにより LAN でも Tailscale でも、アクセス中の経路に応じた正しい URL に
+         なる（別タブ target="_blank" で開く）。表示のみで設定には無関係。
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -832,6 +838,18 @@ font-weight:bold;
     margin-left:4px;letter-spacing:.03em;
   }
 
+  /* 🔵 V2.85: 外部サービス（DVSwitch Dashboard / Monit）へのリンク */
+  .ext-links{
+    display:inline-flex;align-items:center;gap:8px;
+    margin-left:16px;font-size:13px;
+  }
+  .ext-links a{
+    color:var(--orange2);text-decoration:none;font-weight:bold;
+    font-family:arial,sans-serif;
+  }
+  .ext-links a:hover{text-decoration:underline;color:var(--orange)}
+  .ext-links .sep{color:#ccc;user-select:none}
+
   /* メッセージ */
   .msg,.err{
     border-radius:6px;padding:8px 14px;
@@ -929,7 +947,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.84</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.85</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -953,6 +971,12 @@ margin-bottom:6px;border-left:4px solid;
       <span class="svc-name">dvswitch-bot</span>
       <span class="svc-badge {{ status }}" id="svc-status">{{ status }}</span>
       <span class="svc-ver" id="svc-ver">{% if bot_version %}{{ bot_version }}{% endif %}</span>
+      <!-- 🔵 V2.85: 外部サービスへのリンク（ホスト名は JS で補完）-->
+      <span class="ext-links">
+        <a id="link-dvs" href="#" target="_blank" rel="noopener">DVSwitch Dashboard</a>
+        <span class="sep">|</span>
+        <a id="link-monit" href="#" target="_blank" rel="noopener">Monit</a>
+      </span>
       <div class="svc-ctrl" style="margin-left:auto">
         <!-- 通常モード: 変更ボタンのみ -->
         <button class="mode-link" id="btn-edit" onclick="enterEdit()">変更モード</button>
@@ -1209,13 +1233,23 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.84
+  OpenCCVoice for DVSwitch Web Dashboard V2.85
 </div>
 </form>
 
 </main>
 
 <script>
+// 🔵 V2.85: 外部サービスのリンクを、今開いているホスト名で組み立てる。
+// LAN でも Tailscale でも、アクセス中の経路に応じた正しいリンクになる。
+// DVSwitch Dashboard = ポート80（番号なし） / Monit = ポート2812。
+(function(){
+  var host = window.location.hostname;  // 例 192.168.1.66 / 100.x / ホスト名
+  var dvs = document.getElementById("link-dvs");
+  var monit = document.getElementById("link-monit");
+  if(dvs)   dvs.href   = "http://" + host + "/";
+  if(monit) monit.href = "http://" + host + ":2812/";
+})();
 function dotClass(s){
   if(s==="active") return "active";
   if(s==="failed") return "failed";
