@@ -530,50 +530,6 @@ sudo systemctl restart apache2
 > **補足:** Zero 2W + SD カードでは初回表示が重い。`top` で `wa`（I/O待ち）が高い場合は
 > SD のランダムアクセス遅延が主因。
 
-### 13-1. DocumentRoot を変更する手順
-
-DocumentRoot を別のパスへ変更したい場合（ダッシュボードの実体を移設した、独自の配置にした等）は、
-次の手順で行う。上の `sed` ワンライナーは初期セットアップ向けの一括置換なので、以降の変更は
-設定ファイルを直接編集する方が確実。
-
-1. 現在有効な VirtualHost と DocumentRoot を確認する。
-
-```bash
-apache2ctl -S                                   # 有効な VirtualHost の一覧
-grep -rniE "DocumentRoot" /etc/apache2/sites-enabled/
-```
-
-2. 設定ファイルをバックアップする（必須）。
-
-```bash
-sudo cp /etc/apache2/sites-enabled/000-default.conf \
-  /etc/apache2/sites-enabled/000-default.conf.bak.$(date +%Y%m%d)
-```
-
-3. `DocumentRoot` 行を新しいパスへ書き換える。対象ファイルを直接編集し（例: `000-default.conf`）、
-   あわせて新パス配下へのアクセスを許可する `<Directory>` ブロックがあるか確認する。無ければ追加する。
-
-```apache
-DocumentRoot /path/to/new/root
-<Directory /path/to/new/root>
-    Require all granted
-</Directory>
-```
-
-4. 構文チェックしてから反映する。
-
-```bash
-sudo apache2ctl configtest    # "Syntax OK" を確認してから
-sudo systemctl restart apache2
-```
-
-5. `http://<IP>/` を開き、新しい DocumentRoot の内容が表示されれば成功。
-
-> **403 (Forbidden) になる場合:** 新パスに対する `<Directory>` の `Require all granted` と、
-> ディレクトリ・ファイルの読み取り権限（`www-data` が読めること）を確認する。
->
-> **切り戻し:** 問題があれば手順2のバックアップを書き戻し、`sudo systemctl restart apache2` で元に戻す。
-
 ---
 
 # 第4章：音声と Bot
