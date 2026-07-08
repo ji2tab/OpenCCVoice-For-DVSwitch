@@ -1,7 +1,7 @@
-# dvswitch_bot.py ソフトウェア仕様書（V1.92）
+# dvswitch_bot.py ソフトウェア仕様書（V1.93）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**バージョン:** V1.92（無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFOメタデータ・送信直列化 まで反映）
+**バージョン:** V1.93（無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFOメタデータ・送信直列化・第30条セッションのギャップ判定バグ修正 まで反映）
 **役割:** MMDVM_Bridge のログを監視し、カーチャンク自動応答・時報・定時メッセージ・長時間通信時の識別信号（法令対応）を
 USRP プロトコルで送出する常駐デーモン。
 
@@ -140,7 +140,8 @@ PID を付けるのは、複数プロセスや再起動時のファイル衝突�
 | 定数 | 値 | 意味 |
 |---|---|---|
 | `EMPTY_HEADER_THRESHOLD_SEC` | `0.1` | （予約的定数） |
-| `SUPPRESS_DURATION_SEC` | `15.0` | 応答後・通常QSO後の抑制時間（秒）。`QSO_SESSION_GAP_SEC` としても流用 |
+| `SUPPRESS_DURATION_SEC` | `15.0` | 応答後・通常QSO後の抑制時間（秒） |
+| `QSO_SESSION_GAP_SEC` | `60.0` | 🔴V1.93 第30条セッション継続とみなす無通信ギャップの上限（秒）。従来は `SUPPRESS_DURATION_SEC`（15秒）のエイリアスだったが、独立定数化し 60.0 に変更（TGIFChanger-Py の自TG復帰判定＝無音60秒と運用上の一貫性を優先） |
 | `PACKET_INTERVAL` | `0.02` | USRP パケット送信間隔（20ms） |
 | `PRE_POST_PADDING_PACKETS` | `75` | 音声前後の無音パケット数（75×20ms＝1.5秒） |
 | `USRP_EOT_REPEAT` | `1` | 🔴V1.82 送信終端（keyup=0）の送出回数。取りこぼし対策で複数回送出可 |
@@ -407,8 +408,8 @@ kerchunk 応答は次の順で処理される。
 
 ### 7-4. 無線局運用規則第30条対応の流れ（V1.74）
 
-1） Normal QSO 検知のたびに `_handle_qso_session(now)` が呼ばれる
-2） 前回の Normal QSO から `QSO_SESSION_GAP_SEC` 超が経過していれば新セッションとして0から再開。それ以外は既存セッションを継続
+1） Normal QSO 検知のたびに `_handle_qso_session(now, dur)` が呼ばれる（🔴V1.93 で今回の送信時間 `dur` を渡すよう変更）
+2） 🔴V1.93 `now` は今回送信の「終了」時刻なので `tx_start = now - dur`（今回送信の開始時刻の近似）を求め、前回の Normal QSO の「終了」から今回送信の「開始」までの純粋な無音時間 `(tx_start - qso_session_last_end)` を評価する。これが `QSO_SESSION_GAP_SEC`（60秒）超なら新セッションとして0から再開（開始時刻も `tx_start` に合わせ、最初の送信の通話時間も経過時間に含める）。それ以外は既存セッションを継続
 3） セッション経過時間が `QSO_ID_INTERVAL_SEC`（10分）の倍数を新たに跨いだら `_start_worker("regulatory_id", FIXED_INTRO_WAV)` を呼び、直近の送信終了直後というタイミングで識別信号を強制送信
 4） 送信が競合（is_talking中）でスキップされた場合はカウンタを更新せず、次回のNormal QSO検知時に再試行される（取りこぼし防止）
 
@@ -622,6 +623,6 @@ REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL
 
 ---
 
-*dvswitch_bot.py ソフトウェア仕様書 V1.92*
-*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（daemon, V1.60〜V1.92 の集大成）*
+*dvswitch_bot.py ソフトウェア仕様書 V1.93*
+*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（daemon, V1.60〜V1.93 の集大成）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
