@@ -2,6 +2,8 @@
 
 DVSwitch 自動音声応答システムの VOICEVOX 版スクリプト群です（x86_64 Linux 用。ベアメタル / VM / コンテナのいずれでも動作します。Incus コンテナで環境を用意する場合は『Incus コンテナ/incus構築マニュアル.md』を先に実施してください）。
 
+構築手順は『[OpenCCVoice for DVSwitch VV版（VOICEVOX）構築手順書.md](./OpenCCVoice%20for%20DVSwitch%20VV%E7%89%88%EF%BC%88VOICEVOX%EF%BC%89%E6%A7%8B%E7%AF%89%E6%89%8B%E9%A0%86%E6%9B%B8.md)』を参照してください。
+
 ## ダッシュボードについて
 
 このディレクトリには専用のダッシュボード（旧 app.py）は含まれません。
