@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.95a —
+ — JJ2YYK デジピーター自動応答システム  V1.96vv —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -12,6 +12,16 @@
 
  バージョンごとの詳細な変更履歴（V1.60〜）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
+
+ 【V1.96 の要点（V1.95a からの変更）】
+  1. 話者（VOICEVOX の style_id / vvm）を、コード内固定（30 / 6.vvm）から
+     wav_source.json の "voice" を起動時に読む方式へ変更。create_wav.sh（固定WAV側の
+     vv_say.py）と bot（動的合成）が同一の話者選択を共有するようになった。voice が
+     無い / 壊れている / vvm 実在しない場合は No.7（30 / 6.vvm）へフォールバックする。
+     話者を変えたら bot を再起動すると新話者がロードされる（起動時 1 回ロード）。
+  2. query.output_sampling_rate=48000 のハードコードを撤去（deprecation 対応）。
+     VOICEVOX のネイティブ出力（24kHz）に任せ、8kHz 変換は後段の sox に一本化。
+  3. onnxruntime の .so を .so.1.17.3 固定から glob 解決へ（バージョン差に非依存）。
 
  【V1.95a の要点（V1.92 からの変更）】
   1. 音声合成を Open JTalk から VOICEVOX CORE（Python バインディング）へ全面移行。
@@ -66,7 +76,9 @@
      ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
        systemd 常駐化時も ExecStart を venv の python3 にする。
 
- Document Version: V1.95a (daemon, V1.92 + VOICEVOX統合 + キャッシュ堅牢化 + 第30条ギャップ判定修正)
+ Document Version: V1.96vv (daemon, V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化)
+ ※ 版番号の "vv" サフィックスは VOICEVOX 系ノード用ファイルであることを示す
+   （Open JTalk 系 Pi ノード用の同名ファイルと区別する命名規約。2026-07-14 導入）。
  Last Updated: 2026-07-07
 ================================================================================
 """
@@ -77,7 +89,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.95a"
+__version__ = "V1.96vv"
 
 import os
 import sys
@@ -94,28 +106,74 @@ import threading
 import subprocess
 
 # ============================================================
-# 🔵 V1.95a: VOICEVOX CORE 統合（Open JTalk 置き換え）
+# 🔵 V1.96: VOICEVOX CORE 統合（話者は wav_source.json から読む）
 # ============================================================
 # 音声合成は VOICEVOX CORE（Python バインディング / venv 内）で行う。
-# 話者を変更するときは、下の 2 定数（VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH）を
-# 対応表に従って必ずセットで変更する。vv_say.py（create_wav.sh が使う固定 WAV
-# 生成側）の既定値も同じ話者に合わせること。
-#   例) 春日部つむぎ(ノーマル) = style_id 8  / 0.vvm
-#       ずんだもん(ノーマル)   = style_id 3  / 0.vvm
-#       波音リツ(ノーマル)     = style_id 9  / 3.vvm
-#       玄野武宏(ノーマル)     = style_id 11 / 4.vvm
-#       No.7(アナウンス)       = style_id 30 / 6.vvm
-# 全一覧は models/vvms/*.vvm を metas でスキャンして得られる。
-# 将来: bot_config.json 経由の選択式にする（三位一体対応が必要な将来課題）。
+# 🔵 V1.96: 話者（style_id / vvm）は起動時に wav_source.json の "voice" から読む。
+#   これで create_wav.sh（固定WAV側 vv_say.py）と bot（動的合成）が同一の話者選択を
+#   共有する。voice が無い / 壊れている / vvm が実在しない場合は No.7（アナウンス /
+#   style_id 30 / 6.vvm）へフォールバックする（後方互換）。
+#   話者を変えたら bot を再起動すると新話者がロードされる（起動時 1 回ロード）。
+#   固定WAV側は create_wav.sh の再生成で反映する。両者とも同じ voice を読むため揃う。
+#   参考の対応: 春日部つむぎ=8/0.vvm, ずんだもん=3/0.vvm, 波音リツ=9/3.vvm,
+#              玄野武宏=11/4.vvm, No.7(アナウンス)=30/6.vvm。
+#              全一覧は models/vvms/*.vvm を metas でスキャンして得られる。
 from voicevox_core.blocking import Onnxruntime, OpenJtalk as VoicevoxOpenJtalk, Synthesizer, VoiceModelFile
 
 VOICEVOX_DIST_DIR = "/opt/voicevox/dist"
-VOICEVOX_STYLE_ID = 30  # No.7（アナウンス）
-VOICEVOX_VVM_PATH = f"{VOICEVOX_DIST_DIR}/models/vvms/6.vvm"
+VOICEVOX_VVM_DIR = f"{VOICEVOX_DIST_DIR}/models/vvms"
+WAV_SOURCE_JSON = "/opt/dvswitch_bot/wav_source.json"
 
-_vv_onnx = Onnxruntime.load_once(
-    filename=f"{VOICEVOX_DIST_DIR}/onnxruntime/lib/libvoicevox_onnxruntime.so.1.17.3"
-)
+# 既定話者（wav_source.json に voice が無い / 壊れている場合のフォールバック）。
+# create_wav.sh / vv_say.py と揃えて No.7（アナウンス）とする。
+DEFAULT_VOICE_STYLE_ID = 30            # No.7（アナウンス）
+DEFAULT_VOICE_VVM = "6.vvm"
+
+
+def _resolve_voicevox_so():
+    """onnxruntime の .so をバージョン非依存で解決する（.so.1.17.3 固定を廃止）。"""
+    cands = sorted(glob.glob(f"{VOICEVOX_DIST_DIR}/onnxruntime/lib/libvoicevox_onnxruntime.so*"))
+    if not cands:
+        raise FileNotFoundError(
+            f"onnxruntime の .so が見つかりません: {VOICEVOX_DIST_DIR}/onnxruntime/lib/"
+        )
+    return cands[0]
+
+
+def _bootstrap_voice():
+    """wav_source.json の "voice" から (style_id, vvm_path) を決める。
+    無い / 壊れている / vvm 実在しない場合は既定 No.7 へフォールバックする。
+    style_id と vvm は必ずセットで扱い、不一致による合成失敗を避ける。"""
+    style_id = DEFAULT_VOICE_STYLE_ID
+    vvm = DEFAULT_VOICE_VVM
+    try:
+        with open(WAV_SOURCE_JSON, encoding="utf-8") as f:
+            d = json.load(f)
+        v = d.get("voice", {}) if isinstance(d, dict) else {}
+        if isinstance(v, dict):
+            try:
+                style_id = int(v.get("style_id"))
+            except (TypeError, ValueError):
+                style_id = DEFAULT_VOICE_STYLE_ID
+            if v.get("vvm"):
+                vvm = v["vvm"]
+    except Exception:
+        pass  # 読めなければ既定のまま（後方互換）
+
+    # vvm がファイル名ならフルパス化。実在しなければ既定 6.vvm に戻す。
+    vvm_path = vvm if ("/" in vvm or os.path.isabs(vvm)) else f"{VOICEVOX_VVM_DIR}/{vvm}"
+    if not os.path.exists(vvm_path):
+        style_id = DEFAULT_VOICE_STYLE_ID
+        vvm_path = f"{VOICEVOX_VVM_DIR}/{DEFAULT_VOICE_VVM}"
+    return style_id, vvm_path
+
+
+# 起動時に一度だけ話者を確定し、モデルをロードする。
+# 以降 VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH は他所（キャッシュ署名・起動ログ等）から
+# 従来どおり参照される（名前は据え置き、値の出所だけが wav_source.json になった）。
+VOICEVOX_STYLE_ID, VOICEVOX_VVM_PATH = _bootstrap_voice()
+
+_vv_onnx = Onnxruntime.load_once(filename=_resolve_voicevox_so())
 _vv_openjtalk = VoicevoxOpenJtalk(f"{VOICEVOX_DIST_DIR}/dict/open_jtalk_dic_utf_8-1.11")
 _vv_synth = Synthesizer(_vv_onnx, _vv_openjtalk)
 with VoiceModelFile.open(VOICEVOX_VVM_PATH) as _vv_model:
@@ -1311,13 +1369,15 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
     # out_path を追加し、キャッシュ用に任意の出力先へ結合できるようにした
     # （既定 TEMP_FINAL のため、時報など既存呼び出しは挙動不変）。
     # 🔵 V1.95a: 音声合成は VOICEVOX CORE（同一プロセス内ライブラリ）に置き換え。
-    # VOICEVOX が 48kHz で直接出力するため（query.output_sampling_rate=48000）、
-    # 以降の sox ダウンサンプル（48k→8k）・結合パイプラインは従来と完全互換。
+    # 🔵 V1.96: query.output_sampling_rate=48000 のハードコードを撤去。VOICEVOX は
+    # ネイティブ（24kHz）で出力し、8kHz へのダウンサンプルは後段の sox に一本化する
+    # （48k 固定を挟まない分、変換段が素直になる）。結合パイプラインは従来と互換。
+    # ※ 後段 sox は入力レートを WAV ヘッダから読むため、変数名 TEMP_48K のままでも
+    #   24kHz 入力を正しく 8kHz へ変換する（名前は歴史的経緯で据え置き）。
     with _gen_lock:
         try:
             try:
                 query = _vv_synth.create_audio_query(middle_text, style_id=VOICEVOX_STYLE_ID)
-                query.output_sampling_rate = 48000
                 wav_bytes = _vv_synth.synthesis(query, style_id=VOICEVOX_STYLE_ID)
                 with open(TEMP_48K, "wb") as f_wav:
                     f_wav.write(wav_bytes)
