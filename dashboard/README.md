@@ -5,15 +5,25 @@ Raspberry Pi 上の Flask アプリとして動作します。
 
 ## バージョン
 
-**V2.2**
+**V3.11**
+
+JT版（Open JTalk）・VV版（VOICEVOX）両ノードで共用する Web ダッシュボードです。
 
 ## 機能
 
 | 機能 | 説明 |
 |---|---|
-| サービス制御 | dvswitch-bot の Start / Stop / Restart |
-| Bot設定 | `bot_config.json` の全項目をWebフォームで編集 |
-| DVSwitch設定 | `MMDVM_Bridge.ini` / `Analog_Bridge.ini` をWebフォームで編集 |
+| サービス制御 | dvswitch-bot の Start / Stop / Restart。保存時は依存順＋待機つきの順序再起動 |
+| Bot設定 | `bot_config.json` の全項目を Web フォームで編集（受信時間フィルタ・放送回数・ナイトモード等） |
+| DVSwitch設定 | `MMDVM_Bridge.ini` / `Analog_Bridge.ini` / MMDVM `[Info]` を Web フォームで編集 |
+| 3カード一括保存 | Bot設定・DVSwitch設定・MMDVM Info を1操作でまとめて保存し、関連サービスを再起動 |
+| 送出音量（TX_GAIN） | 送出ゲインを Bot設定から調整（dvswitch_bot.py V1.68 以降） |
+| 時刻案内モード | 時報・定時アナウンスの案内モードを設定 |
+| 読み上げ内容の統合編集 | コールサイン読み・地名・定時メッセージ等のテキストを編集。VV版は話者変更、JT版は `--regen` で固定WAVを再生成。V3.1 で JT版ノードでもテキスト編集が可能に |
+| 保存して再生成 | 読み上げ内容を保存し固定WAVを再生成（VV版は話者変更込み） |
+| カスタム音声 | 標準音声（intro／001／002）を自前の音声ファイルに差し替え |
+| テスト送信 | ダッシュボードから単発のテスト送信を実行 |
+| 外部リンク | 関連サービス（Dashboard 等）への外部リンクを表示 |
 | 自動バックアップ | DVSwitch設定保存時に `/opt/dvswitch_bot/bak/ini/` へ自動バックアップ |
 | ログ表示 | MMDVM_Bridge ログ末尾5行を表示・30秒自動更新 |
 | バックアップ一覧 | ini バックアップのタイムスタンプ一覧（最新10件） |
@@ -22,7 +32,7 @@ Raspberry Pi 上の Flask アプリとして動作します。
 ## ファイル構成
 
 ```
-openccvoice_v22/
+dashboard/
 ├── app.py                  # Flask アプリ本体
 ├── dvswitch-web.service    # systemd サービスファイル
 ├── install.sh              # インストールスクリプト
@@ -75,6 +85,10 @@ sudo systemctl restart dvswitch-web
 http://<Raspberry-Pi-IP>:8081/
 ```
 
+> **⚠️ セキュリティ上の注意**
+> ダッシュボードは認証なしで `0.0.0.0:8081` で待ち受けます。
+> 信頼できる LAN / VPN（Tailscale 等）内でのみ使用してください。インターネットへ直接公開しないこと。
+
 ## サービス管理
 
 ```bash
@@ -96,6 +110,28 @@ sudo systemctl daemon-reload
 ```
 
 ## 変更履歴
+
+> 詳細な版ごとの履歴は [`Changelog_dashboard.md`](Changelog_dashboard.md) を参照。
+
+### V3.11
+- 「保存して再生成」ボタンを右寄せに調整。
+
+### V3.1
+- 読み上げテキストの編集を Open JTalk（JT版）ノードでも可能に（共用対応の拡張）。
+  話者が1つの JT版でもテキスト7項目を編集でき、`--regen` で固定WAVを再生成する。
+
+### V3.0
+- V2 系（V2.0〜V2.87bvv）を統合し、JT版（Open JTalk）／VV版（VOICEVOX）両ノード共用の
+  ダッシュボードに再編。変更履歴を `Changelog_dashboard.md` へ分離。
+
+### V2.3〜V2.87（主な追加）
+- 3カード（Bot設定 / DVSwitch設定 / MMDVM Info）の一括保存。
+- サービスの依存順＋待機つき順序再起動（同時 restart から変更）。
+- 送出音量（TX_GAIN）の調整（dvswitch_bot.py V1.68 以降）。
+- 時刻案内モードの設定。
+- カスタム音声（intro／001／002 の差し替え）。
+- 読み上げ内容カードの追加と「話者＋テキストの統合編集」への拡張。
+- 話者変更＋`--regen` による固定WAV再生成、テスト送信、外部リンク。
 
 ### V2.2
 - `CHANGE_LOG` 二重定義を修正
