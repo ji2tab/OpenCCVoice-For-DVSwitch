@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V3.1
+ app.py  V3.11
 
  ■ 位置づけ
    V2 系（V2.0〜V2.87bvv）の機能を統合したメジャーバージョン。
@@ -17,6 +17,11 @@
    V2 系の詳細な変更履歴（V2.0〜V2.87bvv）は本ファイルには含めず、リポジトリの
    Changelog（ダッシュボードセクション）へ分離した（dvswitch_bot.py V1.92 と
    同じ整理方針）。改修時はそちらを参照のこと。
+
+ 【V3.11 の要点（V3.1 からの変更）】
+  1. 🔵 「保存して再生成」ボタンを保存行の右端へ移動（CSS のみ・row-reverse）。
+     7項目テーブル直下の左端では見落とされやすく、一括保存と取り違えて
+     /save_all を押してしまう実運用フィードバックへの対応。
 
  【V3.1 の要点（V3.0 からの変更）】
   1. 🔵 読み上げテキスト編集を Open JTalk（Pi）ノードでも可能にした（共用対応の拡張）。
@@ -68,7 +73,7 @@
 # 版を上げるときは docstring の表記と必ず一致させること。
 # テンプレートのヘッダ/フッタは context_processor 経由（{{ app_version }}）で
 # この値を参照するため、テンプレート内に版のベタ書きはない。
-__version__ = "V3.1"
+__version__ = "V3.11"
 
 import os, json, re, subprocess, glob, time, wave, contextlib
 from datetime import datetime
@@ -1229,7 +1234,10 @@ margin-bottom:6px;border-left:4px solid;
      （下の読み上げ内容プレビュー表と同じ幅感）。通常/変更モード共通。 */
   .wav-input-table input{font-size:11pt;padding:3px 6px;width:100%;box-sizing:border-box}
   .wav-input-table input.wav-in-wide{width:100%}
-  .wav-save-row{display:flex;align-items:center;gap:12px;margin:4px 0 12px}
+  /* 🔵 V3.11: 保存ボタンを行の右端へ（row-reverse で DOM 先頭のボタンが右端、
+     説明文がその左に並ぶ）。7項目テーブル直下の左端では見落とされやすい、
+     という実運用フィードバック 2026-07-14 による配置変更。 */
+  .wav-save-row{display:flex;flex-direction:row-reverse;justify-content:flex-start;align-items:center;gap:12px;margin:4px 0 12px}
   .tbtn-strong{font-weight:bold}
   /* 🔵 V2.79: 上のグリッド(grid3)との間隔を確保。カードは box-shadow(周囲8px)を
      持つため、間隔ゼロだと影同士が重なってめり込んで見える。grid3 内の gap(12px)
