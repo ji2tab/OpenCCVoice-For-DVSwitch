@@ -86,7 +86,31 @@ sudo systemctl enable --now dvswitch-bot
 
 ## リポジトリ構成
 
-### スクリプト（`/opt/dvswitch_bot/bin/` に配置）
+### エディションとディレクトリ
+
+本リポジトリには、音声合成エンジンの異なる 2 つのエディションと、共用の Web ダッシュボードが含まれます。
+
+| ディレクトリ | エディション | 音声合成 | 想定ノード |
+|---|---|---|---|
+| リポジトリ直下 | **Open JTalk 版（JT版）** | Open JTalk + SoX | Raspberry Pi ノード |
+| [`dvs_ocv_vv/`](dvs_ocv_vv/) | **VOICEVOX 版（VV版）** | VOICEVOX | x86_64 Incus コンテナ等 |
+| [`dashboard/`](dashboard/) | **共用 Web ダッシュボード** | — | JT版・VV版 共通 |
+| [`Incus コンテナ/`](Incus%20コンテナ/) | Incus 構築リソース | — | ini サンプルと構築マニュアルのみ（スクリプトは `dvs_ocv_vv/` へ移設済み） |
+
+Web ダッシュボードは JT版・VV版のどちらでも共用です（[`dashboard/app.py`](dashboard/app.py)）。
+
+### 版数
+
+| ファイル | JT版（リポジトリ直下） | VV版（`dvs_ocv_vv/`） |
+|---|---|---|
+| `create_wav.sh` | V1.2 | V1.31vv |
+| `dvswitch_bot.py` | V1.93 | V1.96vv |
+| `vv_say.py` | — | V2.0vv |
+| `bot_setup.py` / `dvs_config.sh` / `test_send.py` | JT版・VV版で共通（同一内容） | |
+
+共用 Web ダッシュボード `dashboard/app.py` は **V3.11**。
+
+### スクリプト（JT版・`/opt/dvswitch_bot/bin/` に配置）
 
 | ファイル | 役割 |
 |---|---|
@@ -159,6 +183,8 @@ and openly shared rather than kept as a black box.
 
 **Stack:** Raspberry Pi OS (Bookworm) + DVSwitch-Server, Open JTalk + SoX, Python 3
 (standard library only).
+
+This repository ships two editions — an **Open JTalk edition** (repository root, for Raspberry Pi nodes) and a **VOICEVOX edition** (`dvs_ocv_vv/`) — plus a **shared web dashboard** (`dashboard/`, `app.py` V3.11) used by both.
 
 See the [complete setup manual](OpenCCVoice_構築導入設定_完全マニュアル.md) (Japanese)
 to build the system from scratch, and [`specification/`](specification/) for per-script
