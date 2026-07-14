@@ -19,31 +19,33 @@
 
 ### 0.2 システム構成
 
-```mermaid
-flowchart TD
-    HT["DMRハンディ機"] -- "RF (430MHz等)" --> HS["ホットスポット / Pi-Star"]
-    HS <-- "TGIFネットワーク (TG44833)<br/>Homebrew (62031)" --> MB
+```
+[DMRハンディ機]
+    │  RF (430MHz等)
+    ▼
+[ホットスポット / Pi-Star]
+    │  TGIFネットワーク (TG44833) / Homebrew (62031)
+    ▼
+━━━ x86_64 Linux（本書の構築対象）━━━━━━━━━━━━━━━━━━━
 
-    subgraph HOST ["x86_64 Linux（本書の構築対象）"]
-        direction TB
-        MB["MMDVM_Bridge<br/>(amd64ネイティブ)"]
-        subgraph ABROW [ ]
-            direction LR
-            AB["Analog_Bridge<br/>(amd64ネイティブ)"]
-            EMU["md380-emu<br/>(ARMバイナリ + qemu-arm-static)"]
-        end
-        BOT["dvswitch_bot.py V1.96vv<br/>(venv内Python・常駐デーモン)<br/>カーチャンク検出 → 応答合成 → USRP送出"]
-        VVC["VOICEVOX CORE 0.16.x<br/>(同一プロセス内ライブラリ)"]
-        CW["create_wav.sh + vv_say.py<br/>(固定WAV生成)"]
-        DASH["dashboard/app.py<br/>(Flask, :8081, dvswitch-web)"]
+  MMDVM_Bridge（amd64ネイティブ）
+    │  TLV
+    ▼
+  Analog_Bridge（amd64ネイティブ）
+    │
+    ├─ AMBE ─▶ md380-emu（ARMバイナリ + qemu-arm-static）
+    │
+    │  USRP/UDP (rx:51000 / tx:51001)
+    ▼
+  dvswitch_bot.py V1.96vv（venv内Python・常駐デーモン）
+    │      カーチャンク検出 → 応答合成 → USRP送出
+    └─ 起動時に1回ロード ─▶ VOICEVOX CORE 0.16.x（同一プロセス内ライブラリ）
 
-        MB <-- "TLV" --> AB
-        AB <-- "AMBE" --> EMU
-        AB <-- "USRP/UDP<br/>(rx:51000 / tx:51001)" --> BOT
-        BOT -- "起動時に1回ロード" --> VVC
-        CW -.-> VVC
-    end
-    style ABROW fill:none,stroke:none
+  create_wav.sh + vv_say.py（固定WAV生成）
+      └───（合成に VOICEVOX CORE を利用）
+
+  dashboard/app.py（Flask, :8081, dvswitch-web）※JT版・VV版で共用
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 音声合成は2系統あります。**①固定WAV**（イントロ等。`create_wav.sh`→`vv_say.py` が生成、送出のたびに読み直し）と **②動的合成**（時報の時刻・コールサイン読み等。bot が起動時にロードした VOICEVOX で合成）。話者は両系統とも `wav_source.json` の `voice` を参照して揃います。
