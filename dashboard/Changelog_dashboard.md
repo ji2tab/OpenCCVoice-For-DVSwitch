@@ -7,6 +7,27 @@
 
 ---
 
+## V3.1 (2026-07-14)
+
+読み上げテキストの編集を Open JTalk（Pi）ノードでも可能にした（共用対応の拡張）。
+これまで読み上げ内容カードの入力UIは `voicevox_available()` で丸ごと隠していたため、
+jtalk ノードでは閲覧のみだった。話者が1つの jtalk でもテキスト7項目を編集できるように
+分離した。
+
+1. 🔵 テンプレート: 7項目編集テーブル（コールサイン/読み・地名・メッセージ1,2/読み）
+   と「保存して再生成」ボタンの表示条件を `voicevox_ok` から `wav_source.exists` へ変更
+   （jtalk / VOICEVOX 両方で表示）。話者選択 select は従来どおり `voicevox_ok and voices`
+   のときのみ表示。保存ヒットの文言も出し分け。
+2. 🔵 `/wav_source_config` を jtalk / VOICEVOX で分岐。
+   - VOICEVOX: 従来どおり話者(voice)を検証・記録し、話者変更時のみ bot を再起動。
+   - Open JTalk: 話者は扱わず（voice を書かない）、`--regen` で固定WAVを作り直すのみ。
+     固定WAVは bot が送出のたびに読み直す（reply cache も mtime で自動無効化する）ため
+     bot 再起動はしない。
+3. 🔵 対応: jtalk 側は create_wav.sh **V1.2 以降**（--regen 対応）が必要。
+   dvswitch_bot.py（Open JTalk 系）は**無改修**（V1.93 のまま動作）。
+
+---
+
 ## V3.0 (2026-07-14) — メジャーバージョン
 
 V2 系（V2.0〜V2.87bvv）の機能を統合した、jtalk / VOICEVOX 両ノード共用の
