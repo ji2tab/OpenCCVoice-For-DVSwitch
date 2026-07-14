@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# uninstall.sh  OpenCCVoice for DVSwitch Web Dashboard V2.2
+# uninstall.sh  OpenCCVoice for DVSwitch Web Dashboard V3.11
 #
 # 使い方:
 #   curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/uninstall.sh | sudo bash
