@@ -2,7 +2,9 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
-#   Version: V1.1 （所有者 chown を ocv 決め打ちから汎用化。V1.0 の記録/プリフィルを含む）
+#   Version: V1.3avv （V1.3a に vv サフィックス付与。--regen、話者選択、chown 汎用化を含む）
+#   ※ 版番号の "vv" は VOICEVOX 系ノード用ファイルであることを示す命名規約
+#     （Open JTalk 系 Pi ノード用の同名ファイルと区別する。2026-07-14 導入）。
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
 #   出力: /opt/dvswitch_bot/ 直下（fixed_intro/outro, time_intro, 001, 002 ほか）
 #
@@ -12,12 +14,37 @@
 #           UID 1000 の順で実ユーザーを特定し、その既定グループへ揃える
 #           （chown_owner ヘルパに集約）。複数ユーザー非想定・www-data 等の
 #           システムユーザー（UID<1000）は対象外、という構成前提に基づく。
+#     V1.2  🔵 音声キャラクター（話者）の対話式選択を追加。
+#           入力セッションの最前段で、環境の VOICEVOX 全話者（models/vvms/*.vvm）
+#           をスキャンして一覧表示し、番号で選ばせる。選択結果（style_id / vvm /
+#           label）を wav_source.json の "voice" オブジェクトへ保存する。次回起動時
+#           は前回の話者を既定選択としてプリフィルする。VOICEVOX の読み込み・スキャン
+#           に失敗した場合は選択をスキップし、既定話者（No.7 アナウンス / style_id 30
+#           / 6.vvm）で続行する（WAV 生成自体は止めない）。
+#     V1.3  🔵 --regen（非対話再生成）モードを追加。
+#           wav_source.json に記録済みの texts（最終合成テキスト）と voice（話者）を
+#           そのまま使い、プロンプト一切なしで全WAVを再生成する。Web ダッシュボード
+#           （app.py）から「話者だけ変えて作り直す」ために叩く入口。
+#           手順: app.py が wav_source.json の voice を書き換え → 本モードを実行。
+#           vv_say.py は wav_source.json の voice を自分で読むため、本モードは
+#           テキストを渡すだけで新話者の音声になる。生成成功後に generated_at のみ
+#           更新する（texts / voice には触れない）。既存WAVのバックアップは対話時と
+#           同様に自動実行。texts が無い（旧形式・未生成）場合はエラー終了(exit 1)。
+#     V1.3a 🔵 文言修正のみ（機能変更なし）。V1.2 時代の「合成は No.7 のまま（次回
+#           改修）」という注意書きが、vv_say.py 改修版・bot V1.96 配置後は事実と
+#           異なるため、確認画面・ヘルプ・完了メッセージから撤去。代わりに
+#           「固定WAVは選択話者で生成される／bot 動的合成への反映は bot 再起動が
+#           必要」という正確な案内に差し替えた。
+#           ※ V1.2 の「選択と保存まで（合成は No.7 のまま）」という制限は、
+#             vv_say.py（wav_source.json の voice 参照版）と dvswitch_bot.py V1.96
+#             の配置により解消済み。V1.3 以降、選択した話者で実際に合成される。
 #
 #   使い方:
-#     sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
-#     sudo ./create_wav.sh -r     バックアップから復元（日付フォルダを選択）
-#     sudo ./create_wav.sh -d     /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
-#     sudo ./create_wav.sh -h     ヘルプ
+#     sudo ./create_wav.sh          対話で固定WAVを作成（上書き前に自動バックアップ）
+#     sudo ./create_wav.sh --regen  記録済みの内容(texts)と話者(voice)で全WAVを非対話再生成
+#     sudo ./create_wav.sh -r       バックアップから復元（日付フォルダを選択）
+#     sudo ./create_wav.sh -d       /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
+#     sudo ./create_wav.sh -h       ヘルプ
 #
 #   バックアップ:
 #     上書き直前に、既存の *.wav を /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避する。
@@ -37,18 +64,21 @@
 #         bot_setup.py / app.py が共有し、後者2つは「知っているキーだけ」で保存し
 #         直すため、無関係なキーを足すと消える。WAV のソースは性質が別物なので
 #         専用ファイル(wav_source.json)に分離している。
+#         🔵 V1.2: 話者選択(voice)も同じ理由で wav_source.json 側に持たせる
+#         （bot_config.json には足さない）。ファイルを増やさず1ファイルで管理する。
 #
 #   (2) 次回起動時に前回値をプリフィル
 #       wav_source.json があれば、各 read プロンプトの初期値(-i)に前回の入力を
 #       流し込む。そのまま Enter で前回と同じ内容を再生成できる。コールサイン等を
 #       変えなければ、手で直した読み仮名もそのまま再利用される。
+#       🔵 V1.2: 話者選択も前回値を既定選択としてプリフィルする。
 #
 #   JSON の読み書きは、日本語・記号のエスケープを安全に扱うため python3 を用いる
 #   （bot が python3 前提の環境なので追加依存はない）。
 # ==============================================================================
 
 # 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
-SCRIPT_VERSION="V1.1"
+SCRIPT_VERSION="V1.3avv"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -59,6 +89,25 @@ BAK_ROOT="/opt/dvswitch_bot/bak/wav"
 
 # 🔵 改修: 入力内容（読み上げソーステキスト）の保存先
 SRC_JSON="/opt/dvswitch_bot/wav_source.json"
+
+# ------------------------------------------------------------------------------
+# 🔵 V1.2: 話者（VOICEVOX）選択まわりの定数
+# ------------------------------------------------------------------------------
+# VOICEVOX の配置と、話者スキャンに使う venv 側 python3（voicevox_core を持つ）。
+# vv_say.py を叩くのと同じ python を使う。
+VOICEVOX_DIST_DIR="/opt/voicevox/dist"
+VENV_PY="/opt/dvswitch_bot/venv/bin/python3"
+
+# 既定話者（スキャン失敗時・初回で前回値が無いときのフォールバック）。
+# 現行 vv_say.py と揃えて No.7（アナウンス） / style_id 30 / 6.vvm とする。
+DEFAULT_VOICE_STYLE_ID="30"
+DEFAULT_VOICE_VVM="6.vvm"
+DEFAULT_VOICE_LABEL="No.7（アナウンス）"
+
+# 選択結果（select_voice で確定する）
+VOICE_STYLE_ID=""
+VOICE_VVM=""
+VOICE_LABEL=""
 
 # ------------------------------------------------------------------------------
 # 🔵 V1.1: 生成物の所有者を汎用的に決定する（ocv 決め打ちを廃止）
@@ -115,10 +164,24 @@ show_help() {
 DVSwitch bot 固定WAV 作成ツール create_wav.sh
 
 使い方:
-  sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
-  sudo ./create_wav.sh -r     バックアップから復元（日付フォルダを選択）
-  sudo ./create_wav.sh -d     /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
-  sudo ./create_wav.sh -h     このヘルプを表示
+  sudo ./create_wav.sh          対話で固定WAVを作成（上書き前に自動バックアップ）
+  sudo ./create_wav.sh --regen  記録済み内容で全WAVを非対話再生成（下記参照）
+  sudo ./create_wav.sh -r       バックアップから復元（日付フォルダを選択）
+  sudo ./create_wav.sh -d       /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
+  sudo ./create_wav.sh -h       このヘルプを表示
+
+非対話再生成（--regen）:
+  wav_source.json に記録済みの texts（最終合成テキスト）と voice（話者）をそのまま
+  使い、プロンプトなしで全WAVを作り直します。話者だけ変えて作り直す用途
+  （Web ダッシュボードからの話者変更）の入口です。テキストを変えたい場合は
+  通常の対話モードを使ってください。texts の記録が無い場合はエラー終了します。
+
+音声キャラクター（話者）の選択:
+  作成の最初に、VOICEVOX の全話者（models/vvms/*.vvm）を一覧表示し、番号で選べます。
+  選んだ話者（style_id / vvm / 表示名）は wav_source.json の "voice" に保存され、
+  次回起動時は前回の話者が既定選択になります。
+  固定WAVは選択した話者で生成されます（vv_say.py が voice を参照）。
+  bot の動的合成（時報の時刻部分等）へ反映するには bot の再起動が必要です。
 
 生成されるWAV（/opt/dvswitch_bot/ 直下に上書き）:
   fixed_intro.wav  … カーチャンク応答イントロ
@@ -128,15 +191,15 @@ DVSwitch bot 固定WAV 作成ツール create_wav.sh
   ※ time_outro.wav は現行 bot では未使用（生成はするが無害）
 
 入力内容の記録（wav_source.json）:
-  生成時に、入力原文・読み仮名・合成テキストを /opt/dvswitch_bot/wav_source.json
-  へ保存します。次回起動時はこの内容を各入力欄の初期値として読み込むため、
-  そのまま Enter で前回と同じWAVを再生成できます。
-  （bot_config.json には一切追記しません。WAV のソースは別ファイルで管理します。）
+  生成時に、入力原文・読み仮名・合成テキスト・選択した話者を
+  /opt/dvswitch_bot/wav_source.json へ保存します。次回起動時はこの内容を各入力欄・
+  話者選択の既定値として読み込むため、そのまま Enter で前回と同じWAVを再生成できます。
+  （bot_config.json には一切追記しません。WAV のソースと話者は別ファイルで管理します。）
 
 バックアップ:
   作成（上書き）の直前に、既存の *.wav と wav_source.json を
   /opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/ へ自動退避します。
-  運用中に作り直して失敗しても、 -r で元のWAVセット（と入力記録）に戻せます。
+  運用中に作り直して失敗しても、 -r で元のWAVセット（と入力記録・話者）に戻せます。
 
 備考:
   bot は送出のたびにWAVを読み直すため、上書きすれば再起動なしで次の送出から反映されます。
@@ -157,7 +220,7 @@ load_prior() {
   mapfile -t -d $'\x1f' PRIOR < <(python3 - "$SRC_JSON" <<'PYEOF'
 import json, sys
 keys = ["callsign", "callsign_kana", "location", "msg1", "msg1_kana", "msg2", "msg2_kana"]
-try:
+try:https://github.com/ji2tab/OpenCCVoice-For-DVSwitch/blob/main/create_wav.sh
     with open(sys.argv[1], encoding="utf-8") as f:
         d = json.load(f)
     if not isinstance(d, dict):
@@ -172,10 +235,159 @@ PYEOF
 }
 
 # ------------------------------------------------------------------------------
+# 🔵 V1.2: wav_source.json から前回の話者選択を読み込む
+#   出力: PRIOR_VOICE_STYLE_ID / PRIOR_VOICE_VVM / PRIOR_VOICE_LABEL
+#   "voice" が無い／壊れている場合は全て空（＝既定話者にフォールバック）。
+# ------------------------------------------------------------------------------
+PRIOR_VOICE_STYLE_ID=""
+PRIOR_VOICE_VVM=""
+PRIOR_VOICE_LABEL=""
+load_prior_voice() {
+  PRIOR_VOICE_STYLE_ID=""
+  PRIOR_VOICE_VVM=""
+  PRIOR_VOICE_LABEL=""
+  [ -f "$SRC_JSON" ] || return 0
+  local _v
+  mapfile -t -d $'\x1f' _v < <(python3 - "$SRC_JSON" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+    v = d.get("voice", {}) if isinstance(d, dict) else {}
+    if not isinstance(v, dict):
+        v = {}
+except Exception:
+    v = {}
+sys.stdout.write("\x1f".join([
+    str(v.get("style_id", "")),
+    str(v.get("vvm", "")),
+    str(v.get("label", "")),
+]))
+PYEOF
+)
+  PRIOR_VOICE_STYLE_ID="${_v[0]:-}"
+  PRIOR_VOICE_VVM="${_v[1]:-}"
+  PRIOR_VOICE_LABEL="${_v[2]:-}"
+}
+
+# ------------------------------------------------------------------------------
+# 🔵 V1.2: 話者（VOICEVOX）を対話式で選択する
+#   - venv python3 で models/vvms/*.vvm をスキャンし、style_id 昇順で一覧表示
+#   - 前回選択（無ければ既定 No.7）を初期選択としてプリフィル
+#   - 選択結果を VOICE_STYLE_ID / VOICE_VVM / VOICE_LABEL に確定
+#   - スキャン失敗・無効入力時は既定（前回 or No.7）で続行（生成は止めない）
+#   レコード形式: "style_id\x1fvvm\x1fキャラ名\x1fスタイル名"（1行1レコード）
+# ------------------------------------------------------------------------------
+select_voice() {
+  echo "=========================================================="
+  echo " 音声キャラクター（話者）の選択"
+  echo "----------------------------------------------------------"
+
+  # 既定（前回値 → 無ければ No.7）
+  local def_sid def_vvm def_label
+  if [ -n "$PRIOR_VOICE_STYLE_ID" ] && [ -n "$PRIOR_VOICE_VVM" ]; then
+    def_sid="$PRIOR_VOICE_STYLE_ID"
+    def_vvm="$PRIOR_VOICE_VVM"
+    def_label="${PRIOR_VOICE_LABEL:-style_id ${PRIOR_VOICE_STYLE_ID} / ${PRIOR_VOICE_VVM}}"
+  else
+    def_sid="$DEFAULT_VOICE_STYLE_ID"
+    def_vvm="$DEFAULT_VOICE_VVM"
+    def_label="$DEFAULT_VOICE_LABEL"
+  fi
+
+  # 全話者スキャン（venv python3 / voicevox_core）
+  local scan=""
+  if [ -x "$VENV_PY" ]; then
+    scan="$("$VENV_PY" - <<'PYEOF' 2>/dev/null
+import glob, sys
+try:
+    from voicevox_core.blocking import VoiceModelFile
+except Exception:
+    sys.exit(0)  # 出力なし → bash 側で既定にフォールバック
+
+DIST_DIR = "/opt/voicevox/dist"
+recs = []
+for vvm_path in sorted(glob.glob(DIST_DIR + "/models/vvms/*.vvm")):
+    vvm = vvm_path.rsplit("/", 1)[-1]
+    try:
+        with VoiceModelFile.open(vvm_path) as model:
+            metas = model.metas
+    except Exception:
+        continue
+    for ch in metas:
+        for st in ch.styles:
+            recs.append((st.id, vvm, ch.name, st.name))
+
+recs.sort(key=lambda r: r[0])
+for sid, vvm, cname, sname in recs:
+    sys.stdout.write("%d\x1f%s\x1f%s\x1f%s\n" % (sid, vvm, cname, sname))
+PYEOF
+)"
+  fi
+
+  # スキャン不可 → 既定で続行
+  if [ -z "$scan" ]; then
+    echo "[WARN] 話者一覧を取得できませんでした（VOICEVOX 読み込み失敗、または venv 不在）。"
+    echo "       既定の話者で続行します: ${def_label}  (style_id=${def_sid} / ${def_vvm})"
+    VOICE_STYLE_ID="$def_sid"
+    VOICE_VVM="$def_vvm"
+    VOICE_LABEL="$def_label"
+    echo ""
+    return 0
+  fi
+
+  # レコードを配列へ
+  local RECS=()
+  mapfile -t RECS <<< "$scan"
+
+  # 一覧表示（既定に一致する行へマーカー）
+  local i sid vvm cname sname def_idx=""
+  echo " 番号   style_id  vvm       キャラクター（スタイル）"
+  echo "----------------------------------------------------------"
+  for i in "${!RECS[@]}"; do
+    IFS=$'\x1f' read -r sid vvm cname sname <<< "${RECS[$i]}"
+    if [ "$sid" = "$def_sid" ] && [ "$vvm" = "$def_vvm" ]; then
+      def_idx="$((i+1))"
+      printf "  %3d)  %-8s  %-8s  %s（%s）  ← 前回/既定\n" "$((i+1))" "$sid" "$vvm" "$cname" "$sname"
+    else
+      printf "  %3d)  %-8s  %-8s  %s（%s）\n" "$((i+1))" "$sid" "$vvm" "$cname" "$sname"
+    fi
+  done
+  echo "----------------------------------------------------------"
+
+  # 既定に一致する行が無ければ 1 を初期値に
+  local prompt_def="${def_idx:-1}"
+
+  # 選択入力（Enter で既定）
+  local SEL=""
+  read -ep "話者番号を選択してください (Enter で既定): " -i "$prompt_def" SEL
+
+  # 検証。無効なら既定で続行
+  if ! [[ "$SEL" =~ ^[0-9]+$ ]] || [ "$SEL" -lt 1 ] || [ "$SEL" -gt "${#RECS[@]}" ]; then
+    echo "[WARN] 無効な選択です。既定の話者で続行します: ${def_label}  (style_id=${def_sid} / ${def_vvm})"
+    VOICE_STYLE_ID="$def_sid"
+    VOICE_VVM="$def_vvm"
+    VOICE_LABEL="$def_label"
+    echo ""
+    return 0
+  fi
+
+  IFS=$'\x1f' read -r sid vvm cname sname <<< "${RECS[$((SEL-1))]}"
+  VOICE_STYLE_ID="$sid"
+  VOICE_VVM="$vvm"
+  VOICE_LABEL="${cname}（${sname}）"
+
+  echo ""
+  echo "[選択] ${VOICE_LABEL}  (style_id=${VOICE_STYLE_ID} / ${VOICE_VVM})"
+  echo ""
+}
+
+# ------------------------------------------------------------------------------
 # 🔵 改修: 入力内容を wav_source.json へ保存する
 #   値は環境変数経由で python3 に渡す（クォート事故を避けるため）。
 #   入力原文・読み仮名に加え、実際に合成した最終テキスト(texts)も残し、
 #   後から「何を喋っているWAVなのか」を完全に復元できるようにする。
+#   🔵 V1.2: 選択した話者(voice)も同じファイルへ保存する。
 # ------------------------------------------------------------------------------
 save_source_json() {
   GEN_AT="$(date '+%Y-%m-%d %H:%M:%S')" \
@@ -192,8 +404,19 @@ save_source_json() {
   J_TEXT_001="$TEXT_001" \
   J_TEXT_002="$TEXT_002" \
   J_TIME_OUTRO="です。" \
+  J_VOICE_STYLE_ID="$VOICE_STYLE_ID" \
+  J_VOICE_VVM="$VOICE_VVM" \
+  J_VOICE_LABEL="$VOICE_LABEL" \
   python3 - "$SRC_JSON" <<'PYEOF'
 import json, os, sys
+
+def _style_id(raw):
+    # 数値なら int で、そうでなければ文字列のまま保存する
+    raw = (raw or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return raw
+
 d = {
     "generated_at":  os.environ.get("GEN_AT", ""),
     "callsign":      os.environ.get("J_CALLSIGN", ""),
@@ -203,7 +426,13 @@ d = {
     "msg1_kana":     os.environ.get("J_MSG1_KANA", ""),
     "msg2":          os.environ.get("J_MSG2", ""),
     "msg2_kana":     os.environ.get("J_MSG2_KANA", ""),
-    # 実際に Open JTalk へ渡した最終テキスト（合成内容の記録）
+    # 🔵 V1.2: 選択した話者（vv_say.py / dvswitch_bot.py V1.96 が参照する）
+    "voice": {
+        "style_id": _style_id(os.environ.get("J_VOICE_STYLE_ID", "")),
+        "vvm":      os.environ.get("J_VOICE_VVM", ""),
+        "label":    os.environ.get("J_VOICE_LABEL", ""),
+    },
+    # 実際に Open JTalk / VOICEVOX へ渡した最終テキスト（合成内容の記録）
     "texts": {
         "fixed_intro": os.environ.get("J_FIXED_INTRO", ""),
         "fixed_outro": os.environ.get("J_FIXED_OUTRO", ""),
@@ -345,12 +574,129 @@ do_delete() {
 }
 
 # ------------------------------------------------------------------------------
+# 🔵 V1.3: 非対話再生成（--regen）
+#   wav_source.json の texts（最終合成テキスト）と voice（話者）をそのまま使い、
+#   プロンプトなしで全WAVを再生成する。Web ダッシュボード（app.py）が話者変更後に
+#   叩く入口。vv_say.py は wav_source.json の voice を自分で読むため、ここでは
+#   テキストを渡すだけで選択中の話者の音声になる。
+#   成功後に generated_at のみ更新する（texts / voice には触れない）。
+# ------------------------------------------------------------------------------
+do_regen() {
+  echo "=========================================================="
+  echo " 非対話再生成（--regen）  ${SCRIPT_VERSION}"
+  echo "=========================================================="
+
+  if [ ! -f "$SRC_JSON" ]; then
+    echo "[ERROR] ${SRC_JSON} がありません。先に対話モードで一度WAVを作成してください。"
+    exit 1
+  fi
+
+  # texts と voice を US(0x1f) 区切りで取り出す（順序固定）。
+  # [0]fixed_intro [1]fixed_outro [2]time_intro [3]001 [4]002 [5]time_outro
+  # [6]voice.label [7]voice.style_id [8]voice.vvm
+  local FIELDS=()
+  mapfile -t -d $'\x1f' FIELDS < <(python3 - "$SRC_JSON" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+t = d.get("texts", {}) if isinstance(d, dict) else {}
+if not isinstance(t, dict):
+    t = {}
+v = d.get("voice", {}) if isinstance(d, dict) else {}
+if not isinstance(v, dict):
+    v = {}
+keys = ["fixed_intro", "fixed_outro", "time_intro", "001", "002", "time_outro"]
+out = [str(t.get(k, "")) for k in keys]
+out += [str(v.get("label", "")), str(v.get("style_id", "")), str(v.get("vvm", ""))]
+sys.stdout.write("\x1f".join(out))
+PYEOF
+)
+  while [ "${#FIELDS[@]}" -lt 9 ]; do FIELDS+=(""); done
+
+  local T_INTRO="${FIELDS[0]}" T_OUTRO="${FIELDS[1]}" T_TIME="${FIELDS[2]}"
+  local T_001="${FIELDS[3]}"   T_002="${FIELDS[4]}"   T_TOUT="${FIELDS[5]}"
+  local V_LABEL="${FIELDS[6]}" V_SID="${FIELDS[7]}"   V_VVM="${FIELDS[8]}"
+
+  # texts が空（旧形式の wav_source.json など）は再生成不能
+  if [ -z "$T_INTRO" ] || [ -z "$T_001" ] || [ -z "$T_002" ]; then
+    echo "[ERROR] wav_source.json に texts の記録がありません（旧形式の可能性）。"
+    echo "        対話モード（引数なし）で一度作成し直すと記録されます。"
+    exit 1
+  fi
+
+  if [ -n "$V_LABEL" ]; then
+    echo "[INFO] 話者: ${V_LABEL} (style_id=${V_SID} / ${V_VVM})"
+  else
+    echo "[INFO] 話者: 記録なし → vv_say.py の既定（No.7）で生成します。"
+  fi
+  echo "[INFO] 記録済みテキストで全WAVを再生成します。"
+  echo ""
+
+  # 上書き直前の自動バックアップ（対話時と同一）
+  backup_wavs
+
+  echo "WAVファイルを生成中..."
+
+  /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$T_INTRO" "${TMP_DIR}/temp_intro.wav" \
+    && sox "${TMP_DIR}/temp_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_intro.wav" \
+    && echo " [OK] fixed_intro.wav" || { echo " [NG] fixed_intro.wav"; exit 1; }
+
+  /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$T_OUTRO" "${TMP_DIR}/temp_outro.wav" \
+    && sox "${TMP_DIR}/temp_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_outro.wav" \
+    && echo " [OK] fixed_outro.wav" || { echo " [NG] fixed_outro.wav"; exit 1; }
+
+  /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$T_TIME" "${TMP_DIR}/time_intro.wav" \
+    && sox "${TMP_DIR}/time_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_intro.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse \
+    && echo " [OK] time_intro.wav" || { echo " [NG] time_intro.wav"; exit 1; }
+
+  /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$T_001" "${TMP_DIR}/001_raw.wav" \
+    && sox "${TMP_DIR}/001_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/001.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse \
+    && echo " [OK] 001.wav" || { echo " [NG] 001.wav"; exit 1; }
+
+  /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$T_002" "${TMP_DIR}/002_raw.wav" \
+    && sox "${TMP_DIR}/002_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/002.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse \
+    && echo " [OK] 002.wav" || { echo " [NG] 002.wav"; exit 1; }
+
+  /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$T_TOUT" "${TMP_DIR}/time_outro.wav" \
+    && sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav" \
+    && echo " [OK] time_outro.wav" || { echo " [NG] time_outro.wav"; exit 1; }
+
+  # generated_at のみ更新（texts / voice は不変）
+  python3 - "$SRC_JSON" <<'PYEOF'
+import json, os, sys
+from datetime import datetime
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    d = json.load(f)
+d["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(d, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PYEOF
+  chown_owner "$SRC_JSON"
+  echo " [OK] wav_source.json （generated_at を更新）"
+
+  rm -f "${TMP_DIR}/temp_intro.wav" "${TMP_DIR}/temp_outro.wav" "${TMP_DIR}/time_intro.wav" \
+        "${TMP_DIR}/001_raw.wav" "${TMP_DIR}/002_raw.wav" "${TMP_DIR}/time_outro.wav"
+
+  echo ""
+  echo "[完了] 再生成しました。bot の動的合成（時報等）へ話者を反映するには bot の再起動が必要です。"
+  exit 0
+}
+
+# ------------------------------------------------------------------------------
 # 引数処理
 # ------------------------------------------------------------------------------
 case "${1:-}" in
   -h|--help) show_help; exit 0 ;;
   -r)        do_restore ;;
   -d)        do_delete ;;
+  --regen)   do_regen ;;
   "")        : ;;  # 引数なし → 通常の作成処理へ
   *)         echo "不明なオプション: $1"; echo ""; show_help; exit 1 ;;
 esac
@@ -424,11 +770,16 @@ function msg_alphanum_to_kana() {
 
 # 🔵 改修: 前回の入力値を読み込む（あれば各入力欄の初期値に使う）
 load_prior
+# 🔵 V1.2: 前回の話者選択も読み込む（話者選択の既定に使う）
+load_prior_voice
 if [ -f "$SRC_JSON" ]; then
   echo "[INFO] 前回の入力内容を読み込みました（${SRC_JSON}）。"
   echo "       各項目は前回値を初期表示します。変更なければそのまま Enter。"
   echo ""
 fi
+
+# 🔵 V1.2: 最前段で音声キャラクター（話者）を選択する
+select_voice
 
 # コールサインの入力（前回値があれば初期表示）
 read -ep "1. コールサインを入力してください (例: JJ2YYK): " -i "${PRIOR[0]}" CALLSIGN
@@ -467,14 +818,19 @@ read -ep "   -> 読みを確認・修正してください: " -i "$MSG2_KANA_DEF
 BASE_INTRO_TEXT="こちらは、${CALLSIGN_KANA}、${LOCATION} ディーエムアール デジピーターです。"
 
 echo ""
-echo "以下の読み上げ内容でWAVファイルを生成します:"
+echo "以下の内容でWAVファイルを生成します:"
 echo "----------------------------------------------------------"
+echo " [話者]            : ${VOICE_LABEL}  (style_id=${VOICE_STYLE_ID} / ${VOICE_VVM})"
 echo " [fixed_intro.wav] : $BASE_INTRO_TEXT"
 echo " [fixed_outro.wav] : カーチャンクです。"
 echo " [time_intro.wav]  : こちらは、${CALLSIGN_KANA}、"
 echo " [001.wav]         : ${BASE_INTRO_TEXT}${MSG1_KANA}"
 echo " [002.wav]         : ${BASE_INTRO_TEXT}${MSG2_KANA}"
 echo " [time_outro.wav]  : です。"
+echo "----------------------------------------------------------"
+echo " ※ 固定WAVは選択した話者で生成されます（vv_say.py が wav_source.json の"
+echo "    voice を参照）。bot の動的合成（時報の時刻部分・コールサイン読み等）へ"
+echo "    話者を反映するには、生成後に bot の再起動が必要です。"
 echo "----------------------------------------------------------"
 read -ep "よろしいですか？ (Y/n): " CONFIRM
 if [[ "${CONFIRM^^}" == "N" ]]; then
@@ -493,34 +849,34 @@ echo "WAVファイルを生成中..."
 # ------------------------------------------------------------------------------
 
 # --- fixed_intro.wav ---
-echo "$BASE_INTRO_TEXT" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/temp_intro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$BASE_INTRO_TEXT" "${TMP_DIR}/temp_intro.wav"
 sox "${TMP_DIR}/temp_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_intro.wav"
 echo " [OK] fixed_intro.wav"
 
 # --- fixed_outro.wav ---
-echo "カーチャンクです。" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/temp_outro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "カーチャンクです。" "${TMP_DIR}/temp_outro.wav"
 sox "${TMP_DIR}/temp_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_outro.wav"
 echo " [OK] fixed_outro.wav"
 
 # --- time_intro.wav ---
-echo "こちらは、${CALLSIGN_KANA}、" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/time_intro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "こちらは、${CALLSIGN_KANA}、" "${TMP_DIR}/time_intro.wav"
 sox "${TMP_DIR}/time_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_intro.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse
 echo " [OK] time_intro.wav"
 
 # --- 001.wav ---
 TEXT_001="${BASE_INTRO_TEXT}${MSG1_KANA}"
-echo "$TEXT_001" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/001_raw.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$TEXT_001" "${TMP_DIR}/001_raw.wav"
 sox "${TMP_DIR}/001_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/001.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse
 echo " [OK] 001.wav"
 
 # --- 002.wav ---
 TEXT_002="${BASE_INTRO_TEXT}${MSG2_KANA}"
-echo "$TEXT_002" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/002_raw.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$TEXT_002" "${TMP_DIR}/002_raw.wav"
 sox "${TMP_DIR}/002_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/002.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse
 echo " [OK] 002.wav"
 
 # --- time_outro.wav ---
-echo "です。" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/time_outro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "です。" "${TMP_DIR}/time_outro.wav"
 sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav"
 echo " [OK] time_outro.wav"
 
@@ -528,7 +884,7 @@ echo " [OK] time_outro.wav"
 # 🔵 改修: 入力内容を wav_source.json へ保存（次回起動時のプリフィル元になる）
 # ------------------------------------------------------------------------------
 save_source_json
-echo " [OK] wav_source.json （入力内容を記録）"
+echo " [OK] wav_source.json （入力内容＋話者を記録）"
 
 # ------------------------------------------------------------------------------
 # 4. 後処理・確認
@@ -542,9 +898,12 @@ echo "=========================================================="
 echo " すべての処理が完了しました！"
 echo " 出力先: $OUT_DIR"
 echo " 入力記録: $SRC_JSON"
+echo " 選択話者: ${VOICE_LABEL}  (style_id=${VOICE_STYLE_ID} / ${VOICE_VVM})"
 echo "----------------------------------------------------------"
-echo " bot は送出のたびにWAVを読み直すため、再起動は不要です。"
-echo " 次のカーチャンク応答・時報・定時メッセージから新しい音声になります。"
-echo " 次回このスクリプトを起動すると、今回の入力が初期値として表示されます。"
+echo " bot は送出のたびにWAVを読み直すため、固定WAV（応答・定時メッセージ等）は"
+echo " 再起動なしで次の送出から新しい音声になります。"
+echo " ※ 話者を変更した場合、bot の動的合成部分（時報の時刻・コールサイン読み等）へ"
+echo "   反映するには bot の再起動が必要です:  sudo systemctl restart dvswitch-bot"
+echo " 次回このスクリプトを起動すると、今回の入力・話者が初期値として表示されます。"
 echo " 元に戻したいときは:  sudo ./create_wav.sh -r"
 echo "=========================================================="
