@@ -93,7 +93,7 @@ sudo systemctl enable --now dvswitch-bot
 | ディレクトリ | エディション | 音声合成 | 想定ノード |
 |---|---|---|---|
 | リポジトリ直下 | **Open JTalk 版（JT版）** | Open JTalk + SoX | Raspberry Pi ノード |
-| [`dvs_ocv_vv/`](dvs_ocv_vv/) | **VOICEVOX 版（VV版）** | VOICEVOX | x86_64 Incus コンテナ等 |
+| [`dvs_ocv_vv/`](dvs_ocv_vv/) | **VOICEVOX 版（VV版）** | VOICEVOX | x86_64 Linux（ベアメタル/VM/コンテナ可、Incus 手順は別冊） |
 | [`dashboard/`](dashboard/) | **共用 Web ダッシュボード** | — | JT版・VV版 共通 |
 | [`Incus コンテナ/`](Incus%20コンテナ/) | Incus 構築リソース | — | ini サンプルと構築マニュアルのみ（スクリプトは `dvs_ocv_vv/` へ移設済み） |
 
