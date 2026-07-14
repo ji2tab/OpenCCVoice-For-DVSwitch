@@ -7,6 +7,10 @@
 >
 > OpenCCVoice for DVSwitch を **Incus コンテナ上の Debian 12 Bookworm（amd64）** で
 > 動かすための、**コンテナ基盤（OS レイヤ）の準備**に特化したマニュアルです。
+> 
+> **Incus はあくまで x86_64 Linux 環境を用意する一手段です。** ベアメタルや他の仮想環境（VM 等）で
+> 既に amd64 の Debian/Ubuntu 系 Linux が用意できている場合は、本書は不要です。その場合は
+> 『OpenCCVoice for DVSwitch 構築マニュアル.md』から直接進めてください。
 >
 > ここでの作業（コンテナ作成・ネットワーク・SSH・タイムゾーン・qemu 準備・複数機運用）が
 > 完了したら、コンテナ内での DVSwitch / 音声 / Bot の構築は
