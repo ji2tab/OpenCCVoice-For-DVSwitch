@@ -1,9 +1,11 @@
-# create_wav.sh ソフトウェア仕様書
+# create_wav.sh ソフトウェア仕様書（JT版 V1.2 / VV版 V1.31vv）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/create_wav.sh`
+**対象バージョン:** JT版（リポジトリ直下）**V1.2** ／ VV版（`dvs_ocv_vv/`）**V1.31vv**
 **役割:** コールサイン・地名・定時メッセージを対話入力し、bot が使う固定 WAV を
-Open JTalk + SoX で一括生成する。上書き前に自動バックアップし、復元（`-r`）・
-削除（`-d`）にも対応する。
+一括生成する。入力内容を `wav_source.json` に記録して次回のプリフィルと非対話再生成（`--regen`）に使い、上書き前に自動バックアップし、復元（`-r`）・削除（`-d`）にも対応する。
+**本文の扱い:** 本文は **JT版・VV版で共通の仕様**（音声合成エンジンを除く）を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.31vv）』章にまとめる。
+**版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 
 この文書は**スクリプト本体の内部仕様**を記述する技術文書です。日常の操作方法や
 音声生成の手順解説は『操作マニュアル』『Voice_generation_manual.md』を参照してください。
@@ -24,6 +26,8 @@ Open JTalk + SoX で一括生成する。上書き前に自動バックアップ
 10. [バックアップ・復元仕様](#10-バックアップ復元仕様)
 11. [既知の注意点](#11-既知の注意点)
 12. [改修時の注意点](#12-改修時の注意点)
+13. [入力記録とプリフィル・非対話再生成（wav_source.json / --regen）](#13-入力記録とプリフィル非対話再生成wav_source_json----regen)
+14. [VV版差分（V1.31vv）](#14-vv版差分v131vv)
 
 ---
 
@@ -104,6 +108,7 @@ fixed_intro.wav  fixed_outro.wav  time_intro.wav  001.wav  002.wav  time_outro.w
 | （なし） | 対話で WAV 生成 | メイン処理（関数化されていない後半部） |
 | `-r` | バックアップから復元 | `do_restore` |
 | `-d` | バックアップ全削除 | `do_delete` |
+| `--regen` | 記録済みの入力内容（`wav_source.json` の `texts`）で全固定 WAV を**非対話再生成** | `do_regen`（第13章） |
 | `-h` / `--help` | ヘルプ表示 | `show_help` |
 | その他 | エラー＋ヘルプ表示し `exit 1` | — |
 
@@ -316,6 +321,52 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 
 ---
 
-*create_wav.sh ソフトウェア仕様書*
-*対象: /opt/dvswitch_bot/bin/create_wav.sh（バックアップ先 /opt/dvswitch_bot/bak/wav）*
+## 13. 入力記録とプリフィル・非対話再生成（wav_source.json / --regen）
+
+本章は **JT版・VV版で共通**の機能（JT版 V1.0/V1.2、VV版でも同様）を記述する。
+
+### 13-1. 入力内容の記録（wav_source.json）
+
+対話生成の完了時に、入力原文・読み仮名・最終的な合成テキストを `/opt/dvswitch_bot/wav_source.json` に記録する（V1.0〜）。この JSON は「どんな内容で WAV を作ったか」の唯一の記録であり、次項のプリフィルと `--regen` の入力源になる。
+
+### 13-2. 次回起動時のプリフィル
+
+対話生成を起動すると、`wav_source.json` に記録済みの前回入力値を読み込み、各プロンプトの既定値（プリフィル）として提示する（V1.0〜）。前回と同じ項目は Enter で確定でき、変更したい項目だけ打ち直せばよい。
+
+### 13-3. 非対話再生成（`--regen`）
+
+`sudo ./create_wav.sh --regen` は、記録済みの `texts`（最終合成テキスト）で **全固定 WAV を対話なしで作り直す**（`do_regen`、JT版 V1.2〜／VV版）。ダッシュボードからの再生成や、合成ヘルパ差し替え後の作り直しに使う入口。`texts` は書き換えず `generated_at` のみ更新する。
+
+### 13-4. バックアップ対象
+
+上書き（生成）の直前に、既存の `*.wav` **および `wav_source.json`** を `/opt/dvswitch_bot/bak/wav/YYMMDDHHMMSS/` へ自動退避する。復元（`-r`）時は WAV と併せて入力記録も世代単位で戻せる。
+
+---
+
+## 14. VV版差分（V1.31vv）
+
+本章は **VV版（`dvs_ocv_vv/create_wav.sh` V1.31vv）** に固有の差分のみを記述する。第1〜13章の共通仕様のうち、音声合成エンジンと話者選択に関わる部分が VV版では次のとおり異なる。
+
+> 版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
+
+### 14-1. 最前段の話者選択（VOICEVOX 全話者スキャン）
+
+対話セッションの **最前段**で、環境の VOICEVOX 全話者（`/opt/voicevox/dist/models/vvms/*.vvm`）をスキャンし、`style_id` 昇順の一覧を提示して番号で選ばせる（V1.2vv〜）。前回選択した話者を既定（プリフィル）とする。VOICEVOX の読み込み・スキャンに失敗した場合は選択をスキップし、既定話者 **No.7（アナウンス）= `style_id 30` / `6.vvm`** で続行する（WAV 生成自体は止めない）。
+
+### 14-2. 選択話者の wav_source.json への保存
+
+選択結果（`style_id` / `vvm` 等）を `wav_source.json` の `"voice"` に保存する。この `"voice"` は固定 WAV 側（本スクリプト → `vv_say.py`）と bot の動的合成（`dvswitch_bot.py`）が **共有**し、両系統の話者が揃う。
+
+### 14-3. vv_say.py への style_id / vvm の明示引数渡し
+
+合成時、選択話者を `vv_say.py` に **明示引数**（`style_id` / `vvm`）で渡す（🔴 V1.31vv の修正点）。V1.3avv までは `vv_say.py` が保存前の古い `wav_source.json` から `voice` を読むため、話者を変更しても固定 WAV が旧話者のまま生成される不具合（「テキストは新しいのに声だけ古い」実機症状）があり、明示引数渡しで解消した。合成パイプラインは `vv_say.py`（VOICEVOX）で WAV を生成し、SoX で 8kHz / mono / 16bit に変換する（Open JTalk サブプロセスは使わない）。
+
+### 14-4. 完了時の bot 再起動プロンプト（話者変更時のみ）
+
+対話モードの末尾で、**話者が変わった場合のみ** `dvswitch-bot` の再起動を `y/N` で確認して実行する（V1.31vv〜）。bot は `voice` を起動時にのみ読むため、再起動忘れによる「固定 WAV は新話者・動的合成は旧話者」の混在を防ぐ。固定 WAV 自体は送出のたびに読み直されるため再起動なしで反映される。`--regen` 経路は `wav_source.json` 更新 → 再生成 → 話者変更判定で自動再起動されるため、この対話確認の対象外。
+
+---
+
+*create_wav.sh ソフトウェア仕様書（JT版 V1.2 / VV版 V1.31vv）*
+*対象: /opt/dvswitch_bot/bin/create_wav.sh（JT版 リポジトリ直下 V1.2 ／ VV版 dvs_ocv_vv/ V1.31vv、バックアップ先 /opt/dvswitch_bot/bak/wav）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
