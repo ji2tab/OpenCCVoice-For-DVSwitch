@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V3.0
+ app.py  V3.1
 
  ■ 位置づけ
    V2 系（V2.0〜V2.87bvv）の機能を統合したメジャーバージョン。
@@ -17,6 +17,17 @@
    V2 系の詳細な変更履歴（V2.0〜V2.87bvv）は本ファイルには含めず、リポジトリの
    Changelog（ダッシュボードセクション）へ分離した（dvswitch_bot.py V1.92 と
    同じ整理方針）。改修時はそちらを参照のこと。
+
+ 【V3.1 の要点（V3.0 からの変更）】
+  1. 🔵 読み上げテキスト編集を Open JTalk（Pi）ノードでも可能にした（共用対応の拡張）。
+     従来は読み上げ内容カードの入力UI全体を voicevox_available() で隠していたが、
+     テキスト7項目（コールサイン/読み・地名・メッセージ1,2/読み）の編集は jtalk でも
+     出すようにした（話者選択のみ従来どおり VOICEVOX ノード限定）。
+  2. 🔵 /wav_source_config を jtalk / VOICEVOX で分岐。jtalk では話者(voice)を検証・
+     記録せず、bot 再起動もしない（固定WAVは bot が送出のたび読み直すため）。VOICEVOX
+     ノードの挙動（話者記録＋話者変更時のみ再起動）は V3.0 と不変。
+     ※ jtalk 側は create_wav.sh V1.2 以降（--regen 対応）が必要。
+  3. 🔵 保存ヒットの文言と保存後メッセージを jtalk / VOICEVOX で出し分け。
 
  【V3.0 の要点（V2.87bvv からの変更）】
   1. 🔵 V2 系機能の統合・整理。機能セットは V2.87bvv と同一
@@ -35,8 +46,11 @@
      V2.58 / V2.59 の typo 修正と同系統。入力ラベルが本来意図の淡色表示になる。
 
  【対応バージョン】
-   dvswitch_bot.py : V1.96vv 以降（VOICEVOX 系）/ V2.0 以降（Open JTalk 系）
-   create_wav.sh   : V1.3avv 以降（--regen 対応。読み上げ内容編集・話者変更に必要）
+   dvswitch_bot.py : V1.96vv 以降（VOICEVOX 系）/ V1.93 以降（Open JTalk 系。
+                     読み上げ内容編集のための bot 改修は不要 — 固定WAVを送出時に
+                     読み直し、キャッシュも mtime で自動無効化するため）
+   create_wav.sh   : --regen 対応版が必要（VOICEVOX 系: V1.3avv 以降 /
+                     Open JTalk 系: V1.2 以降）。読み上げ内容編集・話者変更に必要
    vv_say.py       : V2.0vv 以降（VOICEVOX 系のみ）
    test_send.py    : リポジトリ版（テスト送信機能が bin/test_send.py を実行する）
 
@@ -54,7 +68,7 @@
 # 版を上げるときは docstring の表記と必ず一致させること。
 # テンプレートのヘッダ/フッタは context_processor 経由（{{ app_version }}）で
 # この値を参照するため、テンプレート内に版のベタ書きはない。
-__version__ = "V3.0"
+__version__ = "V3.1"
 
 import os, json, re, subprocess, glob, time, wave, contextlib
 from datetime import datetime
@@ -610,23 +624,28 @@ def api_status():
 # もう一度保存すれば再試行できる。
 @app.route("/wav_source_config", methods=["POST"])
 def wav_source_config_save():
-    if not voicevox_available():
-        set_flash(err="このノードは VOICEVOX 未導入のため読み上げ内容を変更できません")
-        return redirect("/")
+    # 🔵 V3.1: jtalk / VOICEVOX 両ノード対応。
+    #   - VOICEVOX ノード: 従来どおり話者(voice)を検証・記録し、話者が変わったら
+    #     bot を再起動する（動的合成が起動時に話者を読むため）。
+    #   - Open JTalk（Pi）ノード: 話者は1つ（mei_normal）のため voice は扱わない。
+    #     読み上げテキスト7項目のみ編集→固定WAVを --regen で作り直す。固定WAVは bot が
+    #     送出のたびに読み直す（キャッシュも mtime で自動無効化）ため bot 再起動は不要。
+    vv = voicevox_available()
 
-    # (1) 話者
-    sel = request.form.get("voice_sel", "")
-    m = re.match(r"^(\d+):([\w.\-]+\.vvm)$", sel)
+    # (1) 話者（VOICEVOX ノードのみ検証。jtalk では voice=None のまま）
     voice = None
-    if m:
-        sid, vvm = int(m.group(1)), m.group(2)
-        for v in get_voice_list():
-            if v["style_id"] == sid and v["vvm"] == vvm:
-                voice = v
-                break
-    if voice is None:
-        set_flash(err="話者の選択値が不正です（一覧から選び直してください）")
-        return redirect("/")
+    if vv:
+        sel = request.form.get("voice_sel", "")
+        m = re.match(r"^(\d+):([\w.\-]+\.vvm)$", sel)
+        if m:
+            sid, vvm = int(m.group(1)), m.group(2)
+            for v in get_voice_list():
+                if v["style_id"] == sid and v["vvm"] == vvm:
+                    voice = v
+                    break
+        if voice is None:
+            set_flash(err="話者の選択値が不正です（一覧から選び直してください）")
+            return redirect("/")
 
     # (2) 入力値。読み仮名の空欄は CLI と同じ規則で自動生成
     callsign = request.form.get("callsign", "").strip().upper()
@@ -649,19 +668,24 @@ def wav_source_config_save():
         set_flash(err="wav_source.json に texts の記録がありません。"
                       "先に create_wav.sh（対話モード）で一度WAVを作成してください")
         return redirect("/")
-    old_voice = data.get("voice", {}) if isinstance(data.get("voice"), dict) else {}
-    voice_changed = (old_voice.get("style_id") != voice["style_id"]
-                     or old_voice.get("vvm") != voice["vvm"])
+    # 話者変更の有無は VOICEVOX ノードのみ意味を持つ（jtalk は常に False＝再起動不要）
+    voice_changed = False
+    if vv:
+        old_voice = data.get("voice", {}) if isinstance(data.get("voice"), dict) else {}
+        voice_changed = (old_voice.get("style_id") != voice["style_id"]
+                         or old_voice.get("vvm") != voice["vvm"])
     data.update({
         "callsign": callsign, "callsign_kana": callsign_kana, "location": location,
         "msg1": msg1, "msg1_kana": msg1_kana, "msg2": msg2, "msg2_kana": msg2_kana,
-        "voice": {"style_id": voice["style_id"], "vvm": voice["vvm"],
-                  "label": voice["label"]},
         "texts": build_wav_texts(callsign_kana, location, msg1_kana, msg2_kana),
     })
+    # voice は VOICEVOX ノードのみ記録する（jtalk では既存キーに触れず、無ければ書かない）
+    if vv:
+        data["voice"] = {"style_id": voice["style_id"], "vvm": voice["vvm"],
+                         "label": voice["label"]}
     write_json(WAV_SOURCE, data)
 
-    # (5) 固定WAVを非対話再生成（create_wav.sh V1.3 --regen）
+    # (5) 固定WAVを非対話再生成（create_wav.sh --regen / jtalk:V1.2+ VOICEVOX:V1.3+）
     try:
         r = subprocess.run(["sudo", CREATE_WAV_SH, "--regen"],
                            capture_output=True, text=True,
@@ -690,8 +714,10 @@ def wav_source_config_save():
             set_flash(err=f"WAVは再生成済みですが bot 再起動に失敗: {e}")
             return redirect("/")
         set_flash(msg=f"読み上げ内容を保存し、話者「{voice['label']}」でWAV再生成と bot 再起動を完了しました")
-    else:
+    elif vv:
         set_flash(msg="読み上げ内容を保存し、WAVを再生成しました（話者変更なしのため bot 再起動は省略）")
+    else:
+        set_flash(msg="読み上げ内容を保存し、固定WAVを再生成しました（bot は送出時に読み直すため再起動不要）")
     return redirect("/")
 
 
@@ -1512,7 +1538,10 @@ margin-bottom:6px;border-left:4px solid;
       <span class="voice-detail">（このノードは VOICEVOX 未導入のため変更は不可）</span>
       {% endif %}
     </div>
-    {% if voicevox_ok %}
+    {# 🔵 V3.1: 読み上げテキストの編集は jtalk / VOICEVOX 両ノードで可能にする
+       （voicevox_ok に依存しない）。話者選択のみ上の voice-row で voicevox_ok に
+       応じて出し分ける。VOICEVOX 未導入ノードでは voice を書かず、bot 再起動もしない
+       （/wav_source_config 側で分岐）。 #}
     <!-- 🔵 V2.87: 入力値と読み仮名（CLI の対話項目と同じ7項目）。
          通常モードでは view-mode の共通CSSでグレー表示（他カードの入力欄と同じ挙動）。
          「読み自動生成」は CLI のプリフィルと同じ変換を JS で行う（表はサーバ側と同一）。
@@ -1561,9 +1590,8 @@ margin-bottom:6px;border-left:4px solid;
     </table>
     <div class="edit-only wav-save-row">
       <button class="tbtn tbtn-strong" type="submit" form="wavsrc-form">保存して再生成（WAV作り直し）</button>
-      <span class="voice-detail">再生成には数十秒かかります。話者を変えた場合は bot も自動再起動します。</span>
+      <span class="voice-detail">再生成には数十秒かかります。{% if voicevox_ok %}話者を変えた場合は bot も自動再起動します。{% else %}固定WAVの入れ替えのみのため bot の再起動は不要です。{% endif %}</span>
     </div>
-    {% endif %}
     <table class="wav-src-table">
       <thead>
         <tr>
