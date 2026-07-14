@@ -4,6 +4,8 @@
 
 **スクリプト配置:** `/opt/dvswitch_bot/bin/`
 
+**エディション構成（2エディション）:** 本システムには音声合成エンジンの異なる2エディションがある。**JT版（Open JTalk 版）** はリポジトリ直下（Raspberry Pi ノード向け、上記の構成が標準）、**VV版（VOICEVOX 版）** は `dvs_ocv_vv/`（x86_64 Linux 向け）。本仕様書の本文は JT版を基準に記述し、VV版固有の差分は各所の「VV版」注記および第8章の systemd 例で補足する。Web ダッシュボード（`dashboard/app.py`）は両版で共用。版番号の `vv` サフィックスは VOICEVOX 系ノード用を示す命名規約。
+
 **この仕様書について:** システムの全体像（概要）と、技術的な詳細仕様の両方を記載します。
 はじめての方はまず「第1章 これは何か」「第2章 全体構成」を読めば全体像がつかめます。
 構築・改修する方は「第4章 ファイル配置」以降の詳細仕様を参照してください。
@@ -113,6 +115,21 @@ flowchart TB
 | **SoX** | 音声を 8kHz/モノラル/16bit に変換する | 「音声フォーマット変換器」 |
 | **Monit** | 各サービスの稼働を監視する（:2812 の画面で状態表示） | 「監視カメラ」 |
 | **Apache2** | DVSwitch Dashboard（:80）を表示する Web サーバ | 「掲示板」 |
+
+---
+
+### VV版（VOICEVOX 版）の構成要素
+
+VV版（`dvs_ocv_vv/`、x86_64 Linux 向け）では、上表のうち **Open JTalk + SoX** の音声合成部分が **VOICEVOX CORE** に置き換わる。SoX（8kHz/mono/16bit 変換）と md380-emu・Analog_Bridge・MMDVM_Bridge の構成は JT版と共通。
+
+| VV版の構成要素 | 役割 |
+|---|---|
+| `/opt/voicevox/dist` | VOICEVOX CORE 一式（ONNX Runtime・Open JTalk 辞書・音声モデル `.vvm`） |
+| venv（`/opt/dvswitch_bot/venv`） | `voicevox_core` を含む Python 仮想環境。bot も `vv_say.py` もこの python3 で動く |
+| `vv_say.py`（`/opt/voicevox/`） | VOICEVOX で固定 WAV を合成する小ツール（`create_wav.sh` VV版から呼ばれる） |
+| `dvswitch_bot.py`（VV版） | 起動時に VOICEVOX を1回ロードし、動的合成（時報の時刻等）を同一プロセス内で行う |
+
+**話者選択の共有:** 話者（`style_id` / `vvm`）は `wav_source.json` の `"voice"` に記録され、**①固定 WAV（`create_wav.sh` → `vv_say.py`）** と **②動的合成（bot 起動時ロード）** の両系統がこれを参照して揃う。話者変更の動的合成への反映には bot 再起動が必要（固定 WAV は送出のたび読み直すため再起動不要）。
 
 ---
 
@@ -343,6 +360,29 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 ```
+
+### 8-1b. VV版のサービス定義（ExecStart が venv）
+
+VV版（VOICEVOX）では、`ExecStart` を **venv の python3** にする。システムの `/usr/bin/python3` では `voicevox_core` を import できず `ImportError/ModuleNotFoundError` で即死するため、ここが最重要の差分。
+
+```ini
+[Unit]
+Description=OpenCCVoice DVSwitch bot (VV / dvswitch_bot.py)
+After=network.target md380-emu.service analog_bridge.service mmdvm_bridge.service
+Wants=analog_bridge.service mmdvm_bridge.service
+
+[Service]
+Type=simple
+ExecStart=/opt/dvswitch_bot/venv/bin/python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
+WorkingDirectory=/opt/dvswitch_bot
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> JT版（上の 8-1）は `ExecStart=/usr/bin/python3 ...`。VV版はここを `/opt/dvswitch_bot/venv/bin/python3 ...` に置き換える点だけが本質的な違い。
 
 ### 8-2. 各設定の意味
 
