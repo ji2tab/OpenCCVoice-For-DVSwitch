@@ -141,6 +141,24 @@ systemctl is-active md380-emu analog_bridge mmdvm_bridge
 
 ## 4. DVSwitch の設定（TGIF 接続）
 
+### 4.0 dvs 初期設定（ini 生成）と TGIF 切替
+
+DVSwitch-Server の各 ini（DVSwitch.ini / Analog_Bridge.ini / MMDVM_Bridge.ini）は、初回の `dvs` 対話設定で生成されます。次章以降で使う `dvs_config.sh` は既存のキー行を置換する方式のため、この初期化で ini が生成されていることが前提です（未生成のまま `dvs_config.sh` を実行しても置換対象が無く TGIF 設定が入りません）。まずここで ini を作ってから 4.1 へ進んでください。
+
+```bash
+sudo /usr/local/dvs/dvs
+```
+
+⚠️ `dvs` コマンドは PATH に登録されていないため、上記のようにフルパス（`/usr/local/dvs/dvs`）で実行します。
+
+1. **「01 初期設定」を完走** します。
+2. 案内に従って **再起動** します。
+3. 再起動後、再び `sudo /usr/local/dvs/dvs` を起動し、`02 詳細設定` → `24 その他のDMRネットワーク` → `1 デフォルトのDMRサーバー変更` → `2 TGIF` を選び、**接続先を TGIF に切り替え** ます。
+
+ここまでで ini 一式が生成され、デフォルト DMR サーバーが TGIF になります。細かな値（Callsign / DMR ID / ESSID / TGIF Password / 送信TG 等）は次の 4.1 の `dvs_config.sh` で確定します。
+
+### 4.1 dvs_config.sh で TGIF 用の値を確定
+
 対話式設定ツール `dvs_config.sh` を使います（3つの ini を自動バックアップ付きで更新）。
 
 ```bash
