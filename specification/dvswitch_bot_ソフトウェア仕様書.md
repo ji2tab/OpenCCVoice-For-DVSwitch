@@ -1,7 +1,10 @@
-# dvswitch_bot.py ソフトウェア仕様書（V1.93）
+# dvswitch_bot.py ソフトウェア仕様書（JT版 V1.93 / VV版 V1.96vv）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**バージョン:** V1.93（無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFOメタデータ・送信直列化・第30条セッションのギャップ判定バグ修正 まで反映）
+**対象バージョン:** JT版（リポジトリ直下）**V1.93** ／ VV版（`dvs_ocv_vv/`）**V1.96vv**
+**本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.96vv）』章にまとめる。
+**JT版 V1.93 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正 まで。
+**版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 **役割:** MMDVM_Bridge のログを監視し、カーチャンク自動応答・時報・定時メッセージ・長時間通信時の識別信号（法令対応）を
 USRP プロトコルで送出する常駐デーモン。
 
@@ -26,6 +29,7 @@ USRP プロトコルで送出する常駐デーモン。
 11） [ログ出力仕様](#11-ログ出力仕様)
 12） [スレッド構成と終了処理](#12-スレッド構成と終了処理)
 13） [改修時の注意点](#13-改修時の注意点)
+14） [VV版差分（V1.96vv）](#14-vv版差分v196vv)
 
 ---
 
@@ -623,6 +627,55 @@ REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL
 
 ---
 
-*dvswitch_bot.py ソフトウェア仕様書 V1.93*
-*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（daemon, V1.60〜V1.93 の集大成）*
+## 14. VV版差分（V1.96vv）
+
+本章は **VV版（`dvs_ocv_vv/dvswitch_bot.py` V1.96vv）** に固有の差分のみを記述する。第1〜13章の本文（判定ロジック・第30条対応・USRP パケット・キャッシュ機構・ナイトモード・スレッド構成など）は JT版・VV版で共通であり、下記以外は本文どおりに動作する。
+
+> 版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
+
+---
+
+### 14-1. 音声合成エンジンの置き換え（Open JTalk → VOICEVOX CORE）
+
+| 項目 | JT版（本文 第9章） | VV版（V1.96vv） |
+|---|---|---|
+| 合成方式 | Open JTalk を **サブプロセス**（`open_jtalk`）で都度起動し WAV を生成 | VOICEVOX CORE の **同一プロセス内ライブラリ**（`voicevox_core.blocking`）で合成 |
+| モデルのロード | 都度（プロセス起動のたび） | **起動時に 1 回だけ**ロードし、以降は常駐 |
+| 合成パイプライン | `open_jtalk` → SoX(48k→8k) | `Synthesizer.create_audio_query` → `synthesis`（ネイティブ 24kHz）→ SoX(→8k) |
+
+起動時に `Onnxruntime.load_once()` / `OpenJtalk(dict)` / `Synthesizer` を構築し、`VoiceModelFile.open()` で音声モデル（`.vvm`）を `load_voice_model()` する。以降の動的合成（時報の時刻・コールサイン読み等）はこの常駐シンセサイザで行う。中間 48kHz WAV を経ず、ネイティブ出力を SoX で 8kHz / mono / 16bit に変換する（`query.output_sampling_rate=48000` のハードコードは撤去済み）。
+
+---
+
+### 14-2. 話者（style_id / vvm）の決定と反映
+
+- 話者は起動時に **`wav_source.json` の `"voice"`**（`style_id` と `vvm`）を読んで確定する（`_bootstrap_voice()`）。固定 WAV 側（`create_wav.sh` → `vv_say.py`）と bot の動的合成が **同一の話者選択を共有** する設計。
+- `"voice"` が **無い / 壊れている / 指定 `vvm` が実在しない** 場合は、既定の **No.7（アナウンス）= `style_id 30` / `6.vvm`** へフォールバックする（`DEFAULT_VOICE_STYLE_ID = 30` / `DEFAULT_VOICE_VVM = "6.vvm"`）。`style_id` と `vvm` は不一致による合成失敗を避けるため必ずセットで扱う。
+- 話者はプロセス起動時に **1 回だけ**ロードするため、**話者を変更した場合の動的合成への反映には bot の再起動が必要**（固定 WAV は送出のたびに読み直すため再起動不要、という本文の性質は VV版でも同じ）。
+
+---
+
+### 14-3. 応答音声キャッシュ署名への話者の追加
+
+本文 第9-2章のキャッシュ署名（`_reply_signature()`）に、旧 Open JTalk の音声パスに代えて **VOICEVOX の `style_id`（`VOICEVOX_STYLE_ID`）とモデルパス（`VOICEVOX_VVM_PATH` + mtime）** を含める。これにより **話者・モデルを変更すると署名が変わり、キャッシュが自動的に無効化・再生成** される。intro/outro・GAP・頭無音・TX_GAIN・スキーマ版に依存する点は本文どおり。
+
+---
+
+### 14-4. onnxruntime .so のバージョン非依存解決
+
+ONNX Runtime 共有ライブラリのパスをバージョン直書き（`libvoicevox_onnxruntime.so.1.17.3` 等）にせず、`glob` で `.../onnxruntime/lib/libvoicevox_onnxruntime.so*` を解決する（`_resolve_voicevox_so()`）。リリースにより `.so` の版番号が変わっても壊れない。見つからなければ `FileNotFoundError` で停止する。
+
+---
+
+### 14-5. 実行環境（venv 必須）
+
+VV版は `voicevox_core` を含む **venv の Python で起動する**こと。
+
+- 実行/起動: `/opt/dvswitch_bot/venv/bin/python3 /opt/dvswitch_bot/bin/dvswitch_bot.py`
+- systemd 常駐化時も `ExecStart` を **venv の python3** にする（システムの `/usr/bin/python3` では `voicevox_core` が import できず `ImportError/ModuleNotFoundError` で即死する）。詳細は『システム仕様書』第8章の VV版ユニット例を参照。
+
+---
+
+*dvswitch_bot.py ソフトウェア仕様書（JT版 V1.93 / VV版 V1.96vv）*
+*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.93 の集大成）／ dvs_ocv_vv/dvswitch_bot.py（VV版 V1.96vv）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
