@@ -2,7 +2,16 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
-#   Version: V1.3avv （V1.3a に vv サフィックス付与。--regen、話者選択、chown 汎用化を含む）
+#   Version: V1.31vv （🔴 対話モードの話者反映バグ修正 + 再起動の対話確認を追加。
+#            (1) 合成時に選択話者を vv_say.py へ明示引数で渡す。V1.3avv までは
+#            vv_say.py が保存前の古い wav_source.json から voice を読むため、話者を
+#            変更しても固定WAVが旧話者のまま生成された—「テキストは新しいのに声だけ
+#            古い」実機症状 2026-07-14。
+#            (2) 対話モード末尾で、話者が変わった場合のみ dvswitch-bot の再起動を
+#            y/N で確認して実行（dvs_config.sh の restart_services と同方式）。bot は
+#            voice を起動時にのみ読むため、再起動忘れ＝固定/動的の話者混在を防ぐ。
+#            --regen は app.py が JSON 更新→regen→voice_changed 判定で自動再起動する
+#            経路のため影響なし・無変更）
 #   ※ 版番号の "vv" は VOICEVOX 系ノード用ファイルであることを示す命名規約
 #     （Open JTalk 系 Pi ノード用の同名ファイルと区別する。2026-07-14 導入）。
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
@@ -78,7 +87,7 @@
 # ==============================================================================
 
 # 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
-SCRIPT_VERSION="V1.3avv"
+SCRIPT_VERSION="V1.31vv"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -180,7 +189,7 @@ DVSwitch bot 固定WAV 作成ツール create_wav.sh
   作成の最初に、VOICEVOX の全話者（models/vvms/*.vvm）を一覧表示し、番号で選べます。
   選んだ話者（style_id / vvm / 表示名）は wav_source.json の "voice" に保存され、
   次回起動時は前回の話者が既定選択になります。
-  固定WAVは選択した話者で生成されます（vv_say.py が voice を参照）。
+  固定WAVは選択した話者で生成されます（🔴 V1.31vv: 合成時に vv_say.py へ明示引数で渡す）。
   bot の動的合成（時報の時刻部分等）へ反映するには bot の再起動が必要です。
 
 生成されるWAV（/opt/dvswitch_bot/ 直下に上書き）:
@@ -828,8 +837,8 @@ echo " [001.wav]         : ${BASE_INTRO_TEXT}${MSG1_KANA}"
 echo " [002.wav]         : ${BASE_INTRO_TEXT}${MSG2_KANA}"
 echo " [time_outro.wav]  : です。"
 echo "----------------------------------------------------------"
-echo " ※ 固定WAVは選択した話者で生成されます（vv_say.py が wav_source.json の"
-echo "    voice を参照）。bot の動的合成（時報の時刻部分・コールサイン読み等）へ"
+echo " ※ 固定WAVは選択した話者で生成されます（合成時に話者を明示指定）。"
+echo "    bot の動的合成（時報の時刻部分・コールサイン読み等）へ"
 echo "    話者を反映するには、生成後に bot の再起動が必要です。"
 echo "----------------------------------------------------------"
 read -ep "よろしいですか？ (Y/n): " CONFIRM
@@ -849,34 +858,36 @@ echo "WAVファイルを生成中..."
 # ------------------------------------------------------------------------------
 
 # --- fixed_intro.wav ---
-/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$BASE_INTRO_TEXT" "${TMP_DIR}/temp_intro.wav"
+# 🔴 V1.31vv: 選択話者を明示引数で渡す（引数は vv_say.py の最優先。保存前の古い
+# wav_source.json の voice を読んでしまう V1.3avv までのバグを根治）。以下6呼び出し全て同様。
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$BASE_INTRO_TEXT" "${TMP_DIR}/temp_intro.wav" "$VOICE_STYLE_ID" "$VOICE_VVM"
 sox "${TMP_DIR}/temp_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_intro.wav"
 echo " [OK] fixed_intro.wav"
 
 # --- fixed_outro.wav ---
-/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "カーチャンクです。" "${TMP_DIR}/temp_outro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "カーチャンクです。" "${TMP_DIR}/temp_outro.wav" "$VOICE_STYLE_ID" "$VOICE_VVM"
 sox "${TMP_DIR}/temp_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_outro.wav"
 echo " [OK] fixed_outro.wav"
 
 # --- time_intro.wav ---
-/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "こちらは、${CALLSIGN_KANA}、" "${TMP_DIR}/time_intro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "こちらは、${CALLSIGN_KANA}、" "${TMP_DIR}/time_intro.wav" "$VOICE_STYLE_ID" "$VOICE_VVM"
 sox "${TMP_DIR}/time_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_intro.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse
 echo " [OK] time_intro.wav"
 
 # --- 001.wav ---
 TEXT_001="${BASE_INTRO_TEXT}${MSG1_KANA}"
-/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$TEXT_001" "${TMP_DIR}/001_raw.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$TEXT_001" "${TMP_DIR}/001_raw.wav" "$VOICE_STYLE_ID" "$VOICE_VVM"
 sox "${TMP_DIR}/001_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/001.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse
 echo " [OK] 001.wav"
 
 # --- 002.wav ---
 TEXT_002="${BASE_INTRO_TEXT}${MSG2_KANA}"
-/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$TEXT_002" "${TMP_DIR}/002_raw.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "$TEXT_002" "${TMP_DIR}/002_raw.wav" "$VOICE_STYLE_ID" "$VOICE_VVM"
 sox "${TMP_DIR}/002_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/002.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse
 echo " [OK] 002.wav"
 
 # --- time_outro.wav ---
-/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "です。" "${TMP_DIR}/time_outro.wav"
+/opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py "です。" "${TMP_DIR}/time_outro.wav" "$VOICE_STYLE_ID" "$VOICE_VVM"
 sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav"
 echo " [OK] time_outro.wav"
 
@@ -902,8 +913,38 @@ echo " 選択話者: ${VOICE_LABEL}  (style_id=${VOICE_STYLE_ID} / ${VOICE_VVM})
 echo "----------------------------------------------------------"
 echo " bot は送出のたびにWAVを読み直すため、固定WAV（応答・定時メッセージ等）は"
 echo " 再起動なしで次の送出から新しい音声になります。"
-echo " ※ 話者を変更した場合、bot の動的合成部分（時報の時刻・コールサイン読み等）へ"
-echo "   反映するには bot の再起動が必要です:  sudo systemctl restart dvswitch-bot"
 echo " 次回このスクリプトを起動すると、今回の入力・話者が初期値として表示されます。"
 echo " 元に戻したいときは:  sudo ./create_wav.sh -r"
 echo "=========================================================="
+
+# ------------------------------------------------------------------------------
+# 🔴 V1.31vv: 話者が変わった場合のみ、bot 再起動を対話で確認する。
+#   bot（dvswitch_bot.py V1.96vv）は wav_source.json の voice を起動時に一度だけ
+#   読むため、動的合成（時報の時刻・コールサイン読み「◯◯局の、」等）へ新話者を
+#   反映するには再起動が必要（固定WAVは送出のたび読み直すため不要）。
+#   従来は末尾の案内文で手動実行を促すだけで、忘れると固定＝新話者／動的＝旧話者の
+#   混在になった（2026-07-14 実機で発生）。dvs_config.sh の restart_services と同じ
+#   y/N 確認方式で、その場で再起動できるようにする。
+#   比較元: 実行前の wav_source.json の voice（PRIOR_VOICE_*）。無ければ bot の
+#   フォールバック既定（No.7 アナウンス）と比較する（bot の実効話者と揃える）。
+_prev_sid="${PRIOR_VOICE_STYLE_ID:-$DEFAULT_VOICE_STYLE_ID}"
+_prev_vvm="${PRIOR_VOICE_VVM:-$DEFAULT_VOICE_VVM}"
+if [ "$VOICE_STYLE_ID" != "$_prev_sid" ] || [ "$VOICE_VVM" != "$_prev_vvm" ]; then
+  echo ""
+  echo "[INFO] 話者が変更されました（style_id=${_prev_sid}/${_prev_vvm} → ${VOICE_STYLE_ID}/${VOICE_VVM}）。"
+  echo "       bot の動的合成（時報の時刻・コールサイン読み等）へ反映するには再起動が必要です。"
+  read -ep "dvswitch-bot を今すぐ再起動しますか？ (y/N): " RST
+  if [[ "${RST,,}" == "y" ]]; then
+    echo "[INFO] dvswitch-bot を再起動します..."
+    systemctl restart dvswitch-bot
+    sleep 3
+    echo "[INFO] 状態: $(systemctl is-active dvswitch-bot)"
+    echo "[完了] 再起動しました。応答キャッシュもクリアされ、次の送出から全パートが新話者になります。"
+  else
+    echo "再起動はスキップしました。動的合成部分は旧話者のままです。手動で再起動してください:"
+    echo "   sudo systemctl restart dvswitch-bot"
+  fi
+else
+  echo ""
+  echo "[INFO] 話者は前回と同じため、bot の再起動は不要です（固定WAVは次の送出から反映）。"
+fi
