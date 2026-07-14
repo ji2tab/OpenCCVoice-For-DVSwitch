@@ -1,6 +1,6 @@
 # dvs_ocv_vv — VOICEVOX 版（VV版）
 
-DVSwitch 自動音声応答システムの VOICEVOX 版スクリプト群です（x86_64 Incus コンテナ用）。
+DVSwitch 自動音声応答システムの VOICEVOX 版スクリプト群です（x86_64 Linux 用。ベアメタル / VM / コンテナのいずれでも動作します。Incus コンテナで環境を用意する場合は『Incus コンテナ/incus構築マニュアル.md』を先に実施してください）。
 
 ## ダッシュボードについて
 
