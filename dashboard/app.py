@@ -3,147 +3,42 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V2.85
+ app.py  V3.0
 
- 変更履歴:
-   V2.0  初版リリース
-   V2.1  タイトル変更、ポート8081、ログディレクトリ修正、変更ログ機能追加
-   V2.2  V2.1実機ソースのクリーンアップ
-   V2.3  ログ表示機能を削除（音声化け対策）
-         DVSwitch設定保存後に analog_bridge / mmdvm_bridge を自動再起動
-   V2.4  UIスタイルをDVSwitch Dashboard風に変更
-   V2.5  配色をDVSwitch Dashboard実ソースに合わせて変更
-   V2.51 フォント11pt統一、iniバックアップ一覧を非表示、ヘッダにバージョン表示
-   V2.52 MMDVM_Bridge [Info] セクション編集機能を追加
-   V2.53 Bot設定/DVSwitch設定/MMDVM Info を3カラム横並びに変更
-   V2.54 受信時間フィルタを縦並びに変更
-   V2.55 メッセージをURLパラメータから内部保持に変更（URL 2バイト文字除去）
-   V2.56 配置コメントを実態（/opt/dvswitch_bot/web）に修正
-   V2.57 3カードを一括保存に統合、保存ボタンをサービス制御行へ、変更ログ非表示、
-         保存時に dvswitch-bot/analog_bridge/mmdvm_bridge を一括再起動
-   V2.58 メッセージ頭切れ修正（main上余白追加）、status-pillのCSS typo修正
-   V2.59 .btn/.section-title のCSS typo修正（ボタン肥大化）、ボタンを大きく、
-         section-titleを通常フォント化（半角括弧を細く表示）
-   V2.60 サービス制御の5ボタンを同じ幅・高さに統一
-   V2.61 ボタンに固定height/box-sizing追加で完全同一サイズ化
-   V2.62 ボタンサイズ縮小（幅120→84px、高さ42→34px）
-   V2.63 通常/変更モード追加（通常は閲覧専用＋変更ボタンのみ、変更で編集＋操作ボタン表示）
-   V2.64 サービス状態を●(緑)active / ●(赤)inactive の丸印表現に変更
-   V2.65 操作ボタンをPi-star風テキストボタン（オレンジ統一・| 区切り）に変更
-   V2.66 操作ボタンを右寄せ、アイコン削除（テキストのみ）
-   V2.67 変更ボタンのアイコン削除・ラベルを「変更モード」に変更
-   V2.68 🔴 再起動ロジックを「同時 restart」から「依存順＋待機つきの順序 restart」へ変更。
-         背景: 従来は subprocess.run(["systemctl","restart","dvswitch-bot",
-         "analog_bridge","mmdvm_bridge"]) のように複数サービスを同時に再起動して
-         いたため、Analog_Bridge 起動時に相手側（MMDVM_Bridge / md380-emu）が
-         まだ準備できておらず、TLV/AMBE 経路の確立に失敗して「音が出ない・ケロる・
-         応答しない（プロセスは Started だが中身は半死）」状態に陥ることがあった
-         （2026-06-06 実機で発生）。さらに AMBE エンコードの相手である md380-emu が
-         再起動対象に含まれていなかった。
-         対策: safe_restart_services() を新設し、
-           md380-emu → analog_bridge → mmdvm_bridge → (dvswitch-bot)
-         の依存順に、各サービス間へ待機（RESTART_GAP_SEC）を挟んで再起動する。
-         save_all / dvs_config_save / info_config_save の3箇所をこの関数に統一。
-   V2.69 サービス制御カードの高さを通常モード/変更モードで統一（操作領域に
-         min-height を確保し、モード切替でカードが伸縮しないようにした）。
-         3カードヘッダーの絵文字アイコン（🤖📡📍）を削除。
-   V2.71 通常モードの入力欄を「枠あり・グレー背景・テキスト薄色」に変更。
-         従来の「枠なし・透明背景」より視認性が向上し、編集不可であることが
-         明確になった。
-         Bot設定カードに「時刻案内モード」プルダウンを追加し、「定時メッセージ」の
-         選択肢を時刻案内モードに連動して切り替え（JS rebuildFreq）。
-           mode0: 0/1/2/3/4   mode1: 0/1/2/3   mode2: 0/2
-         保存ルート（bot_config / save_all）に TIME_SIGNAL_MODE を追加し、
-         ANNOUNCE_FREQ 検証をモード依存（VALID_FREQ_BY_MODE）に変更。
-         旧キー未設定の bot_config.json は本体側が mode1 既定で扱うため、
-         フォーム既定値も 1 とした。
-   V2.72 定時メッセージのプルダウン選択肢を簡潔な表記に変更（例: :00 :30）。
-   V2.73 🔵 サービス制御カードに dvswitch_bot 本体のバージョンを表示（active の右側）。
-         systemctl cat dvswitch-bot の ExecStart から「実際に起動中の」スクリプト
-         パスを特定し、その先頭ドキュメントの "Document Version: Vx.yy" を抽出して
-         表示する。これにより bin/ と直下の重複ファイルがあっても稼働中の版を
-         正しく表示できる（取得不能時は空表示）。/api/status にも bot_version を
-         追加し、状態ポーリング時に併せて更新する。
-         本機能は閲覧のみ。bot_config.json には一切影響しない。
-         ※ ここで言う「バージョン」は dvswitch_bot.py 本体（例 V1.67）であり、
-           本ダッシュボード app.py のバージョン（V2.73）とは別物である点に注意。
-   V2.74 🔴 Bot設定カードに「送出音量（TX_GAIN）」を追加（dvswitch_bot.py V1.68 対応）。
-         送出音量の線形倍率（1.0=等倍, 0.0超〜5.0以下）。bot が出す音すべてに効く。
-         bot_config / save_all の保存ルートに TX_GAIN を追加し、範囲を厳格に検証
-         （VALID 外は保存を弾く）。書き出し時は常に TX_GAIN を含めるため、保存し直しで
-         キーが消えることはない。旧 bot（V1.67以前）は未知キーを無視するため無影響。
-         未設定の旧 config に対してはフォーム既定 1.0 を表示する。
-   V2.75 🔴 bot バージョン取得を堅牢化（V2.73 のバージョン表示が空になる不具合の修正）。
-         背景: get_bot_version() は先頭 4000 バイトだけを読んでいたが、bot 本体
-         V1.68 でヘッダ docstring が伸び、"Document Version:" 行が 9602 バイト目に
-         なって読み取り範囲外に落ち、表示が空になっていた。
-         対策(2点):
-           1) bot 本体ファイル冒頭付近に機械可読の固定行 __version__ = "Vx.yy" を
-              新設（dvswitch_bot.py V1.69〜）。docstring の長さに依存しない。
-           2) get_bot_version() を「__version__ を最優先 → Document Version: →
-              起動バナー」の順で探索し、先頭 20000 バイトで見つからなければ
-              ファイル全体を読んで再探索するフォールバックを追加。
-         これでヘッダがいくら伸びても版を取りこぼさない。表示のみで設定に影響なし。
-   V2.76 🔴 バージョン表示が V1.69 に化ける不具合を修正。
-         原因: __version__ 抽出の最優先パターンが行頭固定でなかったため、bot 本体の
-         変更履歴コメント内にあった例示文字列 __version__ = "V1.69"（説明用）に先に
-         マッチし、本物の代入行（__version__ = "V1.70"）より前で拾ってしまった。
-         対策: 最優先パターンを (?m)^__version__... と行頭固定にし、コメント中の
-         例示（先頭が空白/記号で始まる）を除外。本物の代入行だけを拾う。
-         併せて bot 本体 V1.71 でコメントの例示文字列も誤検出しない表記に修正。
-   V2.77 🔵 ヘッダーのコールサイン / 送信TG をベタ書きから実値表示に変更。
-         従来 tagline は "JJ2YYK / TGIF TG168" を固定文字列で持っていたが、
-         これを {{ dvs.callsign }} / TG{{ dvs.txtg }} に置換し、MMDVM_Bridge.ini /
-         Analog_Bridge.ini の実値を表示するようにした。dvs は既に index() で
-         テンプレートへ渡しているため Python 側の追加は不要。サーバー側
-         レンダリングのため値の反映は保存→リロード時（ポーリング非追従）。表示のみ。
-   V2.78 🔵 3カラムの下に「読み上げ内容」カードを追加（wav_source.json 表示）。
-         create_wav.sh（V1.0〜）が記録する各WAVの実際の読み上げテキストを、
-         3カラム(grid3)の下に幅いっぱいの表示専用ブロックとして並べる。
-         get_wav_source() で wav_source.json を読み、texts の6項目（fixed_intro/
-         fixed_outro/time_intro/001/002/time_outro）を「ファイル名／用途／読み上げ
-         内容」の表で表示する。生成日時も併記。
-         本ブロックは input/select ではなく表示テキストのため、編集モードに
-         切り替えてもグレー系のまま編集不可で、フォーム送信・保存・再起動の対象に
-         一切ならない（save_all 等の保存ルートは無変更）。ファイルが無い場合は
-         案内文を表示する。閲覧のみで bot_config.json には無関係。
-   V2.79 🔵 読み上げ内容カードが上のグリッドにめり込んで見える不具合を修正。
-         原因: card は box-shadow（周囲8px）を持つが、3カラム(grid3)の直下に
-         余白ゼロで置いていたため、影同士が重なってカードがめり込んで見えた。
-         対策: 読み上げ内容カードに card-below-grid（margin-top:16px）を付与し、
-         grid3 との間に影が重ならない間隔を確保した。表示のみの修正。
-   V2.80 🔵 読み上げ内容カードの表示を主要3件に絞る。
-         fixed_outro（固定文言「カーチャンクです。」）/ time_intro（名乗りの一部で
-         fixed_intro と内容が冗長）/ time_outro（現行 bot 未使用）の3件を表示対象
-         から除外し、fixed_intro / 001 / 002 のみ表示するよう get_wav_source() の
-         order を整理した。wav_source.json 自体は全項目を保持（記録は従来どおり）。
-         表示の絞り込みのみで保存ルート・記録には影響しない。
-   V2.81 🔵 読み上げ内容カードを全6項目表示に戻す。
-         V2.80 で除外した fixed_outro / time_intro / time_outro を再表示し、
-         wav_source.json の texts 全6項目（fixed_intro/fixed_outro/time_intro/
-         001/002/time_outro）を表示するよう get_wav_source() の order を戻した。
-         表示のみの変更で保存ルート・記録には影響しない。
-   V2.82 🔴 Bot設定カードに「カスタム音声（差し替え）」を追加（dvswitch_bot.py
-         V1.73 / bot_setup.py 対応）。intro / 001 / 002 を個別に標準⇄カスタム
-         (cstm)で切り替えるチェックボックス3つを追加。bot_config / save_all の
-         保存ルートに USE_CSTM_INTRO / USE_CSTM_001 / USE_CSTM_002（bool）を追加。
-         チェックボックスは view-mode で自動グレーアウト（編集モードでのみ操作可）。
-         任意キーのため常に書き出す。旧 bot は未知キーを無視するので無影響。
-         実ファイル(cstm_*.wav)が無ければ本体が標準へ自動フォールバックする。
-   V2.83 🔵 「カスタム音声」を Bot設定カードから独立カードへ分離し、中央カラムの
-         DVSwitch設定カードの下に配置した。中央セルを「DVSwitch設定 + カスタム音声」
-         の2カード縦積み（display:grid;gap:12px のラッパー）構成にした。
-         チェックボックスの name 属性（use_cstm_*）は変更なしのため、保存ルート
-         （bot_config / save_all）は無変更。表示位置の変更のみ。
-   V2.84 🔵 セクションタイトル（.section-title）の文字と下線の間隔を詰めた。
-         padding-bottom を 4px → 1px に変更。下線と次要素の間隔（margin-bottom:10px）
-         は据え置き。見た目のみの微調整。
-   V2.85 🔵 サービス制御カードに、外部サービスへのリンクを追加。
-         「DVSwitch Dashboard」（ポート80）と「Monit」（ポート2812）へのリンクを、
-         bot バージョン表示の右隣に置いた。リンク先のホスト名は、サーバー側では
-         埋め込まず、ブラウザの window.location.hostname から JS で組み立てる。
-         これにより LAN でも Tailscale でも、アクセス中の経路に応じた正しい URL に
-         なる（別タブ target="_blank" で開く）。表示のみで設定には無関係。
+ ■ 位置づけ
+   V2 系（V2.0〜V2.87bvv）の機能を統合したメジャーバージョン。
+   Open JTalk 系（Pi ノード）と VOICEVOX 系ノードの「共用」ダッシュボード。
+   VOICEVOX 未導入ノードでは話者変更・読み上げ内容編集の UI を自動的に隠す
+   （voicevox_available() 判定）ため、jtalk ノードに置いても従来どおり動作する。
+   ※ 共用ファイルのため、版番号に "vv" サフィックスは付けない
+     （vv 規約は VOICEVOX 系ノード固有のファイルにのみ適用する）。
+
+ ■ 変更履歴
+   V2 系の詳細な変更履歴（V2.0〜V2.87bvv）は本ファイルには含めず、リポジトリの
+   Changelog（ダッシュボードセクション）へ分離した（dvswitch_bot.py V1.92 と
+   同じ整理方針）。改修時はそちらを参照のこと。
+
+ 【V3.0 の要点（V2.87bvv からの変更）】
+  1. 🔵 V2 系機能の統合・整理。機能セットは V2.87bvv と同一
+     （3カード一括保存 / 順序再起動 / 時刻案内モード / TX_GAIN / カスタム音声 /
+      読み上げ内容の表示・統合編集 / 話者変更＋--regen 再生成 / 外部リンク）。
+     長大な変更履歴を Changelog へ分離し、版表記を機械可読の __version__ に
+     一元化した。テンプレートは context_processor 経由の {{ app_version }} で
+     参照するため、版更新箇所は docstring と __version__ の2箇所のみ。
+  2. 🔵 テスト送信機能を追加。サービス制御カード（変更モード）から、固定WAV
+     （fixed_intro / fixed_outro / time_intro / 001 / 002。実在すれば cstm_*.wav
+      も選択可）を選んで単発送信できる（POST /test_send → bin/test_send.py 実行）。
+     設計判断: bot は停止しない。停止→再開すると起動アナウンス（「起動しました。」）
+     が送出されてしまうため。bot の送信はカーチャンク応答・時報・定時メッセージの
+     発火時のみなので、発火時刻直前を避ければ実用上衝突しない（confirm で注意喚起）。
+  3. 🔵 label の CSS typo 修正（display:blockcolor → display:block;color）。
+     V2.58 / V2.59 の typo 修正と同系統。入力ラベルが本来意図の淡色表示になる。
+
+ 【対応バージョン】
+   dvswitch_bot.py : V1.96vv 以降（VOICEVOX 系）/ V2.0 以降（Open JTalk 系）
+   create_wav.sh   : V1.3avv 以降（--regen 対応。読み上げ内容編集・話者変更に必要）
+   vv_say.py       : V2.0vv 以降（VOICEVOX 系のみ）
+   test_send.py    : リポジトリ版（テスト送信機能が bin/test_send.py を実行する）
 
  配置:
    /opt/dvswitch_bot/web/app.py
@@ -153,7 +48,15 @@
 ================================================================================
 """
 
-import os, json, re, subprocess, glob, time
+# ============================================================
+# 🔵 機械可読バージョン（固定行 / V3.0 で導入）
+# ============================================================
+# 版を上げるときは docstring の表記と必ず一致させること。
+# テンプレートのヘッダ/フッタは context_processor 経由（{{ app_version }}）で
+# この値を参照するため、テンプレート内に版のベタ書きはない。
+__version__ = "V3.0"
+
+import os, json, re, subprocess, glob, time, wave, contextlib
 from datetime import datetime
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 
@@ -171,6 +74,18 @@ SERVICE_NAME = "dvswitch-bot"
 # 🔵 V2.73: bot 本体スクリプトのフォールバックパス（ExecStart 取得失敗時に使用）
 BOT_SCRIPT   = "/opt/dvswitch_bot/bin/dvswitch_bot.py"
 
+# 🔵 V3.0: テスト送信（bin/test_send.py の Web 入口）関連。
+# 送信対象に選べる WAV のホワイトリスト。実在するものだけ UI に出す
+# （cstm_* はカスタム音声。無いノードでは選択肢に出ない）。
+TEST_SEND_PY  = "/opt/dvswitch_bot/bin/test_send.py"
+TEST_WAV_DIR  = "/opt/dvswitch_bot"
+TEST_WAV_CHOICES = [
+    "fixed_intro.wav", "fixed_outro.wav", "time_intro.wav",
+    "001.wav", "002.wav",
+    "cstm_intro.wav", "cstm_001.wav", "cstm_002.wav",
+]
+TEST_SEND_TIMEOUT_MARGIN_SEC = 15  # タイムアウト = WAV長 + パディング3s + この余裕
+
 # 🔴 再起動の依存順と待機（V2.68）
 # Analog_Bridge は起動時に md380-emu(AMBE) へ接続し、MMDVM_Bridge と TLV 経路を張る。
 # 同時 restart だと相手未準備で経路確立に失敗するため、下から順に間隔を空けて起動する。
@@ -186,6 +101,20 @@ VALID_FREQ_BY_MODE = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}
 # 1.0=等倍の線形倍率。0 以下は無効、>5.0 はクリップの恐れがあるため不可。
 TX_GAIN_MIN = 0.0   # これより大きいこと
 TX_GAIN_MAX = 5.0   # これ以下
+
+# 🔵 V2.86: VOICEVOX 話者変更まわり。
+# 本ダッシュボードは VOICEVOX ノード（ocv-voicevox 等）と Open JTalk の Pi ノードで
+# 共有する。VOICEVOX が導入されていないノードでは話者変更 UI を自動的に無効化する
+# （表示は「未対応」注記のみ。他の機能はすべて従来どおり動く）。
+VOICEVOX_VVM_DIR = "/opt/voicevox/dist/models/vvms"     # 話者モデル置き場
+VENV_PY          = "/opt/dvswitch_bot/venv/bin/python3"  # voicevox_core を持つ venv
+CREATE_WAV_SH    = "/opt/dvswitch_bot/bin/create_wav.sh" # --regen で叩く
+REGEN_TIMEOUT_SEC = 300  # 再生成の上限。vv_say.py は1ファイルごとに onnx を
+                         # ロードし直すため6ファイルで数十秒〜かかる余裕を見る。
+
+def voicevox_available():
+    """このノードで VOICEVOX 話者変更が使えるか（共有ダッシュボード対応）。"""
+    return os.path.isdir(VOICEVOX_VVM_DIR) and os.path.exists(VENV_PY)
 
 app = Flask(__name__)
 
@@ -353,9 +282,9 @@ def get_bot_version():
         for pat in (
             # 行頭の代入行のみ。コメント中の「__version__ = "Vx.yy"」のような
             # 例示文字列（先頭が空白や記号で始まる）を誤検出しないよう ^ で固定する。
-            r"(?m)^__version__\s*=\s*[\"'](V[\d.]+)[\"']",
-            r"Document Version:\s*(V[\d.]+)",
-            r"DVSwitch Bot (V[\d.]+)",
+            r"(?m)^__version__\s*=\s*[\"'](V[\d.]+[a-z]*)[\"']",
+            r"Document Version:\s*(V[\d.]+[a-z]*)",
+            r"DVSwitch Bot (V[\d.]+[a-z]*)",
         ):
             m = re.search(pat, text)
             if m:
@@ -442,6 +371,9 @@ def index():
         dvs=get_dvs_values(),
         info=get_info_values(),
         wav_source=get_wav_source(),
+        voices=get_voice_list(),
+        voicevox_ok=voicevox_available(),
+        test_wavs=get_test_wavs(),
         backups=list_backups(),
         change_log=change_log,
         msg=_msg,
@@ -459,15 +391,149 @@ def get_dvs_values():
 # 🔵 V2.78: wav_source.json（create_wav.sh が記録する読み上げソース）を読み、
 # 各WAVが実際に喋る内容を表示用に整形して返す。閲覧専用。
 # create_wav.sh だけが書き込み、ダッシュボードは読むだけ（bot_config.json には無関係）。
+# 🔵 V2.86: 話者(voice)の表示・変更に対応（変更ルートは /voice_config）。
+
+# 🔵 V2.86: VOICEVOX の全話者一覧を venv 側 python でスキャンして返す。
+# create_wav.sh の select_voice と同じ方法（VoiceModelFile.metas のみ使用。
+# Synthesizer/onnxruntime はロードしないため軽量）。結果は vvms ディレクトリの
+# mtime でキャッシュし、モデル追加時は自動で再スキャンする。
+_voice_cache = {"mtime": None, "list": []}
+
+def get_voice_list():
+    """[{'style_id':int,'vvm':'6.vvm','label':'No.7（アナウンス）'}, ...] を
+    style_id 昇順で返す。スキャン不可（VOICEVOX 不在等）は空リスト。"""
+    if not voicevox_available():
+        return []
+    try:
+        mtime = os.path.getmtime(VOICEVOX_VVM_DIR)
+    except OSError:
+        return []
+    if _voice_cache["mtime"] == mtime and _voice_cache["list"]:
+        return _voice_cache["list"]
+    script = (
+        "import glob,sys\n"
+        "from voicevox_core.blocking import VoiceModelFile\n"
+        "recs=[]\n"
+        "for p in sorted(glob.glob('" + VOICEVOX_VVM_DIR + "/*.vvm')):\n"
+        "    vvm=p.rsplit('/',1)[-1]\n"
+        "    try:\n"
+        "        with VoiceModelFile.open(p) as m: metas=m.metas\n"
+        "    except Exception: continue\n"
+        "    for ch in metas:\n"
+        "        for st in ch.styles:\n"
+        "            recs.append((st.id,vvm,ch.name,st.name))\n"
+        "recs.sort(key=lambda r:r[0])\n"
+        "for sid,vvm,cn,sn in recs:\n"
+        "    sys.stdout.write('%d\\x1f%s\\x1f%s（%s）\\n'%(sid,vvm,cn,sn))\n"
+    )
+    try:
+        r = subprocess.run([VENV_PY, "-c", script],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return []
+        out = []
+        for line in r.stdout.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) == 3 and parts[0].isdigit():
+                out.append({"style_id": int(parts[0]), "vvm": parts[1], "label": parts[2]})
+        _voice_cache["mtime"] = mtime
+        _voice_cache["list"] = out
+        return out
+    except Exception:
+        return []
+
+# 🔵 V2.87: 英数字→カナ変換（create_wav.sh の bash 関数の Python 移植）。
+# 「読み自動生成」の空欄フォールバック（サーバ側）に使う。クライアント側 JS にも
+# 同じ表を移植しており、両者は必ず同一の変換結果になるよう表を揃えること。
+_KANA_ALPHA = {
+    "A": "エー", "B": "ビー", "C": "シー", "D": "ディー", "E": "イー", "F": "エフ",
+    "G": "ジー", "H": "エイチ", "I": "アイ", "J": "ジェイ", "K": "ケー", "L": "エル",
+    "M": "エム", "N": "エヌ", "O": "オー", "P": "ピー", "Q": "キュー", "R": "アール",
+    "S": "エス", "T": "ティー", "U": "ユー", "V": "ブイ", "W": "ダブリュー",
+    "X": "エックス", "Y": "ワイ", "Z": "ゼット",
+}
+# コールサイン用: 数字は英語読み（ワン、ツー…）
+_KANA_DIGIT_CALLSIGN = {
+    "0": "ゼロ", "1": "ワン", "2": "ツー", "3": "スリー", "4": "フォー",
+    "5": "ファイブ", "6": "シックス", "7": "セブン", "8": "エイト", "9": "ナイン",
+}
+# メッセージ用: 数字は日本語読み（イチ、ニー…）
+_KANA_DIGIT_MSG = {
+    "0": "ゼロ", "1": "イチ", "2": "ニー", "3": "サン", "4": "ヨン",
+    "5": "ゴー", "6": "ロク", "7": "ナナ", "8": "ハチ", "9": "キュー",
+}
+
+def callsign_to_kana(s):
+    """コールサインの英数字をカナ読みへ（create_wav.sh callsign_to_kana と同一）。"""
+    out = []
+    for ch in s:
+        u = ch.upper()
+        out.append(_KANA_ALPHA.get(u) or _KANA_DIGIT_CALLSIGN.get(u) or ch)
+    return "".join(out)
+
+def msg_alphanum_to_kana(s):
+    """メッセージ中の英数字をカナ読みへ（create_wav.sh msg_alphanum_to_kana と同一）。"""
+    out = []
+    for ch in s:
+        u = ch.upper()
+        out.append(_KANA_ALPHA.get(u) or _KANA_DIGIT_MSG.get(u) or ch)
+    return "".join(out)
+
+# 🔵 V2.87: 入力値から6つの読み上げテキスト(texts)を組み立てる。
+# create_wav.sh の対話モードの組み立てと厳密に同一であること（三位一体と同様、
+# 変更時は create_wav.sh 側と必ずセットで揃える）。
+def build_wav_texts(callsign_kana, location, msg1_kana, msg2_kana):
+    base = f"こちらは、{callsign_kana}、{location} ディーエムアール デジピーターです。"
+    return {
+        "fixed_intro": base,
+        "fixed_outro": "カーチャンクです。",
+        "time_intro":  f"こちらは、{callsign_kana}、",
+        "001":         base + msg1_kana,
+        "002":         base + msg2_kana,
+        "time_outro":  "です。",
+    }
+
+# 🔵 V2.86: 読み上げテキストを「固定部分」と「入力で変えられる可変部分」に分割する。
+# 可変部分＝ wav_source.json のトップレベルに記録された入力値
+# （callsign_kana / location / msg1_kana / msg2_kana）。テンプレート側で可変部分だけ
+# <b> 表示する（Jinja2 の自動エスケープを活かすため、HTML はここでは作らない）。
+def _split_variable_segments(text, variables):
+    """text を [{'t': 断片, 'v': 可変ならTrue}, ...] に分割して返す。
+    variables は可変値のリスト。長い値から優先マッチ（部分文字列の誤分割を防ぐ）。"""
+    vars_ = sorted({v for v in variables if v}, key=len, reverse=True)
+    if not text:
+        return []
+    if not vars_:
+        return [{"t": text, "v": False}]
+    pat = re.compile("|".join(re.escape(v) for v in vars_))
+    segs, pos = [], 0
+    for m in pat.finditer(text):
+        if m.start() > pos:
+            segs.append({"t": text[pos:m.start()], "v": False})
+        segs.append({"t": m.group(0), "v": True})
+        pos = m.end()
+    if pos < len(text):
+        segs.append({"t": text[pos:], "v": False})
+    return segs
+
 def get_wav_source():
     """wav_source.json を読み、各WAVの読み上げテキストと生成時刻を返す。
-    ファイルが無い/壊れている場合は空表示用の辞書を返す（存在フラグ exists=False）。"""
+    ファイルが無い/壊れている場合は空表示用の辞書を返す（存在フラグ exists=False）。
+    🔵 V2.86: 話者(voice)と、可変部分を太字表示するための segments を追加。"""
     data = read_json(WAV_SOURCE)
     if not isinstance(data, dict) or not data:
-        return {"exists": False, "generated_at": "", "entries": []}
+        return {"exists": False, "generated_at": "", "entries": [],
+                "voice_label": "", "voice_style_id": "", "voice_vvm": ""}
     texts = data.get("texts", {})
     if not isinstance(texts, dict):
         texts = {}
+    # 🔵 V2.86: 可変部分（create_wav.sh の入力で変わる値）。太字表示の対象。
+    variables = [
+        str(data.get("callsign_kana", "") or ""),
+        str(data.get("location", "") or ""),
+        str(data.get("msg1_kana", "") or ""),
+        str(data.get("msg2_kana", "") or ""),
+    ]
     # WAVファイル名と読み上げ内容の対応（表示順を固定）。
     # 🔵 V2.81: 全6項目を表示する（V2.80 で絞った3件を再表示）。
     # time_outro は現行 bot では未使用だが、記録として併せて表示する。
@@ -481,15 +547,33 @@ def get_wav_source():
     ]
     entries = []
     for fname, key, role in order:
+        text = texts.get(key, "")
         entries.append({
             "file": fname,
             "role": role,
-            "text": texts.get(key, ""),
+            "text": text,
+            # 🔵 V2.86: 固定/可変の断片リスト。テンプレートで可変のみ <b> にする。
+            "segments": _split_variable_segments(text, variables),
         })
+    # 🔵 V2.86: 話者（create_wav.sh V1.2+ が voice に記録。無ければ空表示）
+    voice = data.get("voice", {})
+    if not isinstance(voice, dict):
+        voice = {}
     return {
         "exists": True,
         "generated_at": data.get("generated_at", ""),
         "entries": entries,
+        "voice_label": str(voice.get("label", "") or ""),
+        "voice_style_id": str(voice.get("style_id", "") or ""),
+        "voice_vvm": str(voice.get("vvm", "") or ""),
+        # 🔵 V2.87: 入力値と読み仮名（Web からの編集用。CLI と同じ7項目）
+        "callsign":      str(data.get("callsign", "") or ""),
+        "callsign_kana": str(data.get("callsign_kana", "") or ""),
+        "location":      str(data.get("location", "") or ""),
+        "msg1":          str(data.get("msg1", "") or ""),
+        "msg1_kana":     str(data.get("msg1_kana", "") or ""),
+        "msg2":          str(data.get("msg2", "") or ""),
+        "msg2_kana":     str(data.get("msg2_kana", "") or ""),
     }
 
 def get_info_values():
@@ -510,6 +594,107 @@ def api_status():
     return jsonify({"status": get_service_status(), "bot_version": get_bot_version()})
 
 
+# 🔵 V2.87: 読み上げ内容（話者＋入力テキスト）の統合変更ルート。
+# V2.86 の /voice_config（話者のみ）を置き換え。CLI（create_wav.sh 対話モード）と
+# 同じ7項目の入力値＋話者を Web から一括変更し、1回の再生成にまとめる。
+# 流れ: (1) 話者の選択値をスキャン結果と照合して検証（クライアント値を信用しない）
+#       (2) 入力値の検証。読み仮名が空欄なら CLI と同じ変換で自動生成
+#       (3) texts（6つの読み上げテキスト）を再計算（build_wav_texts。
+#           create_wav.sh の組み立てと厳密に同一）
+#       (4) wav_source.json を更新（入力7項目・texts・voice）
+#       (5) create_wav.sh --regen で固定WAVを非対話再生成
+#       (6) 話者が変わった場合のみ dvswitch-bot を再起動（bot V1.96 は起動時に
+#           voice を読む）。テキストのみの変更は再起動不要（bot は送出のたびに
+#           WAV を読み直す）。bridges/md380 は無関係のため常に触らない。
+# 失敗時は各段階のエラーを flash 表示。--regen 失敗時も json は更新済みのため、
+# もう一度保存すれば再試行できる。
+@app.route("/wav_source_config", methods=["POST"])
+def wav_source_config_save():
+    if not voicevox_available():
+        set_flash(err="このノードは VOICEVOX 未導入のため読み上げ内容を変更できません")
+        return redirect("/")
+
+    # (1) 話者
+    sel = request.form.get("voice_sel", "")
+    m = re.match(r"^(\d+):([\w.\-]+\.vvm)$", sel)
+    voice = None
+    if m:
+        sid, vvm = int(m.group(1)), m.group(2)
+        for v in get_voice_list():
+            if v["style_id"] == sid and v["vvm"] == vvm:
+                voice = v
+                break
+    if voice is None:
+        set_flash(err="話者の選択値が不正です（一覧から選び直してください）")
+        return redirect("/")
+
+    # (2) 入力値。読み仮名の空欄は CLI と同じ規則で自動生成
+    callsign = request.form.get("callsign", "").strip().upper()
+    if not callsign:
+        set_flash(err="コールサインを入力してください")
+        return redirect("/")
+    callsign_kana = request.form.get("callsign_kana", "").strip() or callsign_to_kana(callsign)
+    location      = request.form.get("location", "").strip()
+    if not location:
+        set_flash(err="設置場所の地名を入力してください")
+        return redirect("/")
+    msg1      = request.form.get("msg1", "").strip()
+    msg1_kana = request.form.get("msg1_kana", "").strip() or msg_alphanum_to_kana(msg1)
+    msg2      = request.form.get("msg2", "").strip()
+    msg2_kana = request.form.get("msg2_kana", "").strip() or msg_alphanum_to_kana(msg2)
+
+    # (3)(4) texts 再計算と wav_source.json 更新
+    data = read_json(WAV_SOURCE)
+    if not isinstance(data, dict) or not isinstance(data.get("texts"), dict):
+        set_flash(err="wav_source.json に texts の記録がありません。"
+                      "先に create_wav.sh（対話モード）で一度WAVを作成してください")
+        return redirect("/")
+    old_voice = data.get("voice", {}) if isinstance(data.get("voice"), dict) else {}
+    voice_changed = (old_voice.get("style_id") != voice["style_id"]
+                     or old_voice.get("vvm") != voice["vvm"])
+    data.update({
+        "callsign": callsign, "callsign_kana": callsign_kana, "location": location,
+        "msg1": msg1, "msg1_kana": msg1_kana, "msg2": msg2, "msg2_kana": msg2_kana,
+        "voice": {"style_id": voice["style_id"], "vvm": voice["vvm"],
+                  "label": voice["label"]},
+        "texts": build_wav_texts(callsign_kana, location, msg1_kana, msg2_kana),
+    })
+    write_json(WAV_SOURCE, data)
+
+    # (5) 固定WAVを非対話再生成（create_wav.sh V1.3 --regen）
+    try:
+        r = subprocess.run(["sudo", CREATE_WAV_SH, "--regen"],
+                           capture_output=True, text=True,
+                           timeout=REGEN_TIMEOUT_SEC)
+        if r.returncode != 0:
+            tail = (r.stderr or r.stdout or "").strip().splitlines()
+            detail = tail[-1] if tail else "詳細不明"
+            set_flash(err=f"WAV再生成に失敗: {detail}（入力内容は保存済み。再度保存で再試行）")
+            return redirect("/")
+    except subprocess.TimeoutExpired:
+        set_flash(err="WAV再生成がタイムアウトしました（入力内容は保存済み）")
+        return redirect("/")
+    except Exception as e:
+        set_flash(err=f"WAV再生成の実行に失敗: {e}")
+        return redirect("/")
+
+    # (6) 話者が変わった場合のみ bot 再起動
+    if voice_changed:
+        try:
+            r = subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                set_flash(err=f"WAVは再生成済みですが bot 再起動に失敗: {r.stderr.strip()}")
+                return redirect("/")
+        except Exception as e:
+            set_flash(err=f"WAVは再生成済みですが bot 再起動に失敗: {e}")
+            return redirect("/")
+        set_flash(msg=f"読み上げ内容を保存し、話者「{voice['label']}」でWAV再生成と bot 再起動を完了しました")
+    else:
+        set_flash(msg="読み上げ内容を保存し、WAVを再生成しました（話者変更なしのため bot 再起動は省略）")
+    return redirect("/")
+
+
 @app.route("/service/<action>", methods=["POST"])
 def service_ctrl(action):
     if action not in ("start", "stop", "restart"):
@@ -519,6 +704,60 @@ def service_ctrl(action):
         set_flash(msg=f"サービスを {action} しました"); return redirect("/")
     else:
         set_flash(err=f"{action} 失敗: {msg}"); return redirect("/")
+
+# 🔵 V3.0: テスト送信（bin/test_send.py の Web 入口）
+# サービス制御カード（変更モード）から固定WAVを選んで単発送信する。
+# 設計判断: bot は停止しない。停止→再開すると起動アナウンス（「起動しました。」）
+# が送出されてしまうため。bot が送信するのはカーチャンク応答・時報・定時
+# メッセージの発火時のみなので、発火時刻直前を避ければ実用上衝突しない
+# （テンプレート側の confirm でも注意喚起する）。
+def get_test_wavs():
+    """テスト送信できる WAV の一覧（TEST_WAV_CHOICES のうち実在するもの）。"""
+    return [f for f in TEST_WAV_CHOICES
+            if os.path.exists(os.path.join(TEST_WAV_DIR, f))]
+
+
+def _wav_duration_sec(path):
+    """WAV の長さ（秒）。読めなければ 0.0（タイムアウトのマージンで吸収）。"""
+    try:
+        with contextlib.closing(wave.open(path, "rb")) as wf:
+            fr = wf.getframerate()
+            return (wf.getnframes() / float(fr)) if fr else 0.0
+    except Exception:
+        return 0.0
+
+
+@app.route("/test_send", methods=["POST"])
+def test_send():
+    fname = request.form.get("test_wav", "")
+    # 選択値はホワイトリストと照合する（クライアント値を信用しない）
+    if fname not in TEST_WAV_CHOICES:
+        set_flash(err="テスト送信: WAV の選択値が不正です")
+        return redirect("/")
+    path = os.path.join(TEST_WAV_DIR, fname)
+    if not os.path.exists(path):
+        set_flash(err=f"テスト送信: {fname} が見つかりません")
+        return redirect("/")
+    if not os.path.exists(TEST_SEND_PY):
+        set_flash(err=f"テスト送信: {TEST_SEND_PY} がありません")
+        return redirect("/")
+    # タイムアウト = WAV長 + 前後パディング(1.5s×2) + マージン
+    timeout = _wav_duration_sec(path) + 3.0 + TEST_SEND_TIMEOUT_MARGIN_SEC
+    try:
+        r = subprocess.run(
+            ["python3", TEST_SEND_PY, path],
+            capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            tail = (r.stderr or r.stdout or "").strip().splitlines()
+            set_flash(err=f"テスト送信に失敗: {tail[-1] if tail else '詳細不明'}")
+        else:
+            set_flash(msg=f"テスト送信を完了しました: {fname}")
+    except subprocess.TimeoutExpired:
+        set_flash(err="テスト送信がタイムアウトしました")
+    except Exception as e:
+        set_flash(err=f"テスト送信の実行に失敗: {e}")
+    return redirect("/")
+
 
 @app.route("/bot_config", methods=["POST"])
 def bot_config_save():
@@ -775,7 +1014,9 @@ font-weight:bold;
 
   /* フォーム */
   .field{margin-bottom:10px}
-  label{display:blockcolor:var(--muted);margin-bottom:3px}
+  /* 🔵 V3.0: typo 修正（display:blockcolor → display:block;color）。
+     V2.58/V2.59 の typo 修正と同系。ラベルが本来意図の淡色・ブロック表示になる。 */
+  label{display:block;color:var(--muted);margin-bottom:3px}
   input[type=text],input[type=number],input[type=password],select{
     width:100%;
     background:var(--bg3);
@@ -837,6 +1078,8 @@ font-weight:bold;
     font-family:var(--mono);font-size:12px;color:var(--muted);
     margin-left:4px;letter-spacing:.03em;
   }
+  /* 🔵 V3.0: テスト送信行（サービス制御カード内・変更モードのみ表示） */
+  .test-send-row{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
 
   /* 🔵 V2.85: 外部サービス（DVSwitch Dashboard / Monit）へのリンク */
   .ext-links{
@@ -936,6 +1179,32 @@ margin-bottom:6px;border-left:4px solid;
   }
   .wav-src-empty{color:#aaa;font-style:italic}
   .wav-src-meta{color:var(--muted);font-size:10px;margin-top:8px}
+  /* 🔵 V2.86: 話者行（現在の話者表示＋変更UI）と、可変部分の太字。
+     読み上げテキストは編集不可を示すグレー(#888)のため、可変部分の <b> は
+     濃色(#444)にして「入力で変わる場所」がひと目で分かるようにする。 */
+  .voice-row{
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    margin-bottom:10px;padding:6px 10px;
+    background:#f3f3f3;border:1px solid var(--border2);border-radius:4px;
+  }
+  .voice-cur b{color:var(--orange2)}
+  .voice-detail{color:var(--muted);font-size:10pt}
+  .voice-form{display:inline-flex;align-items:center;gap:8px}
+  .voice-sel{font-size:10pt;padding:2px 4px;max-width:340px}
+  .wav-src-text b{color:#444;font-weight:bold}
+  .wav-src-table th b{color:#444}
+  /* 🔵 V2.87: 入力値と読み仮名の編集テーブル（CLI の対話7項目）。
+     input は他カードと同じく view-mode の共通CSSでグレー化される。 */
+  .wav-input-table{width:100%;border-collapse:collapse;font-size:11pt;margin-bottom:10px}
+  .wav-input-table td{padding:4px 10px;vertical-align:middle}
+  .wav-in-label{white-space:nowrap;color:var(--muted);width:210px}
+  .wav-in-sub{padding-left:26px}
+  /* 🔵 V2.87b: 入力枠は列幅いっぱいに伸ばし、右端を全行で揃える
+     （下の読み上げ内容プレビュー表と同じ幅感）。通常/変更モード共通。 */
+  .wav-input-table input{font-size:11pt;padding:3px 6px;width:100%;box-sizing:border-box}
+  .wav-input-table input.wav-in-wide{width:100%}
+  .wav-save-row{display:flex;align-items:center;gap:12px;margin:4px 0 12px}
+  .tbtn-strong{font-weight:bold}
   /* 🔵 V2.79: 上のグリッド(grid3)との間隔を確保。カードは box-shadow(周囲8px)を
      持つため、間隔ゼロだと影同士が重なってめり込んで見える。grid3 内の gap(12px)
      より広めの 16px を空けて、影が重ならないようにする。 */
@@ -947,7 +1216,7 @@ margin-bottom:6px;border-left:4px solid;
 <header>
   <div>
     <div class="logo">OpenCCVoice for DVSwitch Web Dashboard</div>
-    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;V2.85</div>
+    <div class="tagline">{{ dvs.callsign }} / TGIF TG{{ dvs.txtg }} 管理パネル&nbsp;&nbsp;&nbsp;{{ app_version }}</div>
   </div>
   <div class="status-pill">
     <div class="dot {% if status == 'active' %}active{% elif status == 'failed' %}failed{% else %}inactive{% endif %}" id="dot"></div>
@@ -1002,6 +1271,23 @@ margin-bottom:6px;border-left:4px solid;
         </div>
       </div>
     </div>
+
+    <!-- 🔵 V3.0: テスト送信（変更モードのみ表示）。bin/test_send.py を実行して
+         選択した固定WAVを単発送信する。bot は停止しない（停止→再開だと起動
+         アナウンスが送出されるため）。時報・定時メッセージの発火時刻直前の
+         実行は二重送信になり得るため避けること（confirm でも注意喚起）。 -->
+    {% if test_wavs %}
+    <div class="edit-only test-send-row">
+      <span class="voice-detail">テスト送信:</span>
+      <select name="test_wav" class="voice-sel" style="max-width:220px" form="testsend-form">
+        {% for w in test_wavs %}
+        <option value="{{ w }}">{{ w }}</option>
+        {% endfor %}
+      </select>
+      <button class="tbtn" type="submit" form="testsend-form">送信</button>
+      <span class="voice-detail">選択したWAVを単発送信します（完了まで画面は待機）</span>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -1191,15 +1477,99 @@ margin-bottom:6px;border-left:4px solid;
      create_wav.sh が記録した各WAVの実際の読み上げ内容。閲覧専用（編集不可）。
      🔵 V2.79: 上グリッドとの間隔確保のため card-below-grid（margin-top:16px）を付与。 -->
 <div class="card card-below-grid">
-  <div class="card-head">読み上げ内容 — wav_source.json（閲覧専用）</div>
+  <div class="card-head">読み上げ内容 — wav_source.json</div>
   <div class="card-body">
     {% if wav_source.exists %}
+    <!-- 🔵 V2.86: 話者（音声キャラクター）の表示と変更。
+         🔵 V2.87: 話者に加え、入力値7項目（コールサイン/読み・地名・メッセージ1,2/読み）
+         の編集を統合。保存は1ボタン（保存して再生成）→ /wav_source_config へ POST し、
+         wav_source.json 更新 → create_wav.sh --regen →（話者変更時のみ）bot 再起動。
+         表示は常時、編集UIは変更モードのみ（edit-only）。VOICEVOX 未導入ノード
+         （Open JTalk の Pi ノード等）では編集UIを出さず注記のみ（共有ダッシュボード対応）。
+         save-form（一括保存）とは独立のため、フォーム入れ子を避けて HTML5 の form
+         属性で外部の wavsrc-form（save-form 閉じタグ直後に定義）へ関連付ける。 -->
+    <div class="voice-row">
+      <span class="voice-cur">現在の話者:
+        {% if wav_source.voice_label %}
+          <b>{{ wav_source.voice_label }}</b>
+          <span class="voice-detail">(style_id={{ wav_source.voice_style_id }} / {{ wav_source.voice_vvm }})</span>
+        {% else %}
+          <span class="voice-detail">記録なし（既定 No.7〔アナウンス〕で生成されています）</span>
+        {% endif %}
+      </span>
+      {% if voicevox_ok and voices %}
+      <span class="edit-only voice-form">
+        <select name="voice_sel" class="voice-sel" form="wavsrc-form">
+          {% for v in voices %}
+          <option value="{{ v.style_id }}:{{ v.vvm }}"
+            {% if wav_source.voice_style_id == v.style_id|string and wav_source.voice_vvm == v.vvm %}selected{% endif %}>
+            {{ v.label }}（{{ v.style_id }} / {{ v.vvm }}）
+          </option>
+          {% endfor %}
+        </select>
+      </span>
+      {% elif not voicevox_ok %}
+      <span class="voice-detail">（このノードは VOICEVOX 未導入のため変更は不可）</span>
+      {% endif %}
+    </div>
+    {% if voicevox_ok %}
+    <!-- 🔵 V2.87: 入力値と読み仮名（CLI の対話項目と同じ7項目）。
+         通常モードでは view-mode の共通CSSでグレー表示（他カードの入力欄と同じ挙動）。
+         「読み自動生成」は CLI のプリフィルと同じ変換を JS で行う（表はサーバ側と同一）。
+         読み欄を空で保存した場合もサーバ側で同じ変換により自動生成される。 -->
+    <table class="wav-input-table">
+      <tbody>
+        <tr>
+          <td class="wav-in-label">1. コールサイン</td>
+          <td><input type="text" name="callsign" id="ws-callsign" form="wavsrc-form"
+                     value="{{ wav_source.callsign }}"></td>
+        </tr>
+        <tr>
+          <td class="wav-in-label wav-in-sub">→ 読み仮名
+              <button type="button" class="tbtn edit-only" onclick="autoKana('callsign')">自動生成</button></td>
+          <td><input type="text" name="callsign_kana" id="ws-callsign-kana" form="wavsrc-form"
+                     class="wav-in-wide" value="{{ wav_source.callsign_kana }}"></td>
+        </tr>
+        <tr>
+          <td class="wav-in-label">2. 設置場所の地名</td>
+          <td><input type="text" name="location" id="ws-location" form="wavsrc-form"
+                     value="{{ wav_source.location }}"></td>
+        </tr>
+        <tr>
+          <td class="wav-in-label">3. 定時メッセージ1</td>
+          <td><input type="text" name="msg1" id="ws-msg1" form="wavsrc-form"
+                     class="wav-in-wide" value="{{ wav_source.msg1 }}"></td>
+        </tr>
+        <tr>
+          <td class="wav-in-label wav-in-sub">→ 読み
+              <button type="button" class="tbtn edit-only" onclick="autoKana('msg1')">自動生成</button></td>
+          <td><input type="text" name="msg1_kana" id="ws-msg1-kana" form="wavsrc-form"
+                     class="wav-in-wide" value="{{ wav_source.msg1_kana }}"></td>
+        </tr>
+        <tr>
+          <td class="wav-in-label">4. 定時メッセージ2</td>
+          <td><input type="text" name="msg2" id="ws-msg2" form="wavsrc-form"
+                     class="wav-in-wide" value="{{ wav_source.msg2 }}"></td>
+        </tr>
+        <tr>
+          <td class="wav-in-label wav-in-sub">→ 読み
+              <button type="button" class="tbtn edit-only" onclick="autoKana('msg2')">自動生成</button></td>
+          <td><input type="text" name="msg2_kana" id="ws-msg2-kana" form="wavsrc-form"
+                     class="wav-in-wide" value="{{ wav_source.msg2_kana }}"></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="edit-only wav-save-row">
+      <button class="tbtn tbtn-strong" type="submit" form="wavsrc-form">保存して再生成（WAV作り直し）</button>
+      <span class="voice-detail">再生成には数十秒かかります。話者を変えた場合は bot も自動再起動します。</span>
+    </div>
+    {% endif %}
     <table class="wav-src-table">
       <thead>
         <tr>
           <th>WAVファイル</th>
           <th>用途</th>
-          <th>読み上げ内容</th>
+          <th>読み上げ内容（<b>太字</b>＝入力で変えられる可変部分）</th>
         </tr>
       </thead>
       <tbody>
@@ -1209,7 +1579,9 @@ margin-bottom:6px;border-left:4px solid;
           <td class="wav-src-role">{{ it.role }}</td>
           <td>
             {% if it.text %}
-            <div class="wav-src-text">{{ it.text }}</div>
+            <!-- 🔵 V2.86: 固定部分は従来表示、可変部分（コールサイン読み・地名・
+                 メッセージ読み）のみ <b> で強調。segments はサーバ側で分割済み。 -->
+            <div class="wav-src-text">{% for s in it.segments %}{% if s.v %}<b>{{ s.t }}</b>{% else %}{{ s.t }}{% endif %}{% endfor %}</div>
             {% else %}
             <span class="wav-src-empty">（記録なし）</span>
             {% endif %}
@@ -1233,9 +1605,19 @@ margin-bottom:6px;border-left:4px solid;
 
 
 <div style="text-align:center;font-size:9px;color:var(--muted);margin-top:4px">
-  OpenCCVoice for DVSwitch Web Dashboard V2.85
+  OpenCCVoice for DVSwitch Web Dashboard {{ app_version }}
 </div>
 </form>
+
+<!-- 🔵 V2.87: 読み上げ内容（話者＋テキスト）保存フォーム本体。save-form の外に置き、
+     カード内の select/input/button から form="wavsrc-form" 属性で関連付ける（入れ子回避）。 -->
+<form id="wavsrc-form" method="post" action="/wav_source_config"
+      onsubmit="return confirm('読み上げ内容を保存し、固定WAVの再生成を行います。\n（話者を変えた場合は bot も再起動します）\n再生成には数十秒かかることがあります。よろしいですか？');"></form>
+
+<!-- 🔵 V3.0: テスト送信フォーム本体（コントロールはサービス制御カード内。
+     form 属性で関連付け。フォーム入れ子を避ける方式は wavsrc-form と同じ） -->
+<form id="testsend-form" method="post" action="/test_send"
+      onsubmit="return confirm('選択したWAVをテスト送信します。\n時報・定時メッセージの発火時刻直前は避けてください。\nよろしいですか？');"></form>
 
 </main>
 
@@ -1306,14 +1688,44 @@ function cancelEdit(){
   // 変更を破棄して通常モードへ（再読み込みで元の値に戻す）
   location.href="/";
 }
+
+// 🔵 V2.87: 英数字→カナ変換（create_wav.sh / app.py サーバ側と同一の表）。
+// 「読み自動生成」ボタンで CLI のプリフィルと同じ体験を提供する。
+var KANA_ALPHA = {A:"エー",B:"ビー",C:"シー",D:"ディー",E:"イー",F:"エフ",
+  G:"ジー",H:"エイチ",I:"アイ",J:"ジェイ",K:"ケー",L:"エル",M:"エム",N:"エヌ",
+  O:"オー",P:"ピー",Q:"キュー",R:"アール",S:"エス",T:"ティー",U:"ユー",V:"ブイ",
+  W:"ダブリュー",X:"エックス",Y:"ワイ",Z:"ゼット"};
+var KANA_DIGIT_CS  = {"0":"ゼロ","1":"ワン","2":"ツー","3":"スリー","4":"フォー",
+  "5":"ファイブ","6":"シックス","7":"セブン","8":"エイト","9":"ナイン"};
+var KANA_DIGIT_MSG = {"0":"ゼロ","1":"イチ","2":"ニー","3":"サン","4":"ヨン",
+  "5":"ゴー","6":"ロク","7":"ナナ","8":"ハチ","9":"キュー"};
+function toKana(s, digitMap){
+  var out = "";
+  for (var i = 0; i < s.length; i++){
+    var u = s[i].toUpperCase();
+    out += KANA_ALPHA[u] || digitMap[u] || s[i];
+  }
+  return out;
+}
+// which: 'callsign'（数字は英語読み） / 'msg1' / 'msg2'（数字は日本語読み）
+function autoKana(which){
+  var srcId  = "ws-" + which;
+  var dstId  = "ws-" + which + "-kana";
+  var src = document.getElementById(srcId);
+  var dst = document.getElementById(dstId);
+  if(!src || !dst) return;
+  var map = (which === "callsign") ? KANA_DIGIT_CS : KANA_DIGIT_MSG;
+  dst.value = toKana(src.value, map);
+}
 </script>
 </body>
 </html>
 """
 
 @app.context_processor
-def inject_service_name():
-    return {"service_name": SERVICE_NAME}
+def inject_globals():
+    # 🔵 V3.0: 版表記の一元化。テンプレートは {{ app_version }} でこの値を参照する。
+    return {"service_name": SERVICE_NAME, "app_version": __version__}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8081, debug=False, threaded=True)
