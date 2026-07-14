@@ -35,8 +35,8 @@ flowchart TD
         DASH["dashboard/app.py<br/>(Flask, :8081, dvswitch-web)"]
 
         MB <-- "TLV" --> AB
-        AB <-- "AMBE" --> EMU
         AB <-- "USRP/UDP<br/>(rx:51000 / tx:51001)" --> BOT
+        AB <-- "AMBE" --> EMU
         BOT -- "起動時に1回ロード" --> VVC
         CW -.-> VVC
     end
