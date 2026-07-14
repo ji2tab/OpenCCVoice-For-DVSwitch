@@ -3,42 +3,16 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.96vv —
+ — JJ2YYK デジピーター自動応答システム  V1.93 —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
  応答音声キャッシュ・頭無音・終端多重化・SET_INFO メタデータ送出など、主要な設計は
  すべてこのファイル内で完結している。
-
- バージョンごとの詳細な変更履歴（V1.60〜）は本ファイルには含めず、リポジトリ直下の
+ 
+ バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
-
- 【V1.96 の要点（V1.95a からの変更）】
-  1. 話者（VOICEVOX の style_id / vvm）を、コード内固定（30 / 6.vvm）から
-     wav_source.json の "voice" を起動時に読む方式へ変更。create_wav.sh（固定WAV側の
-     vv_say.py）と bot（動的合成）が同一の話者選択を共有するようになった。voice が
-     無い / 壊れている / vvm 実在しない場合は No.7（30 / 6.vvm）へフォールバックする。
-     話者を変えたら bot を再起動すると新話者がロードされる（起動時 1 回ロード）。
-  2. query.output_sampling_rate=48000 のハードコードを撤去（deprecation 対応）。
-     VOICEVOX のネイティブ出力（24kHz）に任せ、8kHz 変換は後段の sox に一本化。
-  3. onnxruntime の .so を .so.1.17.3 固定から glob 解決へ（バージョン差に非依存）。
-
- 【V1.95a の要点（V1.92 からの変更）】
-  1. 音声合成を Open JTalk から VOICEVOX CORE（Python バインディング）へ全面移行。
-     話者は VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH（ファイル冒頭）で変更する。
-     実行には venv（/opt/dvswitch_bot/venv）の python3 が必要。
-  2. キャッシュ命中時の送出リード REPLY_TX_LEAD_DELAY_SEC を 1.0 → 2.5 に変更。
-     直 TGIF 接続環境で 1.0s だと受信ストリーム残処理と TX が重なり AMBE 経路で
-     音声が崩れる症状（もごもご/同期ずれ）を確認。生成時間相当（実測正常）に揃えた。
-  3. キャッシュの一時ファイル（.building）にプロセスID+スレッドIDを付与しユニーク化（保険）。
-  4. キャッシュ署名（_reply_signature）に VOICEVOX の話者ID・モデルを追加。
-     話者やモデルを変えると自動でキャッシュ再生成される。
-  5. 第30条セッション判定のギャップ計算を修正。従来は「前回送信終了→今回送信終了」で
-     判定しており、無音が短くても今回の通話が長いとセッションが誤リセットされた。
-     「前回送信終了→今回送信開始（= now - dur）」の純粋な無通信時間で判定するよう修正。
-  6. QSO_SESSION_GAP_SEC を SUPPRESS_DURATION_SEC のエイリアスから独立させ 60 秒に変更
-     （TGIFChanger の自TG復帰判定と運用基準を統一）。
-
+ 
  【設定項目（bot_config.json）】
   RX_DURATION_MIN_SEC : 最小受信時間（秒, 0 < MIN < MAX）
   RX_DURATION_MAX_SEC : 最大受信時間（秒, カーチャンク上限）
@@ -71,14 +45,11 @@
   （WAV・設定 JSON は /opt/dvswitch_bot/ 直下。BOT_DIR 参照）
 
 【使い方】
-  1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py       # 先に設定ファイルを作成
-  2) /opt/dvswitch_bot/venv/bin/python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
-     ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
-       systemd 常駐化時も ExecStart を venv の python3 にする。
+  1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
+  2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.96vv (daemon, V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化)
- ※ 版番号の "vv" サフィックスは VOICEVOX 系ノード用ファイルであることを示す
-   （Open JTalk 系 Pi ノード用の同名ファイルと区別する命名規約。2026-07-14 導入）。
+ Document Version: V1.93 (daemon, V1.92 + 第30条セッションのギャップ判定バグ修正・
+                          QSO_SESSION_GAP_SEC を独立定数化し 60 秒へ変更)
  Last Updated: 2026-07-07
 ================================================================================
 """
@@ -89,7 +60,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.96vv"
+__version__ = "V1.93"
 
 import os
 import sys
@@ -104,81 +75,6 @@ import signal
 import logging
 import threading
 import subprocess
-
-# ============================================================
-# 🔵 V1.96: VOICEVOX CORE 統合（話者は wav_source.json から読む）
-# ============================================================
-# 音声合成は VOICEVOX CORE（Python バインディング / venv 内）で行う。
-# 🔵 V1.96: 話者（style_id / vvm）は起動時に wav_source.json の "voice" から読む。
-#   これで create_wav.sh（固定WAV側 vv_say.py）と bot（動的合成）が同一の話者選択を
-#   共有する。voice が無い / 壊れている / vvm が実在しない場合は No.7（アナウンス /
-#   style_id 30 / 6.vvm）へフォールバックする（後方互換）。
-#   話者を変えたら bot を再起動すると新話者がロードされる（起動時 1 回ロード）。
-#   固定WAV側は create_wav.sh の再生成で反映する。両者とも同じ voice を読むため揃う。
-#   参考の対応: 春日部つむぎ=8/0.vvm, ずんだもん=3/0.vvm, 波音リツ=9/3.vvm,
-#              玄野武宏=11/4.vvm, No.7(アナウンス)=30/6.vvm。
-#              全一覧は models/vvms/*.vvm を metas でスキャンして得られる。
-from voicevox_core.blocking import Onnxruntime, OpenJtalk as VoicevoxOpenJtalk, Synthesizer, VoiceModelFile
-
-VOICEVOX_DIST_DIR = "/opt/voicevox/dist"
-VOICEVOX_VVM_DIR = f"{VOICEVOX_DIST_DIR}/models/vvms"
-WAV_SOURCE_JSON = "/opt/dvswitch_bot/wav_source.json"
-
-# 既定話者（wav_source.json に voice が無い / 壊れている場合のフォールバック）。
-# create_wav.sh / vv_say.py と揃えて No.7（アナウンス）とする。
-DEFAULT_VOICE_STYLE_ID = 30            # No.7（アナウンス）
-DEFAULT_VOICE_VVM = "6.vvm"
-
-
-def _resolve_voicevox_so():
-    """onnxruntime の .so をバージョン非依存で解決する（.so.1.17.3 固定を廃止）。"""
-    cands = sorted(glob.glob(f"{VOICEVOX_DIST_DIR}/onnxruntime/lib/libvoicevox_onnxruntime.so*"))
-    if not cands:
-        raise FileNotFoundError(
-            f"onnxruntime の .so が見つかりません: {VOICEVOX_DIST_DIR}/onnxruntime/lib/"
-        )
-    return cands[0]
-
-
-def _bootstrap_voice():
-    """wav_source.json の "voice" から (style_id, vvm_path) を決める。
-    無い / 壊れている / vvm 実在しない場合は既定 No.7 へフォールバックする。
-    style_id と vvm は必ずセットで扱い、不一致による合成失敗を避ける。"""
-    style_id = DEFAULT_VOICE_STYLE_ID
-    vvm = DEFAULT_VOICE_VVM
-    try:
-        with open(WAV_SOURCE_JSON, encoding="utf-8") as f:
-            d = json.load(f)
-        v = d.get("voice", {}) if isinstance(d, dict) else {}
-        if isinstance(v, dict):
-            try:
-                style_id = int(v.get("style_id"))
-            except (TypeError, ValueError):
-                style_id = DEFAULT_VOICE_STYLE_ID
-            if v.get("vvm"):
-                vvm = v["vvm"]
-    except Exception:
-        pass  # 読めなければ既定のまま（後方互換）
-
-    # vvm がファイル名ならフルパス化。実在しなければ既定 6.vvm に戻す。
-    vvm_path = vvm if ("/" in vvm or os.path.isabs(vvm)) else f"{VOICEVOX_VVM_DIR}/{vvm}"
-    if not os.path.exists(vvm_path):
-        style_id = DEFAULT_VOICE_STYLE_ID
-        vvm_path = f"{VOICEVOX_VVM_DIR}/{DEFAULT_VOICE_VVM}"
-    return style_id, vvm_path
-
-
-# 起動時に一度だけ話者を確定し、モデルをロードする。
-# 以降 VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH は他所（キャッシュ署名・起動ログ等）から
-# 従来どおり参照される（名前は据え置き、値の出所だけが wav_source.json になった）。
-VOICEVOX_STYLE_ID, VOICEVOX_VVM_PATH = _bootstrap_voice()
-
-_vv_onnx = Onnxruntime.load_once(filename=_resolve_voicevox_so())
-_vv_openjtalk = VoicevoxOpenJtalk(f"{VOICEVOX_DIST_DIR}/dict/open_jtalk_dic_utf_8-1.11")
-_vv_synth = Synthesizer(_vv_onnx, _vv_openjtalk)
-with VoiceModelFile.open(VOICEVOX_VVM_PATH) as _vv_model:
-    _vv_synth.load_voice_model(_vv_model)
-
 from datetime import datetime, timedelta
 
 # ============================================================
@@ -197,9 +93,8 @@ MY_DMR_ID = 4402396
 # (pyUC) と同じ振る舞いにして、Analog_Bridge に正規経路でコールサイン/ID を
 # 通知する。False で V1.82 と同一（メタデータなし）。
 TX_METADATA_ENABLED = True
-
-# 🔵 V1.95a: Open JTalk 用の DICT_PATH / VOICE_PATH は VOICEVOX 統合に伴い廃止。
-# 話者・モデルはファイル冒頭の VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH を参照。
+DICT_PATH = "/var/lib/mecab/dic/open-jtalk/naist-jdic"
+VOICE_PATH = "/usr/share/hts-voice/mei/mei_normal.htsvoice"
 
 # 固定 WAV ファイルのパス
 BOT_DIR = "/opt/dvswitch_bot"
@@ -282,7 +177,7 @@ STARTUP_ANNOUNCE_DELAY_SEC = 5.0
 # ============================================================
 # 🔵 V1.75: コールサイン応答音声のキャッシュ設定（即応答化）
 # ============================================================
-# 同一コールサインの合成結果を再利用し、生成待ちを2回目以降で消す。
+# 同一コールサインの合成結果を再利用し、生成待ち（約2秒）を2回目以降で消す。
 # ヘッダ受信時に先行生成し、終端/watchdog 判定が来た時にはキャッシュ完成済みに
 # しておくことで即送出する。ソース定数（bot_config.json には置かない）。
 # WATCHDOG_RX_MAX_SEC 等と同じ方針で、変更頻度が低くダッシュボードから触る必要の
@@ -290,18 +185,17 @@ STARTUP_ANNOUNCE_DELAY_SEC = 5.0
 REPLY_CACHE_ENABLED = True     # False で V1.74 と同一挙動（毎回 TEMP_FINAL に生成）
 PREWARM_ON_HEADER   = True     # ヘッダ受信時に背景で先行生成してキャッシュを温める
 CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上・毎起動クリア（SD 保護）
-CACHE_SCHEMA = "v2"            # 読み/結合仕様の版。V1.95a: 署名項目変更（VOICEVOX）に伴い v1→v2
+CACHE_SCHEMA = "v1"            # 読み/結合仕様の版。仕様変更時に上げると全キャッシュ再生成
 
 # 🔴 V1.77: キャッシュ命中時の送出前ガード（RF ターンアラウンド保護）。
-# 経路が空く前に応答がキーアップするとイントロ頭が食われるため、命中時のみ
-# 送出前にこの秒数だけ待つ。ミス時は合成時間がガードを兼ねるため待たない。
-# 🔴 V1.95a: 1.0 → 2.5 に増加。VOICEVOX 統合後の直 TGIF 接続環境で、命中時
-# リード 1.0s だと受信ストリームの残処理と TX が重なり、AMBE 経路の音声が
-# 崩れる症状（もごもご/同期ずれ。ファイル自体の波形は正常）を確認した。
-# キャッシュ OFF（毎回生成 ≒ 検知から約 2.4s 後の送出）では正常だったため、
-# 命中時のリードを生成時間相当まで広げて同じ送出タイミングに揃える。
-# 症状が出ないことを確認しながら、環境に応じて短縮を試みてもよい。0 で無効。
-REPLY_TX_LEAD_DELAY_SEC = 2.5
+# V1.74 まで合成に約2秒かかっており、その2秒が結果的に「相手が送信を終えてから
+# SFR 中継の RX→TX 折り返し／経路が空くまでの待ち」を兼ねていた。キャッシュ即応答で
+# その2秒が消えると、経路が空く前に応答がキーアップしてイントロ頭（「こちらは…」）が
+# 食われる。そこで命中時のみ送出前にこの秒数だけ待ち、経路が空くのを待ってから
+# キーアップする（前パディング 1.5s と合わせた総リードで頭欠けを防ぐ）。
+# ミス時は合成に約2秒かかりガードを兼ねるため待たない（従来どおり）。
+# 現場のターンアラウンドに合わせて調整可（頭が戻るなら下げて最短を探る）。0 で無効。
+REPLY_TX_LEAD_DELAY_SEC = 1.0
 
 # ============================================================
 # ============================================================
@@ -309,7 +203,7 @@ REPLY_TX_LEAD_DELAY_SEC = 2.5
 # ============================================================
 # ケロ検出直後に即座に送出し、実音声前の無音パッドで頭欠けを防ぐ。
 # GPIO ファイルの存在・権限に依存せず、純粋なソフト制御。
-PRE_AUDIO_SILENCE_SEC = 0.0           # 実音声前の無音パッド（受信側の途中参加同期の助走）。V1.87で復活
+PRE_AUDIO_SILENCE_SEC = 1.5           # 実音声前の無音パッド（受信側の途中参加同期の助走）。V1.87で復活
 
 # ============================================================
 # 🔴 V1.67: watchdog 擬似終端の設定（V1.65 から移植）
@@ -357,13 +251,13 @@ TX_GAIN_MAX = 5.0    # これ以下（usrpGain と同じ 0.0–5.0 レンジ。>
 # FIXED_INTRO_WAV を強制送信し、自局を識別する。セッションが続く限り繰り返す。
 QSO_ID_INTERVAL_SEC = 600.0   # 10分（アマチュア局の標準）
 
-# セッション継続とみなす無通信ギャップの上限（秒）。この秒数を超えて誰も
-# 長時間送信しなければセッション終了とみなし、次回はタイマーを 0 から再スタート
-# する。
-# 🔴 V1.95a: SUPPRESS_DURATION_SEC のエイリアスを廃止し、独立の 60 秒に変更。
-# TGIFChanger の自TG復帰判定（無音60秒）と運用基準を統一し、本ソフトウェアに
-# おける第30条セッションの定義を「通話と 60 秒以下の無音の連続」とする
-# （法解釈そのものではなく、本ソフトにおける運用上の定義）。
+# セッション継続とみなす無通信ギャップの上限（秒）。前回の Normal QSO 送信の
+# 「終了」から今回の送信の「開始」までの純粋な無音がこの秒数を超えたら、
+# セッションが途切れたとみなして積算をリセットし、次回はタイマーを 0 から
+# 再スタートする。
+# 🔴 V1.93: SUPPRESS_DURATION_SEC（15秒）のエイリアスをやめ独立定数化し、
+# 値を 60.0 に変更。既存 TGIFChanger の自TG復帰判定（無音60秒）と運用上の
+# 一貫性を優先し、本ソフト内での第30条運用定義として 60 秒を採用する。
 QSO_SESSION_GAP_SEC = 60.0
 
 # ============================================================
@@ -954,8 +848,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
         logger.info(f"process:suppress start ({SUPPRESS_DURATION_SEC:.1f}s)　{cs}")
         # 🔴 V1.74: 無線局運用規則 第30条対応。カーチャンクではなく Normal QSO
         # （長時間送信）のみをセッション判定・10分カウントの対象とする。
-        # 🔴 V1.95a: dur（今回送信の長さ）も渡し、無音ギャップ判定を送信の
-        # 「開始」時刻基準に補正する（_handle_qso_session 内のコメント参照）。
+        # 🔴 V1.93: 今回の送信時間 dur を渡し、ギャップ判定を純粋な無音時間で行う。
         _handle_qso_session(now, dur)
     else:
         logger.info(f"receive:Too short, ignored{tag}: {cs} ({dur:.1f}s, min={RX_DURATION_MIN_SEC}s)")
@@ -967,6 +860,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
 def _handle_qso_session(now, dur=0.0):
     """Normal QSO（長時間送信）が検知されるたびに呼ばれる。
 
+    前回の Normal QSO 送信の「終了」から今回の送信の「開始」までの純粋な
     無通信ギャップが QSO_SESSION_GAP_SEC（60秒）以内で連続している間は
     同一の「長時間通信セッション」とみなし、セッション開始からの経過時間を
     積算する。経過時間が QSO_ID_INTERVAL_SEC（10分）の倍数を新たに跨ぐたびに、
@@ -974,12 +868,13 @@ def _handle_qso_session(now, dur=0.0):
     FIXED_INTRO_WAV を強制送信して自局を識別する。セッションが続く限り
     10分おきに繰り返す（無線局運用規則 第30条）。
 
-    🔴 V1.95a: ギャップ判定は「前回送信の終了」から「今回送信の開始」までの
-    純粋な無通信時間で行う。now は今回送信の終了時刻なので、dur を引いて
-    開始時刻を近似する（tx_start = now - dur）。旧実装は now（終了時刻）を
-    そのまま前回終了時刻と比較していたため、実際の無音が短くても今回の通話が
-    長いとギャップが「無音 + 通話時間」として誤って大きく計算され、継続中の
-    セッションが不当にリセットされる不具合があった。
+    🔴 V1.93: ギャップ判定バグ修正。now は今回送信の「終了」時刻なので、
+    従来の (now - qso_session_last_end) は「無音＋今回の通話時間」となり、
+    無音が短くても通話が長いだけで誤ってセッションがリセットされていた。
+    今回の送信時間 dur を受け取り、tx_start = now - dur（今回送信の開始時刻の
+    近似）を求め、(tx_start - qso_session_last_end) で純粋な無音時間を評価する。
+    セッション開始時刻も tx_start に合わせ、最初の送信の通話時間も経過時間に
+    含める（経過時間の起点をギャップ判定の起点と一致させる）。
 
     識別信号の内容を法的に保証するため、USE_CSTM_INTRO の設定に関わらず
     必ず正規の FIXED_INTRO_WAV を送信する（カスタム音声には差し替えない）。
@@ -991,14 +886,15 @@ def _handle_qso_session(now, dur=0.0):
     """
     global qso_session_start, qso_session_last_end, qso_session_id_count
 
-    # 🔴 V1.95a: 今回送信の開始時刻（近似）。ギャップは「前回終了 → 今回開始」。
+    # 🔴 V1.93: 今回送信の開始時刻の近似（now は終了時刻）。
     tx_start = now - dur
 
     if qso_session_last_end is None or (tx_start - qso_session_last_end) > QSO_SESSION_GAP_SEC:
-        # 前回の Normal QSO 終了から今回の送信開始までが QSO_SESSION_GAP_SEC 超
-        # （無通信で区切りがついた）、または今回が初回 → 新しいセッションとして
-        # 0 から開始。
-        qso_session_start = now
+        # 前回の Normal QSO の終了から今回の送信開始までの純粋な無音が
+        # QSO_SESSION_GAP_SEC 超（無通信で区切りがついた）、または今回が初回 →
+        # 新しいセッションとして 0 から開始。セッション開始は今回送信の開始時刻に
+        # 合わせ、最初の送信の通話時間も経過時間に含める。
+        qso_session_start = tx_start
         qso_session_id_count = 0
         logger.info(_fmt("..", "QSO session", "start",
                          f"long-transmission session began (10-min ID every {QSO_ID_INTERVAL_SEC/60:.0f}min)"))
@@ -1078,8 +974,8 @@ def _send_night_mode_announcement():
 # ============================================================
 # 置き場所は /dev/shm（RAM）。プロセス再起動で自動クリアされ、設定は起動時のみ
 # 読むため、キャッシュは常に現在の設定と整合する。さらに intro（cstm 差し替え
-# 含む）/ outro / GAP / TX_GAIN / VOICEVOX 話者・モデル / スキーマ版のシグネチャを
-# .sig に併存させ、変化したら自動再生成する（cstm 音声の無再起動差し替えにも追従）。
+# 含む）/ outro / GAP / TX_GAIN / 音声モデル / スキーマ版のシグネチャを .sig に
+# 併存させ、変化したら自動再生成する（cstm 音声の無再起動差し替えにも追従）。
 
 def _safe_remove(path):
     try:
@@ -1109,10 +1005,7 @@ def _mtime(path):
 def _reply_signature():
     """キャッシュ整合性の署名。cs 非依存（intro/outro/ゲイン等のみに依存）。
     解決後 intro の実体（cstm 差し替え含む）・各 WAV の mtime・GAP・TX_GAIN・
-    頭無音・VOICEVOX 話者/モデル・スキーマ版が変われば署名が変わり、再生成が走る。
-    🔴 V1.95a: 旧 Open JTalk の VOICE_PATH に代えて VOICEVOX_STYLE_ID と
-    VOICEVOX_VVM_PATH（+mtime）を含める。話者やモデルの変更で自動的に
-    キャッシュが無効化される。"""
+    頭無音・音声モデル・スキーマ版が変われば署名が変わり、再生成が走る。"""
     intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
     return "|".join([
         CACHE_SCHEMA,
@@ -1121,8 +1014,7 @@ def _reply_signature():
         f"{GAP_AFTER_INTRO_SEC}",
         f"{PRE_AUDIO_SILENCE_SEC}",
         f"{TX_GAIN}",
-        f"{VOICEVOX_STYLE_ID}",
-        VOICEVOX_VVM_PATH, _mtime(VOICEVOX_VVM_PATH),
+        VOICE_PATH,
     ])
 
 
@@ -1177,11 +1069,7 @@ def _ensure_cached(cs):
         # path は _cache_path により必ず .wav 終わりなので、それを基に .wav の
         # 一時名を作り、完成後に os.replace で原子的に本名へ差し替える。
         # 🔴 V1.80: 頭無音（PRE_AUDIO_SILENCE_SEC）もここで焼き込む（送出時の再パッド不要）。
-        # 🔴 V1.95a: 一時名にプロセスID+スレッドIDを付与してユニーク化。
-        # 万一 per-CS ロックを迂回する経路が生じても、書きかけ同士が同じ
-        # ファイルを奪い合わないようにする保険（半端なファイルの送出防止）。
-        _base = path[:-4] if path.endswith(".wav") else path
-        tmp = f"{_base}.building.{_PID}.{threading.get_ident()}.wav"
+        tmp = f"{path[:-4]}.building.wav" if path.endswith(".wav") else f"{path}.building.wav"
         if _generate_hybrid(intro, middle, FIXED_OUTRO_WAV, out_path=tmp,
                             head_silence=PRE_AUDIO_SILENCE_SEC):
             try:
@@ -1255,8 +1143,7 @@ def _reply_executor(mode, val, extra=None):
                 # 🔴 V1.86: SFR 折り返し保護を V1.77 実証方式（送出前の実時間待ち）に回帰。
                 # ストリーム内の無音（焼き込み頭無音）は TGIF に食われる／ノイズ充填は
                 # 耳障り、と実測で判明したため、音に一切影響しない wall-clock 待ちで
-                # 折り返しを保護する。命中時のみ待つ（ミス時は合成がガードを兼ねる）。
-                # 🔴 V1.95a: 待ち時間は 2.5s に拡大（定数コメント参照）。
+                # 折り返しを保護する。命中時のみ待つ（ミス時は合成約2秒がガードを兼ねる）。
                 if was_hit and REPLY_TX_LEAD_DELAY_SEC > 0:
                     logger.info(_fmt("..", "TX lead", val, f"{REPLY_TX_LEAD_DELAY_SEC:.1f}s"))
                     time.sleep(REPLY_TX_LEAD_DELAY_SEC)
@@ -1365,24 +1252,18 @@ def _reply_executor(mode, val, extra=None):
 def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silence=0.0):
     # 🔵 V1.75: 合成パイプラインは共有一時ファイル(TEMP_48K/8K/INTRO_PADDED)を
     # 使うため、プリキャッシュ・スレッドと応答スレッドが同時に走っても壊れないよう
-    # _gen_lock で直列化する。
+    # _gen_lock で直列化する（Pi では合成が CPU 律速で並列化の利得も薄い）。
     # out_path を追加し、キャッシュ用に任意の出力先へ結合できるようにした
     # （既定 TEMP_FINAL のため、時報など既存呼び出しは挙動不変）。
-    # 🔵 V1.95a: 音声合成は VOICEVOX CORE（同一プロセス内ライブラリ）に置き換え。
-    # 🔵 V1.96: query.output_sampling_rate=48000 のハードコードを撤去。VOICEVOX は
-    # ネイティブ（24kHz）で出力し、8kHz へのダウンサンプルは後段の sox に一本化する
-    # （48k 固定を挟まない分、変換段が素直になる）。結合パイプラインは従来と互換。
-    # ※ 後段 sox は入力レートを WAV ヘッダから読むため、変数名 TEMP_48K のままでも
-    #   24kHz 入力を正しく 8kHz へ変換する（名前は歴史的経緯で据え置き）。
     with _gen_lock:
         try:
-            try:
-                query = _vv_synth.create_audio_query(middle_text, style_id=VOICEVOX_STYLE_ID)
-                wav_bytes = _vv_synth.synthesis(query, style_id=VOICEVOX_STYLE_ID)
-                with open(TEMP_48K, "wb") as f_wav:
-                    f_wav.write(wav_bytes)
-            except Exception as e:
-                logger.error(_fmt("!!", "voicevox", "", str(e)))
+            p = subprocess.Popen(
+                ["open_jtalk", "-x", DICT_PATH, "-m", VOICE_PATH, "-ow", TEMP_48K],
+                stdin=subprocess.PIPE,
+            )
+            p.communicate(middle_text.encode("utf-8"))
+            if p.returncode != 0:
+                logger.error(_fmt("!!", "open_jtalk", "", f"rc={p.returncode}"))
                 return False
 
             subprocess.run(
@@ -1435,8 +1316,7 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    # 🔵 V1.95a: 表示は __version__ を参照（版上げ時の二重管理を解消）
-    logger.info(f"DVSwitch Bot {__version__} (daemon, VOICEVOX) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.93 (daemon, V1.92 + 第30条ギャップ判定修正) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
@@ -1445,9 +1325,6 @@ def _log_startup_info():
     logger.info(f"  RX duration       : min={RX_DURATION_MIN_SEC}s / max={RX_DURATION_MAX_SEC}s")
     logger.info(f"  Suppress duration : {SUPPRESS_DURATION_SEC}s")
     logger.info(f"  Gap after intro   : {GAP_AFTER_INTRO_SEC}s")
-    # 🔵 V1.95a: VOICEVOX の話者・モデルを表示
-    logger.info(f"  Voice engine      : VOICEVOX CORE (style_id={VOICEVOX_STYLE_ID}, "
-                f"model={os.path.basename(VOICEVOX_VVM_PATH)})")
     # 🔴 V1.68: 送出音量ゲインの状態
     if TX_GAIN == 1.0:
         logger.info(f"  TX gain           : {TX_GAIN} (等倍 / 音量変更なし)")
@@ -1466,7 +1343,7 @@ def _log_startup_info():
                     f"(watchdog 専用上限 / end は {RX_DURATION_MAX_SEC}s)")
     else:
         logger.info(f"  Watchdog rescue   : OFF (end of voice transmission のみで判定)")
-    # 🔴 V1.74: 無線局運用規則 第30条対応（識別信号強制送信）の状態を表示
+    # 🔴 V1.74/V1.93: 無線局運用規則 第30条対応（識別信号強制送信）の状態を表示
     logger.info(f"  Regulatory ID     : ON  (rule 30 / interval={QSO_ID_INTERVAL_SEC/60:.0f}min, "
                 f"session gap={QSO_SESSION_GAP_SEC:.0f}s, always uses {os.path.basename(FIXED_INTRO_WAV)})")
     # 🔵 V1.75: コールサイン応答音声キャッシュ（即応答化）の状態を表示
