@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
-#   Version: V1.1 （所有者 chown を ocv 決め打ちから汎用化。V1.0 の記録/プリフィルを含む）
+#   Version: V1.2 （--regen 非対話再生成を追加。V1.1 の chown 汎用化・V1.0 の記録/プリフィルを含む）
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
 #   出力: /opt/dvswitch_bot/ 直下（fixed_intro/outro, time_intro, 001, 002 ほか）
 #
@@ -12,6 +12,13 @@
 #           UID 1000 の順で実ユーザーを特定し、その既定グループへ揃える
 #           （chown_owner ヘルパに集約）。複数ユーザー非想定・www-data 等の
 #           システムユーザー（UID<1000）は対象外、という構成前提に基づく。
+#     V1.2  🔵 --regen（非対話再生成）モードを追加。ダッシュボード（app.py）が
+#           wav_source.json を更新した後に `sudo create_wav.sh --regen` を呼び、
+#           記録済みの texts を Open JTalk で全固定WAVへ再合成する。対話・確認は
+#           一切しない。合成パイプライン（open_jtalk → sox、無音トリムの有無）は
+#           対話モードとファイル単位で厳密に同一。texts は不変とし generated_at
+#           のみ更新する（VV版 create_wav.sh V1.3 の do_regen と同方針。jtalk は
+#           話者が1つのため voice は扱わない点だけが差）。
 #
 #   使い方:
 #     sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
@@ -48,7 +55,7 @@
 # ==============================================================================
 
 # 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
-SCRIPT_VERSION="V1.1"
+SCRIPT_VERSION="V1.2"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -118,6 +125,7 @@ DVSwitch bot 固定WAV 作成ツール create_wav.sh
   sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
   sudo ./create_wav.sh -r     バックアップから復元（日付フォルダを選択）
   sudo ./create_wav.sh -d     /opt/dvswitch_bot/bak/wav/ 配下の WAV バックアップを全削除
+  sudo ./create_wav.sh --regen 記録済み内容(texts)で全固定WAVを非対話再生成（ダッシュボード用）
   sudo ./create_wav.sh -h     このヘルプを表示
 
 生成されるWAV（/opt/dvswitch_bot/ 直下に上書き）:
@@ -345,12 +353,128 @@ do_delete() {
 }
 
 # ------------------------------------------------------------------------------
+# 🔵 V1.2: 非対話再生成（--regen）
+#   ダッシュボード（app.py の /wav_source_config）が wav_source.json を更新した
+#   直後に `sudo create_wav.sh --regen` として呼ぶ。記録済みの texts を Open JTalk
+#   で全固定WAVへ再合成する。対話・確認は一切しない。
+#   合成パイプライン（open_jtalk → sox、無音トリムの有無）は対話モードの生成部と
+#   ファイル単位で厳密に同一であること（変更時は両方を必ず揃える）。
+#   texts は書き換えず generated_at のみ更新する（VV版 do_regen と同方針。jtalk は
+#   話者が1つのため voice フィールドは扱わない）。
+# ------------------------------------------------------------------------------
+do_regen() {
+  echo "=========================================================="
+  echo " 非対話再生成（--regen）  ${SCRIPT_VERSION}"
+  echo "=========================================================="
+
+  if [ ! -f "$SRC_JSON" ]; then
+    echo "[ERROR] ${SRC_JSON} がありません。先に対話モードで一度WAVを作成してください。"
+    exit 1
+  fi
+
+  # texts を US(0x1f) 区切りで取り出す（順序固定）。
+  # [0]fixed_intro [1]fixed_outro [2]time_intro [3]001 [4]002 [5]time_outro
+  local FIELDS=()
+  mapfile -t -d $'\x1f' FIELDS < <(python3 - "$SRC_JSON" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+t = d.get("texts", {}) if isinstance(d, dict) else {}
+if not isinstance(t, dict):
+    t = {}
+keys = ["fixed_intro", "fixed_outro", "time_intro", "001", "002", "time_outro"]
+out = [str(t.get(k, "")) for k in keys]
+sys.stdout.write("\x1f".join(out))
+PYEOF
+)
+  while [ "${#FIELDS[@]}" -lt 6 ]; do FIELDS+=(""); done
+
+  local T_INTRO="${FIELDS[0]}" T_OUTRO="${FIELDS[1]}" T_TIME="${FIELDS[2]}"
+  local T_001="${FIELDS[3]}"   T_002="${FIELDS[4]}"   T_TOUT="${FIELDS[5]}"
+
+  # texts が空（旧形式の wav_source.json など）は再生成不能
+  if [ -z "$T_INTRO" ] || [ -z "$T_001" ] || [ -z "$T_002" ]; then
+    echo "[ERROR] wav_source.json に texts の記録がありません（旧形式の可能性）。"
+    echo "        対話モード（引数なし）で一度作成し直すと記録されます。"
+    exit 1
+  fi
+
+  echo "[INFO] 記録済みテキストで全固定WAVを再生成します（Open JTalk / mei_normal）。"
+  echo ""
+
+  # 上書き直前の自動バックアップ（対話モードと同一）
+  backup_wavs
+
+  echo "WAVファイルを生成中..."
+
+  # --- fixed_intro.wav（無音トリムなし：対話モードと同一）---
+  echo "$T_INTRO" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/temp_intro.wav" \
+    && sox "${TMP_DIR}/temp_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_intro.wav" \
+    && echo " [OK] fixed_intro.wav" || { echo " [NG] fixed_intro.wav"; exit 1; }
+
+  # --- fixed_outro.wav（無音トリムなし）---
+  echo "$T_OUTRO" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/temp_outro.wav" \
+    && sox "${TMP_DIR}/temp_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/fixed_outro.wav" \
+    && echo " [OK] fixed_outro.wav" || { echo " [NG] fixed_outro.wav"; exit 1; }
+
+  # --- time_intro.wav（前後の無音トリムあり：対話モードと同一）---
+  echo "$T_TIME" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/time_intro.wav" \
+    && sox "${TMP_DIR}/time_intro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_intro.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse \
+    && echo " [OK] time_intro.wav" || { echo " [NG] time_intro.wav"; exit 1; }
+
+  # --- 001.wav（前後の無音トリムあり）---
+  echo "$T_001" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/001_raw.wav" \
+    && sox "${TMP_DIR}/001_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/001.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse \
+    && echo " [OK] 001.wav" || { echo " [NG] 001.wav"; exit 1; }
+
+  # --- 002.wav（前後の無音トリムあり）---
+  echo "$T_002" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/002_raw.wav" \
+    && sox "${TMP_DIR}/002_raw.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/002.wav" silence 1 0.1 1% reverse silence 1 0.1 1% reverse \
+    && echo " [OK] 002.wav" || { echo " [NG] 002.wav"; exit 1; }
+
+  # --- time_outro.wav（無音トリムなし）---
+  echo "$T_TOUT" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/time_outro.wav" \
+    && sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav" \
+    && echo " [OK] time_outro.wav" || { echo " [NG] time_outro.wav"; exit 1; }
+
+  # generated_at のみ更新（texts は不変）
+  python3 - "$SRC_JSON" <<'PYEOF'
+import json, os, sys
+from datetime import datetime
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    d = json.load(f)
+d["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(d, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PYEOF
+  chown_owner "$SRC_JSON"
+  echo " [OK] wav_source.json （generated_at を更新）"
+
+  # 一時ファイルの削除（対話モードと同一）
+  rm -f "${TMP_DIR}/temp_intro.wav" "${TMP_DIR}/temp_outro.wav" "${TMP_DIR}/time_intro.wav" \
+        "${TMP_DIR}/001_raw.wav" "${TMP_DIR}/002_raw.wav" "${TMP_DIR}/time_outro.wav"
+
+  echo ""
+  echo "[完了] 固定WAVを再生成しました。"
+  echo "       bot は送出のたびに固定WAVを読み直すため、再起動は不要です。"
+  exit 0
+}
+
+# ------------------------------------------------------------------------------
 # 引数処理
 # ------------------------------------------------------------------------------
 case "${1:-}" in
   -h|--help) show_help; exit 0 ;;
   -r)        do_restore ;;
   -d)        do_delete ;;
+  --regen)   do_regen ;;
   "")        : ;;  # 引数なし → 通常の作成処理へ
   *)         echo "不明なオプション: $1"; echo ""; show_help; exit 1 ;;
 esac
