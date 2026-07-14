@@ -125,6 +125,7 @@ Web ダッシュボードは JT版・VV版のどちらでも共用です（[`das
 | ドキュメント | 内容 |
 |---|---|
 | [構築導入設定 完全マニュアル](OpenCCVoice_構築導入設定_完全マニュアル.md) | OS インストールから運用まで、新規構築を通しで再現できる実務マニュアル |
+| [VV版（VOICEVOX）構築手順書](dvs_ocv_vv/OpenCCVoice%20for%20DVSwitch%20VV%E7%89%88%EF%BC%88VOICEVOX%EF%BC%89%E6%A7%8B%E7%AF%89%E6%89%8B%E9%A0%86%E6%9B%B8.md) | VV版（VOICEVOX / x86_64 Linux）をゼロから構築する手順書。Incus で環境を用意する場合は『Incus コンテナ/incus構築マニュアル.md』を先に実施 |
 | [操作マニュアル](OpenCCVoice_操作マニュアル.md) | 日常運用の逆引き（起動停止・設定変更・音声差し替え・トラブル対応） |
 | [カスタム音声マニュアル](カスタム音声.md) | 標準音声（intro／001／002）を自前の音声ファイルに差し替える手順（cstm 機能） |
 | [README_PROJECT](README_PROJECT.md) | プロジェクトの理念・背景・詳細説明 |
