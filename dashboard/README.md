@@ -65,10 +65,10 @@ SERVICE_NAME = "dvswitch-bot"
 
 ```bash
 # RPiへ転送
-scp -r openccvoice_v22/ pi@<RPi-IP>:~/
+scp -r dashboard/ pi@<RPi-IP>:~/
 
 # RPi上で実行
-cd ~/openccvoice_v22
+cd ~/dashboard
 sudo bash install.sh
 ```
 
