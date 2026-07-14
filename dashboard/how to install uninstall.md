@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/mai
 ```
 
 > **注意事項**
-> * この操作により、ダッシュボードに関連する設定やファイルがシステムから削除されます。
+> * この操作では、ダッシュボード本体（`app.py`）と systemd サービスが削除されます。設定・バックアップファイル（`bot_config.json` / `bot_change_log.json` / `bak/ini/`）は削除されず残ります（必要な場合のみ手動で削除してください）。
 > * 実行前にもう一度、削除して問題ないか確認してください。
 > 
 >
