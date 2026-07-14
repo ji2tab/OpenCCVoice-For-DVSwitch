@@ -8,7 +8,7 @@ GitHub の最新版を、稼働中の OpenCCVoice システムに反映する手
 > bot 本体の初期導入）は構築マニュアルを参照してください。本書はその後、GitHub 上で更新された
 > コードを稼働中システムへ反映する「更新作業」だけを扱います。
 
-対象: すでに OpenCCVoice が構築済みのマシン（Raspberry Pi / Pi-Star 同居環境など）
+対象: すでに OpenCCVoice が構築済みのノード（JT版＝Raspberry Pi / Pi-Star 同居環境、VV版＝x86_64 Linux / VOICEVOX 環境）
 やること: GitHub から最新コードを取得 → 構文チェック → サービス再起動
 
 ---
@@ -35,7 +35,35 @@ GitHub の最新版を、稼働中の OpenCCVoice システムに反映する手
 
 ---
 
-## 1. 3ファイル一括デプロイ（コピペ用）
+## 1. 既設ノードのアップデート手順（検証済みワンライナー）
+
+稼働中のノードを GitHub `main` の最新版へ最短で更新するコマンドです。ノードの種類（JT版 / VV版）で使い分けてください。いずれも raw URL の3パス（`create_wav.sh` / `dvs_ocv_vv/create_wav.sh` / `dashboard/app.py`）は実在確認済みです。
+
+### JT版ノード（Raspberry Pi / Open JTalk）
+
+`create_wav.sh`（JT版）と共用ダッシュボード `app.py` を更新し、ダッシュボードを再起動して版を確認します。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/create_wav.sh | sudo tee /opt/dvswitch_bot/bin/create_wav.sh >/dev/null && sudo chmod +x /opt/dvswitch_bot/bin/create_wav.sh && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/app.py | sudo tee /opt/dvswitch_bot/web/app.py >/dev/null && sudo systemctl restart dvswitch-web && grep -m1 SCRIPT_VERSION= /opt/dvswitch_bot/bin/create_wav.sh && grep -m1 '^__version__' /opt/dvswitch_bot/web/app.py
+```
+
+### VV版ノード（x86_64 Linux / VOICEVOX）
+
+`create_wav.sh`（VV版）・`dvswitch_bot.py`（VV版）・共用ダッシュボード `app.py` を更新し、bot とダッシュボードの両サービスを再起動して版を確認します。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_vv/create_wav.sh | sudo tee /opt/dvswitch_bot/bin/create_wav.sh >/dev/null && sudo chmod +x /opt/dvswitch_bot/bin/create_wav.sh && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_vv/dvswitch_bot.py | sudo tee /opt/dvswitch_bot/bin/dvswitch_bot.py >/dev/null && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/app.py | sudo tee /opt/dvswitch_bot/web/app.py >/dev/null && sudo systemctl restart dvswitch-bot dvswitch-web && grep -m1 SCRIPT_VERSION= /opt/dvswitch_bot/bin/create_wav.sh && grep -m1 '^__version__' /opt/dvswitch_bot/bin/dvswitch_bot.py && grep -m1 '^__version__' /opt/dvswitch_bot/web/app.py
+```
+
+> **注意事項**
+>
+> - **404 時は書き込み前に停止:** `curl -f` を付けているため、パスの打ち間違いなどで HTTP 404 が返った場合はエラー終了し、`tee` による上書きは行われません（既存ファイルは保護されます）。
+> - **push 直後は CDN キャッシュに注意:** GitHub へ push した直後は raw の CDN キャッシュにより旧内容が返ることがあります。末尾の版確認（`SCRIPT_VERSION=` / `__version__`）の出力が古い場合は、1〜2分ほど待ってから再実行してください。
+> - **VV版は bot 再起動を含む:** VV版の `dvswitch_bot.py` 差し替えは動的合成時の話者にも影響するため、`dvswitch-bot` の再起動を含めています（JT版の固定WAV運用と異なり、無反映を防ぐため必須）。
+
+---
+
+## 2. 3ファイル一括デプロイ（コピペ用）
 
 以下をそのまま貼り付けて実行します。`#` の行はコメントなので一緒に貼って問題ありません。
 
@@ -96,7 +124,7 @@ active
 
 ---
 
-## 2. 個別に1ファイルだけ更新したい場合
+## 3. 個別に1ファイルだけ更新したい場合
 
 3つ全部ではなく、1ファイルだけ直したいときの最小手順です。app.py を例にします。
 
@@ -128,7 +156,7 @@ sudo chmod +x /opt/dvswitch_bot/bin/create_wav.sh
 
 ---
 
-## 3. 構文チェックについて（なぜ ast.parse か）
+## 4. 構文チェックについて（なぜ ast.parse か）
 
 取得したファイルが壊れていないか、再起動の前に確認しています。
 
@@ -144,7 +172,7 @@ python3 -c "import ast; ast.parse(open('対象ファイル',encoding='utf-8').re
 
 ---
 
-## 4. 失敗したとき: バックアップから戻す
+## 5. 失敗したとき: バックアップから戻す
 
 デプロイで問題が起きたら、手順1で取ったバックアップに戻せます。
 
@@ -166,7 +194,7 @@ bot を戻す場合は `bin/dvswitch_bot.py` と `dvswitch-bot` に読み替え�
 
 ---
 
-## 5. 状態の確認コマンド
+## 6. 状態の確認コマンド
 
 デプロイ後やトラブル時に使う確認コマンドです。
 
@@ -200,7 +228,7 @@ curl -I http://localhost:8081/
 
 ---
 
-## 6. トラブルシューティング
+## 7. トラブルシューティング
 
 ### ダッシュボードがブラウザで開けない
 
@@ -247,7 +275,7 @@ sudo iptables -I INPUT -p tcp --dport 8081 -j ACCEPT
 
 ---
 
-## 7. 最短まとめ
+## 8. 最短まとめ
 
 1. SSH でマシンにログイン
 2. 「§1 の一括デプロイ」をコピペ実行
