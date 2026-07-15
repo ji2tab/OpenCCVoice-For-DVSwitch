@@ -23,6 +23,24 @@
 
 ---
 
+## V1.97vv (2026-07-15)  ※VV版（VOICEVOX）
+
+自局コールサイン・DMR ID を ini から起動時に自動取得（V1.96vv + 自動取得化）。JT版 V1.94 と同一の改修をVV版へ反映。
+
+- 不具合（背景）: 従来は `MY_CALLSIGN` / `MY_DMR_ID` をソース先頭に直書きしていたため、他局が導入する際にソースの手修正が必須だった。加えて、一括アップデートでソースを差し替えるたびに既定値へ巻き戻ってしまう不具合があった。
+- 修正: `MY_CALLSIGN` / `MY_DMR_ID` のソース直書きを廃止。起動時に `_read_ini_value()` / `resolvemy_station()` で `MMDVM_Bridge.ini` の `Callsign` と `Analog_Bridge.ini` の `gatewayDmrId` から自動取得する。
+- フォールバック: ini が読めない場合のみ従来の既定値へフォールバックし、起動ログに WARN を出す。起動ログに `My DMR ID : ...（source: ini 自動取得）` 行を追加した。
+- 運用: 利用者の設定は `dvs_config.sh` またはダッシュボードの「DVSwitch 設定」カードで行い、変更後は bot 再起動で反映される。ソースの手修正は不要になった。
+
+## V1.94 (2026-07-15)  ※JT版（Open JTalk）
+
+自局コールサイン・DMR ID を ini から起動時に自動取得（V1.93 + 自動取得化）。
+
+- 不具合（背景）: 従来は `MY_CALLSIGN` / `MY_DMR_ID` をソース先頭に直書きしていたため、他局が導入する際にソースの手修正が必須だった。加えて、一括アップデートでソースを差し替えるたびに既定値へ巻き戻ってしまう不具合があった。
+- 修正: `MY_CALLSIGN` / `MY_DMR_ID` のソース直書きを廃止。起動時に `_read_ini_value()` / `resolvemy_station()` で `MMDVM_Bridge.ini` の `Callsign` と `Analog_Bridge.ini` の `gatewayDmrId` から自動取得する。
+- フォールバック: ini が読めない場合のみ従来の既定値へフォールバックし、起動ログに WARN を出す。起動ログに `My DMR ID : ...（source: ini 自動取得）` 行を追加した。
+- 運用: 利用者の設定は `dvs_config.sh` またはダッシュボードの「DVSwitch 設定」カードで行い、変更後は bot 再起動で反映される。ソースの手修正は不要になった。
+
 ## V1.93 (2026-07-07)
 
 無線局運用規則 第30条セッション判定のバグ修正と、ギャップ閾値の独立定数化。
