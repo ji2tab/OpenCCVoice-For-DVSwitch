@@ -465,7 +465,7 @@ MMDVM_Bridge のログは日付ごとにファイルが変わる
 
 ### 9-8. SET_INFO メタデータ送出
 
-送信の直前に、DVSwitch 公式クライアントと同じ形式でコールサイン・DMR ID を Analog_Bridge に通知する（`MY_DMR_ID` / `TX_METADATA_ENABLED`）。これにより、他局を受信した直後でも Talker Alias（表示される局名）が自局に正しく保たれる。`MY_DMR_ID` は `Analog_Bridge.ini` の `gatewayDmrId` と必ず一致させること。
+送信の直前に、DVSwitch 公式クライアントと同じ形式でコールサイン・DMR ID を Analog_Bridge に通知する（`MY_DMR_ID` / `TX_METADATA_ENABLED`）。これにより、他局を受信した直後でも Talker Alias（表示される局名）が自局に正しく保たれる。`MY_DMR_ID` は 🔴V1.94 以降 `Analog_Bridge.ini` の `gatewayDmrId` から起動時に自動取得されるため、両者は自動的に一致する。
 
 ---
 
@@ -550,7 +550,7 @@ sudo systemctl start dvswitch-bot    # 確認後に再開
 | **2つのダッシュボードは別物** | サービス監視＝Monit(:2812)、DVSwitch 本体表示＝Dashboard(:80, Apache2) |
 | **二重送信に注意** | test_send.py 実行時は Bot を停止する（同じ 51000 に二重送出になる） |
 | **スクリプトは bin、データは直下** | 5本は `/opt/dvswitch_bot/bin/`、WAV・JSON は `/opt/dvswitch_bot/` 直下 |
-| **MY_DMR_ID の一致** | `dvswitch_bot.py` の `MY_DMR_ID` は `Analog_Bridge.ini` の `gatewayDmrId` と必ず一致させる。ずれると SET_INFO メタデータが自局以外の ID を名乗ることになる |
+| **MY_DMR_ID の一致** | 🔴V1.94 以降、`MY_DMR_ID` は起動時に `Analog_Bridge.ini` の `gatewayDmrId` から自動取得されるため、両者は自動的に一致する（従来はソース直書きで手動一致が必要だった）。DMR ID の変更は `dvs_config.sh` またはダッシュボードで行い、bot 再起動で反映する |
 | **識別信号はカスタム音声にならない** | 無線局運用規則第30条対応の10分ごとの識別信号は、`USE_CSTM_INTRO` の設定に関わらず常に標準の `fixed_intro.wav` を送信する（法令上の内容保証のため） |
 | **watchdog 救済のロス閾値** | ロスが大きすぎる受信まで救済すると壊れた音声に応答してしまう。既定は75%だが、実際のログのロス分布を見て調整するとよい |
 | **バージョン履歴は Changelog.md** | `dvswitch_bot.py` のバージョンごとの変更履歴はソース内には無く、リポジトリ直下の `Changelog.md` にまとめられている |
