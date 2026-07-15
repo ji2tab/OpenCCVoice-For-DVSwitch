@@ -15,7 +15,7 @@ GitHub（`ji2tab/OpenCCVoice-For-DVSwitch` main）の最新 **JT版（Open JTalk
 **対象ノード:** JT版 ＝ Raspberry Pi（Open JTalk）系。ocv-uhf / ocv-vhf / Pi-Star 同居機など。
 
 > 🔴 **VV版ノード（ocv-voicevox 等）にはこのブロックを流さないでください。**
-> bot が JT版で上書きされ、VOICEVOX が動かなくなります（VV版は `dvs_ocv_vv/` 配下から取得する別手順です）。
+> bot が JT版で上書きされ、VOICEVOX が動かなくなります（VV版は `ocv_dvs_vv/` 配下から取得する別手順です）。
 > 見分け方: `grep -m1 '^__version__' /opt/dvswitch_bot/bin/dvswitch_bot.py` の版に
 > **`vv` サフィックスが付いていれば VV版**（例: V1.96vv）。付いていなければ JT版です。
 
@@ -64,12 +64,12 @@ done
 sudo cp -p "$WEB/app.py" "$WEB/app.py.bak.$TS" 2>/dev/null
 echo "backup done ($TS)"
 
-# --- 2) 取得（JT版=dvs_ocv_JT/。dvs_ocv_vv/ ではない）---
-curl -fsSL "$RAW/dvs_ocv_JT/dvswitch_bot.py"  | sudo tee "$BIN/dvswitch_bot.py"  >/dev/null && echo "bot        fetched" && \
-curl -fsSL "$RAW/dvs_ocv_JT/bot_setup.py"     | sudo tee "$BIN/bot_setup.py"     >/dev/null && echo "bot_setup  fetched" && \
-curl -fsSL "$RAW/dvs_ocv_JT/create_wav.sh"    | sudo tee "$BIN/create_wav.sh"    >/dev/null && echo "create_wav fetched" && \
-curl -fsSL "$RAW/dvs_ocv_JT/dvs_config.sh"    | sudo tee "$BIN/dvs_config.sh"    >/dev/null && echo "dvs_config fetched" && \
-curl -fsSL "$RAW/dvs_ocv_JT/test_send.py"     | sudo tee "$BIN/test_send.py"     >/dev/null && echo "test_send  fetched" && \
+# --- 2) 取得（JT版=ocv_dvs_jt/。ocv_dvs_vv/ ではない）---
+curl -fsSL "$RAW/ocv_dvs_jt/dvswitch_bot.py"  | sudo tee "$BIN/dvswitch_bot.py"  >/dev/null && echo "bot        fetched" && \
+curl -fsSL "$RAW/ocv_dvs_jt/bot_setup.py"     | sudo tee "$BIN/bot_setup.py"     >/dev/null && echo "bot_setup  fetched" && \
+curl -fsSL "$RAW/ocv_dvs_jt/create_wav.sh"    | sudo tee "$BIN/create_wav.sh"    >/dev/null && echo "create_wav fetched" && \
+curl -fsSL "$RAW/ocv_dvs_jt/dvs_config.sh"    | sudo tee "$BIN/dvs_config.sh"    >/dev/null && echo "dvs_config fetched" && \
+curl -fsSL "$RAW/ocv_dvs_jt/test_send.py"     | sudo tee "$BIN/test_send.py"     >/dev/null && echo "test_send  fetched" && \
 curl -fsSL "$RAW/dashboard/app.py" | sudo tee "$WEB/app.py"           >/dev/null && echo "app        fetched"
 
 # --- 3) 実行権限（シェルスクリプトのみ）---
@@ -149,7 +149,7 @@ app.py も同様に `web/app.py.bak.<TS>` から戻し、`sudo systemctl restart
 パスの打ち間違い、または GitHub のレート制限です。`-f` により書き込み前に停止しているので既存ファイルは無事です。時間をおいて再実行してください。
 
 **版表示に `vv` が付いた**
-VV版（`dvs_ocv_vv/` 配下）を取得しています。§4 でバックアップから戻し、`RAW` のパスがdvs_ocv_JT/（本書のとおり）か確認して再実行してください。
+VV版（`ocv_dvs_vv/` 配下）を取得しています。§4 でバックアップから戻し、`RAW` のパスがocv_dvs_jt/（本書のとおり）か確認して再実行してください。
 
 **`Unit dvswitch-web.service not found`**
 ダッシュボード未導入です。§3 のインストーラを実行してください。
