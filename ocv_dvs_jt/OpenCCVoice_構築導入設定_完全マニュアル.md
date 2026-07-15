@@ -336,7 +336,7 @@ sudo chown -R ocv:ocv /opt/dvswitch_bot
 
 # 5 本を bin/ に一括取得
 cd /opt/dvswitch_bot/bin
-BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main
+BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_jt
 for f in dvs_config.sh create_wav.sh test_send.py dvswitch_bot.py bot_setup.py; do
   curl -fsSL "$BASE/$f" -o "$f"
 done
