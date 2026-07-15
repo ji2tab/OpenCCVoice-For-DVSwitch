@@ -17,7 +17,7 @@ GitHub（`ji2tab/OpenCCVoice-For-DVSwitch` main）の最新 **JT版（Open JTalk
 > 🔴 **VV版ノード（ocv-voicevox 等）にはこのブロックを流さないでください。**
 > bot が JT版で上書きされ、VOICEVOX が動かなくなります（VV版は `ocv_dvs_vv/` 配下から取得する別手順です）。
 > 見分け方: `grep -m1 '^__version__' /opt/dvswitch_bot/bin/dvswitch_bot.py` の版に
-> **`vv` サフィックスが付いていれば VV版**（例: V1.96vv）。付いていなければ JT版です。
+> **`vv` サフィックスが付いていれば VV版**（例: V1.97vv）。付いていなければ JT版です。
 
 **共通の前提（構築マニュアルどおりの配置）:**
 
@@ -102,7 +102,7 @@ rpi-ro
 ## 2. 成功の見え方
 
 - 各ファイルに `fetched`、構文チェックに `syntax OK` が並ぶ
-- 版表示が最新（**2026-07-15 時点の目安:** bot `V1.93` / create_wav `V1.2` / app `V3.11`。
+- 版表示が最新（**2026-07-15 時点の目安:** bot `V1.94` / create_wav `V1.2` / app `V3.11`。
   版に `vv` が付いて表示されたら**取得パスを間違えて VV版を入れています** — §5 で戻して確認）
 - 最後に `active` が2行（dvswitch-bot / dvswitch-web）
 - ブラウザで `http://<IP>:8081/` を開き、tagline の版が新しくなっている
