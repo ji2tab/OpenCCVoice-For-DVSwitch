@@ -97,7 +97,7 @@ USRP プロトコルで送出する常駐デーモン。
 | `LOG_PATTERN` | `MMDVM_Bridge-*.log` | 監視対象ログのグロブパターン |
 | `UDP_IP` | `127.0.0.1` | 送信先（Analog_Bridge） |
 | `UDP_PORT` | `51000` | 送信先ポート（Analog_Bridge の rxPort と一致） |
-| `MY_CALLSIGN` | ini から起動時自動取得 | 🔴V1.94 自局コールサイン。`MMDVM_Bridge.ini` の `Callsign` から起動時に自動取得する（`_read_ini_value()`/`resolvemy_station()`）。これと一致する送信は無視（ループ防止）。ini が読めない場合のみ既定値へフォールバックし WARN を出す |
+| `MY_CALLSIGN` | ini から起動時自動取得 | 🔴V1.94 自局コールサイン。`MMDVM_Bridge.ini` の `Callsign` から起動時に自動取得する（`_read_ini_value()`/`_resolve_my_station()`）。これと一致する送信は無視（ループ防止）。ini が読めない場合のみ既定値へフォールバックし WARN を出す |
 | `MY_DMR_ID` | ini から起動時自動取得 | 🔴V1.94 自局 DMR ID。`Analog_Bridge.ini` の `gatewayDmrId` から起動時に自動取得する（SET_INFO 用）。ini が読めない場合のみ既定値へフォールバックし WARN を出す |
 | `TX_METADATA_ENABLED` | `True` | 🔴V1.83 送信前に SET_INFO メタデータを送るか。False で V1.82 と同一（メタデータなし） |
 | `DICT_PATH` | `/var/lib/mecab/dic/open-jtalk/naist-jdic` | Open JTalk 辞書 |
