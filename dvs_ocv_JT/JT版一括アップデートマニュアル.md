@@ -64,12 +64,12 @@ done
 sudo cp -p "$WEB/app.py" "$WEB/app.py.bak.$TS" 2>/dev/null
 echo "backup done ($TS)"
 
-# --- 2) 取得（JT版=リポジトリ直下。dvs_ocv_vv/ ではない）---
-curl -fsSL "$RAW/dvswitch_bot.py"  | sudo tee "$BIN/dvswitch_bot.py"  >/dev/null && echo "bot        fetched" && \
-curl -fsSL "$RAW/bot_setup.py"     | sudo tee "$BIN/bot_setup.py"     >/dev/null && echo "bot_setup  fetched" && \
-curl -fsSL "$RAW/create_wav.sh"    | sudo tee "$BIN/create_wav.sh"    >/dev/null && echo "create_wav fetched" && \
-curl -fsSL "$RAW/dvs_config.sh"    | sudo tee "$BIN/dvs_config.sh"    >/dev/null && echo "dvs_config fetched" && \
-curl -fsSL "$RAW/test_send.py"     | sudo tee "$BIN/test_send.py"     >/dev/null && echo "test_send  fetched" && \
+# --- 2) 取得（JT版=dvs_ocv_JT/。dvs_ocv_vv/ ではない）---
+curl -fsSL "$RAW/dvs_ocv_JT/dvswitch_bot.py"  | sudo tee "$BIN/dvswitch_bot.py"  >/dev/null && echo "bot        fetched" && \
+curl -fsSL "$RAW/dvs_ocv_JT/bot_setup.py"     | sudo tee "$BIN/bot_setup.py"     >/dev/null && echo "bot_setup  fetched" && \
+curl -fsSL "$RAW/dvs_ocv_JT/create_wav.sh"    | sudo tee "$BIN/create_wav.sh"    >/dev/null && echo "create_wav fetched" && \
+curl -fsSL "$RAW/dvs_ocv_JT/dvs_config.sh"    | sudo tee "$BIN/dvs_config.sh"    >/dev/null && echo "dvs_config fetched" && \
+curl -fsSL "$RAW/dvs_ocv_JT/test_send.py"     | sudo tee "$BIN/test_send.py"     >/dev/null && echo "test_send  fetched" && \
 curl -fsSL "$RAW/dashboard/app.py" | sudo tee "$WEB/app.py"           >/dev/null && echo "app        fetched"
 
 # --- 3) 実行権限（シェルスクリプトのみ）---
@@ -149,7 +149,7 @@ app.py も同様に `web/app.py.bak.<TS>` から戻し、`sudo systemctl restart
 パスの打ち間違い、または GitHub のレート制限です。`-f` により書き込み前に停止しているので既存ファイルは無事です。時間をおいて再実行してください。
 
 **版表示に `vv` が付いた**
-VV版（`dvs_ocv_vv/` 配下）を取得しています。§4 でバックアップから戻し、`RAW` のパスがリポジトリ直下（本書のとおり）か確認して再実行してください。
+VV版（`dvs_ocv_vv/` 配下）を取得しています。§4 でバックアップから戻し、`RAW` のパスがdvs_ocv_JT/（本書のとおり）か確認して再実行してください。
 
 **`Unit dvswitch-web.service not found`**
 ダッシュボード未導入です。§3 のインストーラを実行してください。
