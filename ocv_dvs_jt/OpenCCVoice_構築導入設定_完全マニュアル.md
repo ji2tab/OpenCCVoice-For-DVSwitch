@@ -649,7 +649,7 @@ SEGV が再発する場合は qemu が 7.2 に戻っていないか確認（`qem
 ### 17-1. パラメータの確認 ✅
 
 ```bash
-grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH|^MY_CALLSIGN" /opt/dvswitch_bot/bin/dvswitch_bot.py
+grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH" /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```
 
 | 変数 | 正しい値 |
@@ -658,13 +658,14 @@ grep -nE "^UDP_IP|^UDP_PORT|^DICT_PATH|^CONFIG_PATH|^MY_CALLSIGN" /opt/dvswitch_
 | `UDP_PORT` | `51000`（Analog_Bridge の rxPort と一致） |
 | `DICT_PATH` | `/var/lib/mecab/dic/open-jtalk/naist-jdic` |
 | `CONFIG_PATH` | `/opt/dvswitch_bot/bot_config.json` |
-| `MY_CALLSIGN` | 自局（既定 `JJ2YYK`） |
 
-`MY_CALLSIGN` を変える場合:
-
-```bash
-sudo sed -i 's/^MY_CALLSIGN = .*/MY_CALLSIGN = "JJ2YYK"/' /opt/dvswitch_bot/bin/dvswitch_bot.py
-```
+> 🟢 **V1.94 以降、自局コールサイン（`MY_CALLSIGN`）と DMR ID（`MY_DMR_ID`）は
+> `MMDVM_Bridge.ini` の `Callsign` と `Analog_Bridge.ini` の `gatewayDmrId` から
+> 起動時に自動取得される。そのためソース（`dvswitch_bot.py`）を手修正する必要はない。**
+> コールサイン・DMR ID の設定は `dvs_config.sh`（第16章）またはダッシュボードの
+> 「DVSwitch 設定」カードで行い、変更後は bot を再起動すれば反映される。
+> （ini が読めない場合のみ従来の既定値へフォールバックし、起動ログに WARN を出す。
+> 起動ログの `My DMR ID : ...（source: ini 自動取得）` 行で取得元を確認できる。）
 
 ### 17-2. 🔴 設定ツールで bot_config.json を作成 ✅
 
@@ -736,7 +737,7 @@ python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
 ```bash
 sudo tee /etc/systemd/system/dvswitch-bot.service > /dev/null << 'EOF'
 [Unit]
-Description=DVSwitch Bot (OpenCCVoice, daemon V1.93)
+Description=DVSwitch Bot (OpenCCVoice, daemon V1.94)
 After=network.target analog_bridge.service mmdvm_bridge.service md380-emu.service
 Wants=analog_bridge.service mmdvm_bridge.service md380-emu.service
 
