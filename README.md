@@ -55,7 +55,7 @@ dvswitch_bot.py → Analog_Bridge → md380-emu → MMDVM_Bridge → DMR ネッ�
 
 ## クイックスタート
 
-詳細は [構築導入設定 完全マニュアル](dvs_ocv_JT/OpenCCVoice_構築導入設定_完全マニュアル.md) を参照してください。
+詳細は [構築導入設定 完全マニュアル](ocv_dvs_jt/OpenCCVoice_構築導入設定_完全マニュアル.md) を参照してください。
 以下は導入済み環境での要点のみです。
 
 ```bash
@@ -92,16 +92,16 @@ sudo systemctl enable --now dvswitch-bot
 
 | ディレクトリ | エディション | 音声合成 | 想定ノード |
 |---|---|---|---|
-| [`dvs_ocv_JT/`](dvs_ocv_JT/) | **Open JTalk 版（JT版）** | Open JTalk + SoX | Raspberry Pi ノード |
-| [`dvs_ocv_vv/`](dvs_ocv_vv/) | **VOICEVOX 版（VV版）** | VOICEVOX | x86_64 Linux（ベアメタル/VM/コンテナ可、Incus 手順は別冊） |
+| [`ocv_dvs_jt/`](ocv_dvs_jt/) | **Open JTalk 版（JT版）** | Open JTalk + SoX | Raspberry Pi ノード |
+| [`ocv_dvs_vv/`](ocv_dvs_vv/) | **VOICEVOX 版（VV版）** | VOICEVOX | x86_64 Linux（ベアメタル/VM/コンテナ可、Incus 手順は別冊） |
 | [`dashboard/`](dashboard/) | **共用 Web ダッシュボード** | — | JT版・VV版 共通 |
-| [`Incus コンテナ/`](Incus%20コンテナ/) | Incus 構築リソース | — | ini サンプルと構築マニュアルのみ（スクリプトは `dvs_ocv_vv/` へ移設済み） |
+| [`Incus コンテナ/`](Incus%20コンテナ/) | Incus 構築リソース | — | ini サンプルと構築マニュアルのみ（スクリプトは `ocv_dvs_vv/` へ移設済み） |
 
 Web ダッシュボードは JT版・VV版のどちらでも共用です（[`dashboard/app.py`](dashboard/app.py)）。
 
 ### 版数
 
-| ファイル | JT版（`dvs_ocv_JT/`） | VV版（`dvs_ocv_vv/`） |
+| ファイル | JT版（`ocv_dvs_jt/`） | VV版（`ocv_dvs_vv/`） |
 |---|---|---|
 | `create_wav.sh` | V1.2 | V1.31vv |
 | `dvswitch_bot.py` | V1.93 | V1.96vv |
@@ -111,28 +111,28 @@ Web ダッシュボードは JT版・VV版のどちらでも共用です（[`das
 共用 Web ダッシュボード `dashboard/app.py` は **V3.11**。
 ## パス変更のお知らせ（2026-07）
 
-JT版（Open JTalk 版）のソース5本とマニュアル5冊を、リポジトリ直下から [`dvs_ocv_JT/`](dvs_ocv_JT/) へ移設し、VV版（`dvs_ocv_vv/`）と同列の構成にしました。
-旧 `.../main/` 直下の raw 取得 URL（例: `.../main/dvswitch_bot.py`）は **404** になります。取得スクリプトは `.../main/dvs_ocv_JT/...` へパスを更新してください。
+JT版（Open JTalk 版）のソース5本とマニュアル5冊を、まずリポジトリ直下から `dvs_ocv_JT/` へ移設し、その後ディレクトリ名を全小文字の [`ocv_dvs_jt/`](ocv_dvs_jt/) へ改名しました（VV版も `dvs_ocv_vv/` → [`ocv_dvs_vv/`](ocv_dvs_vv/) へ改名）。VV版と同列の構成です。
+旧 `.../main/` 直下および旧 `.../main/dvs_ocv_JT/...` の raw 取得 URL は **404** になります。取得スクリプトは `.../main/ocv_dvs_jt/...` へパスを更新してください。
 
 
 ### スクリプト（JT版・`/opt/dvswitch_bot/bin/` に配置）
 
 | ファイル | 役割 |
 |---|---|
-| [`dvswitch_bot.py`](dvs_ocv_JT/dvswitch_bot.py) | 自動応答デーモン本体（JSON 設定を読むだけ。常駐向け） |
-| [`bot_setup.py`](dvs_ocv_JT/bot_setup.py) | Bot 設定ツール（`bot_config.json` を対話作成） |
-| [`dvs_config.sh`](dvs_ocv_JT/dvs_config.sh) | DVSwitch ini を TGIF 用に一括設定（自動バックアップ付き） |
-| [`create_wav.sh`](dvs_ocv_JT/create_wav.sh) | 固定 WAV を対話生成（自動バックアップ付き） |
-| [`test_send.py`](dvs_ocv_JT/test_send.py) | USRP 単発送信テスト |
+| [`dvswitch_bot.py`](ocv_dvs_jt/dvswitch_bot.py) | 自動応答デーモン本体（JSON 設定を読むだけ。常駐向け） |
+| [`bot_setup.py`](ocv_dvs_jt/bot_setup.py) | Bot 設定ツール（`bot_config.json` を対話作成） |
+| [`dvs_config.sh`](ocv_dvs_jt/dvs_config.sh) | DVSwitch ini を TGIF 用に一括設定（自動バックアップ付き） |
+| [`create_wav.sh`](ocv_dvs_jt/create_wav.sh) | 固定 WAV を対話生成（自動バックアップ付き） |
+| [`test_send.py`](ocv_dvs_jt/test_send.py) | USRP 単発送信テスト |
 
 ### ドキュメント
 
 | ドキュメント | 内容 |
 |---|---|
-| [構築導入設定 完全マニュアル](dvs_ocv_JT/OpenCCVoice_構築導入設定_完全マニュアル.md) | OS インストールから運用まで、新規構築を通しで再現できる実務マニュアル |
-| [VV版（VOICEVOX）構築手順書](dvs_ocv_vv/OpenCCVoice%20for%20DVSwitch%20VV%E7%89%88%EF%BC%88VOICEVOX%EF%BC%89%E6%A7%8B%E7%AF%89%E6%89%8B%E9%A0%86%E6%9B%B8.md) | VV版（VOICEVOX / x86_64 Linux）をゼロから構築する手順書。Incus で環境を用意する場合は『Incus コンテナ/incus構築マニュアル.md』を先に実施 |
-| [操作マニュアル](dvs_ocv_JT/OpenCCVoice_操作マニュアル.md) | 日常運用の逆引き（起動停止・設定変更・音声差し替え・トラブル対応） |
-| [カスタム音声マニュアル](dvs_ocv_JT/カスタム音声.md) | 標準音声（intro／001／002）を自前の音声ファイルに差し替える手順（cstm 機能） |
+| [構築導入設定 完全マニュアル](ocv_dvs_jt/OpenCCVoice_構築導入設定_完全マニュアル.md) | OS インストールから運用まで、新規構築を通しで再現できる実務マニュアル |
+| [VV版（VOICEVOX）構築手順書](ocv_dvs_vv/OpenCCVoice%20for%20DVSwitch%20VV%E7%89%88%EF%BC%88VOICEVOX%EF%BC%89%E6%A7%8B%E7%AF%89%E6%89%8B%E9%A0%86%E6%9B%B8.md) | VV版（VOICEVOX / x86_64 Linux）をゼロから構築する手順書。Incus で環境を用意する場合は『Incus コンテナ/incus構築マニュアル.md』を先に実施 |
+| [操作マニュアル](ocv_dvs_jt/OpenCCVoice_操作マニュアル.md) | 日常運用の逆引き（起動停止・設定変更・音声差し替え・トラブル対応） |
+| [カスタム音声マニュアル](ocv_dvs_jt/カスタム音声.md) | 標準音声（intro／001／002）を自前の音声ファイルに差し替える手順（cstm 機能） |
 | [README_PROJECT](README_PROJECT.md) | プロジェクトの理念・背景・詳細説明 |
 
 ### ソフトウェア仕様書（[`specification/`](specification/)）
@@ -190,8 +190,8 @@ and openly shared rather than kept as a black box.
 **Stack:** Raspberry Pi OS (Bookworm) + DVSwitch-Server, Open JTalk + SoX, Python 3
 (standard library only).
 
-This repository ships two editions — an **Open JTalk edition** (repository root, for Raspberry Pi nodes) and a **VOICEVOX edition** (`dvs_ocv_vv/`) — plus a **shared web dashboard** (`dashboard/`, `app.py` V3.11) used by both.
+This repository ships two editions — an **Open JTalk edition** (repository root, for Raspberry Pi nodes) and a **VOICEVOX edition** (`ocv_dvs_vv/`) — plus a **shared web dashboard** (`dashboard/`, `app.py` V3.11) used by both.
 
-See the [complete setup manual](dvs_ocv_JT/OpenCCVoice_構築導入設定_完全マニュアル.md) (Japanese)
+See the [complete setup manual](ocv_dvs_jt/OpenCCVoice_構築導入設定_完全マニュアル.md) (Japanese)
 to build the system from scratch, and [`specification/`](specification/) for per-script
 technical specifications.
