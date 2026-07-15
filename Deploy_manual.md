@@ -141,10 +141,10 @@ sleep 2 && systemctl is-active dvswitch-web
 
 | ファイル | GitHub URL（raw, main） | 配置先 | 再起動 |
 |---|---|---|---|
-| bot 本体 | `.../main/dvswitch_bot.py` | `/opt/dvswitch_bot/bin/dvswitch_bot.py` | `dvswitch-bot` |
-| 設定ツール | `.../main/bot_setup.py` | `/opt/dvswitch_bot/bin/bot_setup.py` | （再起動不要※） |
+| bot 本体 | `.../main/dvs_ocv_JT/dvswitch_bot.py` | `/opt/dvswitch_bot/bin/dvswitch_bot.py` | `dvswitch-bot` |
+| 設定ツール | `.../main/dvs_ocv_JT/bot_setup.py` | `/opt/dvswitch_bot/bin/bot_setup.py` | （再起動不要※） |
 | ダッシュボード | `.../main/dashboard/app.py` | `/opt/dvswitch_bot/web/app.py` | `dvswitch-web` |
-| WAV作成ツール | `.../main/create_wav.sh` | `/opt/dvswitch_bot/bin/create_wav.sh` | （再起動不要※） |
+| WAV作成ツール | `.../main/dvs_ocv_JT/create_wav.sh` | `/opt/dvswitch_bot/bin/create_wav.sh` | （再起動不要※） |
 
 URL の先頭は共通で `https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch`
 
