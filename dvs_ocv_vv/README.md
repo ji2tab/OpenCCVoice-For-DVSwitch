@@ -16,5 +16,5 @@ DVSwitch 自動音声応答システムの VOICEVOX 版スクリプト群です�
 - `create_wav.sh` — VV版 WAV 生成スクリプト
 - `dvswitch_bot.py` — VV版 常駐 bot（デーモン）
 - `vv_say.py` — VOICEVOX 音声合成
-- `bot_setup.py` / `dvs_config.sh` / `test_send.py` — JT版（リポジトリ直下）と共通（同一内容）
+- `bot_setup.py` / `dvs_config.sh` / `test_send.py` — JT版（`dvs_ocv_JT/`）と共通（同一内容）
 - `bot_config.json` / `wav_source.json` — 設定・音声ソース定義
