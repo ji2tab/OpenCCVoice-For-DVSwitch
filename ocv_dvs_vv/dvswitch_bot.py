@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.96vv —
+ — JJ2YYK デジピーター自動応答システム  V1.97vv —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -76,7 +76,8 @@
      ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
        systemd 常駐化時も ExecStart を venv の python3 にする。
 
- Document Version: V1.96vv (daemon, V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化)
+ Document Version: V1.97vv (daemon, V1.96vv + 自局コールサイン/DMR ID の ini 自動取得)
+ 　（V1.96vv: V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化）
  ※ 版番号の "vv" サフィックスは VOICEVOX 系ノード用ファイルであることを示す
    （Open JTalk 系 Pi ノード用の同名ファイルと区別する命名規約。2026-07-14 導入）。
  Last Updated: 2026-07-07
@@ -89,7 +90,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.96vv"
+__version__ = "V1.97vv"
 
 import os
 import sys
@@ -189,10 +190,64 @@ LOG_PATTERN = "MMDVM_Bridge-*.log"
 UDP_IP = "127.0.0.1"
 UDP_PORT = 51000
 
-MY_CALLSIGN = "JJ2YYK"
-# 🔴 V1.83: USRP メタデータ（SET_INFO）用の自局 DMR ID。
-# Analog_Bridge.ini の gatewayDmrId と同じ値にすること。
-MY_DMR_ID = 4402396
+# ============================================================
+# 🔵 V1.97vv: 自局コールサイン / DMR ID を ini から自動取得
+# ============================================================
+# V1.83〜V1.96vv は MY_CALLSIGN / MY_DMR_ID をソースに直書きしており、
+# (1) 他局が導入するとエディタでの手修正が必須、(2) 一括アップデートの
+# たびに配布デフォルト（JJ2YYK / 4402396）へ巻き戻る、(3) ダッシュボード
+# から変更できない、という不具合があった（JS1YTZ 局の報告で顕在化）。
+# 正しい値は dvs_config.sh / ダッシュボードが管理する ini に既に存在する
+# ため、起動時にそこから読む方式に変更し、真実の源を一本化した:
+#   MY_CALLSIGN ← MMDVM_Bridge.ini の Callsign
+#   MY_DMR_ID   ← Analog_Bridge.ini の gatewayDmrId
+# ini が読めない・キーが無い場合のみ従来の既定値へフォールバックし、
+# 起動ログに WARN を出す（後方互換。ただし自局判定 cs != MY_CALLSIGN が
+# 誤るとループの恐れがあるため、WARN を見たら ini を確認すること）。
+# 値の反映タイミングは bot 起動時（変更後は bot 再起動）。
+_MMDVM_INI_PATH = "/opt/MMDVM_Bridge/MMDVM_Bridge.ini"
+_ANALOG_INI_PATH = "/opt/Analog_Bridge/Analog_Bridge.ini"
+
+
+def _read_ini_value(path, key):
+    """ini から最初に現れる `key = value` の値を返す（無ければ None）。
+    dvs_config.sh / app.py の get_ini と同じ流儀: コメント行は対象外、
+    行末の `;` コメントは除去。configparser は DVSwitch ini の重複キーで
+    例外になり得るため使わない。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith((";", "#", "[")):
+                    continue
+                m = re.match(rf"^{re.escape(key)}\s*=\s*(.*)$", s)
+                if m:
+                    val = m.group(1).split(";")[0].strip()
+                    return val or None
+    except OSError:
+        pass
+    return None
+
+
+def _resolve_my_station():
+    """(callsign, dmr_id) を ini から解決する。失敗分のみ既定値で補う。"""
+    fallback_cs, fallback_id = "JJ2YYK", 4402396  # 旧 V1.83 直書き値（互換用）
+    cs = _read_ini_value(_MMDVM_INI_PATH, "Callsign")
+    raw_id = _read_ini_value(_ANALOG_INI_PATH, "gatewayDmrId")
+    dmr_id = None
+    if raw_id and raw_id.isdigit():
+        dmr_id = int(raw_id)
+    warn = []
+    if not cs:
+        cs = fallback_cs
+        warn.append(f"Callsign を {_MMDVM_INI_PATH} から取得できず既定値 {fallback_cs} を使用")
+    if dmr_id is None:
+        dmr_id = fallback_id
+        warn.append(f"gatewayDmrId を {_ANALOG_INI_PATH} から取得できず既定値 {fallback_id} を使用")
+    return cs, dmr_id, warn
+
+
+MY_CALLSIGN, MY_DMR_ID, _MY_STATION_WARNINGS = _resolve_my_station()
 # 🔴 V1.83: 送信前に SET_INFO メタデータを送るか。DVSwitch 公式クライアント
 # (pyUC) と同じ振る舞いにして、Analog_Bridge に正規経路でコールサイン/ID を
 # 通知する。False で V1.82 と同一（メタデータなし）。
@@ -1438,6 +1493,10 @@ def _log_startup_info():
     # 🔵 V1.95a: 表示は __version__ を参照（版上げ時の二重管理を解消）
     logger.info(f"DVSwitch Bot {__version__} (daemon, VOICEVOX) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
+    # 🔵 V1.97vv: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
+    logger.info(f"  My DMR ID         : {MY_DMR_ID}  (source: ini 自動取得)")
+    for _w in _MY_STATION_WARNINGS:
+        logger.warning(f"  [station] {_w} — ini を確認してください（自局判定の誤りはループの恐れ）")
     logger.info(f"  Target            : {UDP_IP}:{UDP_PORT}")
     logger.info(f"  Log dir           : {LOG_DIR}")
     logger.info(f"  Bot dir           : {BOT_DIR}")
