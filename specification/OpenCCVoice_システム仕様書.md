@@ -56,37 +56,50 @@
 
 電波が入ってから音声で応答が返るまで、データは次のように流れます。
 
-```mermaid
-flowchart TB
-    radio["📻 無線機・他局"]
-    tgif["☁️ TGIF ネットワーク<br/>(インターネット)"]
+【受信 → 検知】 他局の電波を Bot が検知するまで
 
-    subgraph pi["Raspberry Pi (ホスト名 OCV)"]
-        direction TB
-        mmdvm["MMDVM_Bridge<br/>(DMR ⇔ 内部)"]
-        analog["Analog_Bridge<br/>(内部 ⇔ 音声)"]
-        bot["dvswitch_bot.py<br/>(ログ監視 → 応答)"]
-        jtalk["Open JTalk + SoX<br/>(テキスト → 音声)"]
-        md380["md380-emu<br/>(AMBE 音声符号化)"]
-        log[("ログ<br/>/var/log/mmdvm")]
-    end
+```
+  📻 無線機・他局
+        │  電波 (DMR)
+        ▼
+  ☁️ TGIF ネットワーク (インターネット)
+        │  DMR (UDP 62031)
+        ▼
+  ┌──────────────────┐
+  │   MMDVM_Bridge   │ ← TGIF ⇔ 内部形式の橋渡し
+  └──────────────────┘
+        │  "header" / "end of voice" を記録
+        ▼
+  ┌──────────────────┐
+  │  動作ログ (text) │ ← /var/log/mmdvm/MMDVM_Bridge-*.log
+  └──────────────────┘
+        │  リアルタイム監視
+        ▼
+  ┌──────────────────┐
+  │  dvswitch_bot.py │ ← カーチャンク / QSO を判定し応答を決定
+  └──────────────────┘
+```
 
-    radio <-->|"電波 (DMR)"| tgif
-    tgif <-->|"DMR (UDP 62031)"| mmdvm
-    mmdvm <-->|"TLV"| analog
-    mmdvm -->|"通信開始/終了を記録"| log
-    log -->|"リアルタイム監視"| bot
-    bot -->|"音声合成"| jtalk
-    jtalk -->|"WAV"| bot
-    bot -->|"USRP (UDP 51000)<br/>音声を注入"| analog
-    analog <-->|"AMBE (UDP 2470)"| md380
+【応答 → 送信】 Bot が音声を作って電波に乗せるまで
 
-    classDef ext fill:#e8f0fe,stroke:#4285f4,color:#000
-    classDef core fill:#fff3e0,stroke:#fb8c00,color:#000
-    classDef data fill:#f1f3f4,stroke:#9aa0a6,color:#000
-    class radio,tgif ext
-    class bot core
-    class log data
+```
+  ┌──────────────────┐
+  │  dvswitch_bot.py │ ← 応答テキストを組み立て、音声合成
+  └──────────────────┘    (JT版: Open JTalk + SoX / VV版: VOICEVOX CORE + SoX)
+        │  USRP プロトコルで WAV を注入 (UDP 51000)
+        ▼
+  ┌──────────────────┐  AMBE (UDP 2470)    ┌──────────────────┐
+  │  Analog_Bridge   │◀─────────────────▶│    md380-emu     │
+  └──────────────────┘   音声の符号化      └──────────────────┘
+        │                                  ↑ PCM ⇔ AMBE ソフトウェア変換
+        │  TLV (符号化済み音声)
+        ▼
+  ┌──────────────────┐
+  │   MMDVM_Bridge   │ ← TGIF ネットワークへの橋渡し
+  └──────────────────┘
+        │  DMR (UDP 62031)
+        ▼
+  ☁️ TGIF ネットワーク ──▶ 📻 アクセスしてきた局のスピーカーへ
 ```
 
 **流れを言葉で説明すると:**
