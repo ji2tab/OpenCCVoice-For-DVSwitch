@@ -14,7 +14,7 @@
 
 - VV版の動作要件は **x86_64 の Linux（Debian 12 / Ubuntu 24.04 系で検証）** です。ベアメタル・VM・コンテナのいずれでも構築できます。
 - **Incus コンテナで環境を用意する場合**は、先に別冊『Incus コンテナ/incus構築マニュアル.md』を実施し、SSH でログインできる状態にしてから本書の第2章へ合流してください。
-- JT版（Open JTalk / Raspberry Pi 用、`dvs_ocv_JT/`）とはスクリプトが別系統です。VV版のファイルは `dvs_ocv_vv/` 配下、版番号は **`vv` サフィックス**（例: V1.96vv）で区別されます。
+- JT版（Open JTalk / Raspberry Pi 用、`ocv_dvs_jt/`）とはスクリプトが別系統です。VV版のファイルは `ocv_dvs_vv/` 配下、版番号は **`vv` サフィックス**（例: V1.96vv）で区別されます。
 - Web ダッシュボードは JT版・VV版で**共用**です（`dashboard/app.py`、V3.11 以降）。
 
 ### 0.2 システム構成
@@ -182,7 +182,7 @@ sudo /usr/local/dvs/dvs
 ```bash
 sudo mkdir -p /opt/dvswitch_bot/bin
 sudo chown -R "$USER": /opt/dvswitch_bot
-curl -fsSL "https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_vv/dvs_config.sh" \
+curl -fsSL "https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_vv/dvs_config.sh" \
   | sudo tee /opt/dvswitch_bot/bin/dvs_config.sh >/dev/null
 sudo chmod +x /opt/dvswitch_bot/bin/dvs_config.sh
 sudo /opt/dvswitch_bot/bin/dvs_config.sh
@@ -280,10 +280,10 @@ aplay /tmp/vv_test.wav   # スピーカーがあれば再生確認（無けれ�
 
 ## 6. OpenCCVoice VV版ファイルの配置
 
-`dvs_ocv_vv/` 配下から取得します。デプロイは `curl -fsSL … | sudo tee` パターン（`-f` により 404 なら書き込み前に停止）。
+`ocv_dvs_vv/` 配下から取得します。デプロイは `curl -fsSL … | sudo tee` パターン（`-f` により 404 なら書き込み前に停止）。
 
 ```bash
-RAW="https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_vv"
+RAW="https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_vv"
 
 # bot 本体（VV版 V1.96vv 以降）
 curl -fsSL "$RAW/dvswitch_bot.py" | sudo tee /opt/dvswitch_bot/bin/dvswitch_bot.py >/dev/null
@@ -472,12 +472,12 @@ Analog_Bridge の半死状態。第4章の順序再起動（md380 → analog →
 
 | ファイル | 配置先 | 版 | 取得元（リポジトリ内） |
 |---|---|---|---|
-| dvswitch_bot.py | /opt/dvswitch_bot/bin/ | V1.96vv | dvs_ocv_vv/ |
-| bot_setup.py | /opt/dvswitch_bot/bin/ | （JT版と共通） | dvs_ocv_vv/ |
-| create_wav.sh | /opt/dvswitch_bot/bin/ | V1.31vv | dvs_ocv_vv/ |
-| vv_say.py | /opt/voicevox/ | V2.0vv | dvs_ocv_vv/ |
-| test_send.py | /opt/dvswitch_bot/bin/ | （共通） | dvs_ocv_vv/ |
-| dvs_config.sh | /opt/dvswitch_bot/bin/ | （共通） | dvs_ocv_vv/ |
+| dvswitch_bot.py | /opt/dvswitch_bot/bin/ | V1.96vv | ocv_dvs_vv/ |
+| bot_setup.py | /opt/dvswitch_bot/bin/ | （JT版と共通） | ocv_dvs_vv/ |
+| create_wav.sh | /opt/dvswitch_bot/bin/ | V1.31vv | ocv_dvs_vv/ |
+| vv_say.py | /opt/voicevox/ | V2.0vv | ocv_dvs_vv/ |
+| test_send.py | /opt/dvswitch_bot/bin/ | （共通） | ocv_dvs_vv/ |
+| dvs_config.sh | /opt/dvswitch_bot/bin/ | （共通） | ocv_dvs_vv/ |
 | app.py（共用） | /opt/dvswitch_bot/web/ | V3.11以降 | dashboard/ |
 | bot_config.json | /opt/dvswitch_bot/ | — | bot_setup.py が生成 |
 | wav_source.json | /opt/dvswitch_bot/ | — | create_wav.sh が生成 |
