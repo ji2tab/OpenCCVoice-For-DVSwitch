@@ -1,6 +1,6 @@
 # create_wav.sh ソフトウェア仕様書（JT版 V1.2 / VV版 V1.31vv）
 **対象ファイル:** `/opt/dvswitch_bot/bin/create_wav.sh`
-**対象バージョン:** JT版（`dvs_ocv_JT/`）**V1.2** ／ VV版（`dvs_ocv_vv/`）**V1.31vv**
+**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.2** ／ VV版（`ocv_dvs_vv/`）**V1.31vv**
 **役割:** コールサイン・地名・定時メッセージを対話入力し、bot が使う固定 WAV を
 一括生成する。入力内容を `wav_source.json` に記録して次回のプリフィルと非対話再生成（`--regen`）に使い、上書き前に自動バックアップし、復元（`-r`）・削除（`-d`）にも対応する。
 **本文の扱い:** 本文は **JT版・VV版で共通の仕様**（音声合成エンジンを除く）を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.31vv）』章にまとめる。
@@ -344,7 +344,7 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 
 ## 14. VV版差分（V1.31vv）
 
-本章は **VV版（`dvs_ocv_vv/create_wav.sh` V1.31vv）** に固有の差分のみを記述する。第1〜13章の共通仕様のうち、音声合成エンジンと話者選択に関わる部分が VV版では次のとおり異なる。
+本章は **VV版（`ocv_dvs_vv/create_wav.sh` V1.31vv）** に固有の差分のみを記述する。第1〜13章の共通仕様のうち、音声合成エンジンと話者選択に関わる部分が VV版では次のとおり異なる。
 
 > 版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 
@@ -367,5 +367,5 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 ---
 
 *create_wav.sh ソフトウェア仕様書（JT版 V1.2 / VV版 V1.31vv）*
-*対象: /opt/dvswitch_bot/bin/create_wav.sh（JT版 dvs_ocv_JT/ V1.2 ／ VV版 dvs_ocv_vv/ V1.31vv、バックアップ先 /opt/dvswitch_bot/bak/wav）*
+*対象: /opt/dvswitch_bot/bin/create_wav.sh（JT版 ocv_dvs_jt/ V1.2 ／ VV版 ocv_dvs_vv/ V1.31vv、バックアップ先 /opt/dvswitch_bot/bak/wav）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
