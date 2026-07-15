@@ -1,6 +1,6 @@
 # OpenCCVoice / DVSwitch Bot 操作マニュアル（運用者向け）
 
-**対象システム:** Raspberry Pi OS (Bookworm) + DVSwitch-Server + デーモン分離版 Bot（V1.93）
+**対象システム:** Raspberry Pi OS (Bookworm) + DVSwitch-Server + デーモン分離版 Bot（V1.94）
 **スクリプト配置:** `/opt/dvswitch_bot/bin/`
 **サービス名:** `dvswitch-bot`（ハイフン）
 
@@ -487,5 +487,5 @@ sudo systemctl restart analog_bridge mmdvm_bridge md380-emu
 ---
 
 OpenCCVoice / DVSwitch Bot 操作マニュアル（運用者向け）
-対象: Bookworm + DVSwitch-Server + デーモン分離版 V1.93 / `/opt/dvswitch_bot/bin/` 配置
+対象: Bookworm + DVSwitch-Server + デーモン分離版 V1.94 / `/opt/dvswitch_bot/bin/` 配置
 Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors
