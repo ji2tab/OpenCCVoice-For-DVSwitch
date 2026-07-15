@@ -7,7 +7,7 @@
 ## create_wav.sh 版履歴（音声生成スクリプト）
 
 > `dvswitch_bot.py` 本体とは別に、音声生成スクリプト `create_wav.sh` の版履歴を
-> ここに併記する（JT版＝ルート、VV版＝dvs_ocv_vv/）。新しい版が上の降順。
+> ここに併記する（JT版＝ルート、VV版＝ocv_dvs_vv/）。新しい版が上の降順。
 
 ### VV版 create_wav.sh V1.31vv (2026-07-14)
 
