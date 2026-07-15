@@ -104,7 +104,7 @@ Web ダッシュボードは JT版・VV版のどちらでも共用です（[`das
 | ファイル | JT版（`ocv_dvs_jt/`） | VV版（`ocv_dvs_vv/`） |
 |---|---|---|
 | `create_wav.sh` | V1.2 | V1.31vv |
-| `dvswitch_bot.py` | V1.93 | V1.96vv |
+| `dvswitch_bot.py` | V1.94 | V1.97vv |
 | `vv_say.py` | — | V2.0vv |
 | `bot_setup.py` / `dvs_config.sh` / `test_send.py` | JT版・VV版で共通（同一内容） | |
 
