@@ -1,4 +1,4 @@
-# dvs_ocv_JT — Open JTalk 版（JT版）
+# ocv_dvs_jt — Open JTalk 版（JT版）
 
 DVSwitch 自動音声応答システムの Open JTalk 版スクリプト群です（Raspberry Pi ノード用。Raspberry Pi OS Bookworm 上で MMDVM_Bridge / Analog_Bridge と同居して動作します。音声合成は Open JTalk + SoX を使用します）。
 
@@ -13,7 +13,7 @@ DVSwitch 自動音声応答システムの Open JTalk 版スクリプト群で�
 
 - `dvswitch_bot.py` — JT版 常駐 bot（デーモン。カーチャンク検出→応答合成→USRP送出）
 - `create_wav.sh` — JT版 固定WAV生成スクリプト（Open JTalk + SoX）
-- `bot_setup.py` / `dvs_config.sh` / `test_send.py` — VV版（`../dvs_ocv_vv/`）と共通（同一内容）
+- `bot_setup.py` / `dvs_config.sh` / `test_send.py` — VV版（`../ocv_dvs_vv/`）と共通（同一内容）
 
 ## 関連ドキュメント
 
