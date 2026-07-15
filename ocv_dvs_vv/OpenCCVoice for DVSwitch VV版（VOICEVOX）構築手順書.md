@@ -14,7 +14,7 @@
 
 - VV版の動作要件は **x86_64 の Linux（Debian 12 / Ubuntu 24.04 系で検証）** です。ベアメタル・VM・コンテナのいずれでも構築できます。
 - **Incus コンテナで環境を用意する場合**は、先に別冊『Incus コンテナ/incus構築マニュアル.md』を実施し、SSH でログインできる状態にしてから本書の第2章へ合流してください。
-- JT版（Open JTalk / Raspberry Pi 用、`ocv_dvs_jt/`）とはスクリプトが別系統です。VV版のファイルは `ocv_dvs_vv/` 配下、版番号は **`vv` サフィックス**（例: V1.96vv）で区別されます。
+- JT版（Open JTalk / Raspberry Pi 用、`ocv_dvs_jt/`）とはスクリプトが別系統です。VV版のファイルは `ocv_dvs_vv/` 配下、版番号は **`vv` サフィックス**（例: V1.97vv）で区別されます。
 - Web ダッシュボードは JT版・VV版で**共用**です（`dashboard/app.py`、V3.11 以降）。
 
 ### 0.2 システム構成
@@ -43,7 +43,7 @@
           │  USRP/UDP (rx:51000 / tx:51001)
           ▼
 ┌────────────────────┐
-│  dvswitch_bot.py   │   ← V1.96vv。カーチャンク検出→応答合成→USRP送出 (venv内Python常駐)
+│  dvswitch_bot.py   │   ← V1.97vv。カーチャンク検出→応答合成→USRP送出 (venv内Python常駐)
 └────────────────────┘
           │
           └── 起動時に1回ロード ──▶ [ VOICEVOX CORE 0.16.x ]  ← 音声合成 (同一プロセス内)
@@ -285,7 +285,7 @@ aplay /tmp/vv_test.wav   # スピーカーがあれば再生確認（無けれ�
 ```bash
 RAW="https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_vv"
 
-# bot 本体（VV版 V1.96vv 以降）
+# bot 本体（VV版 V1.97vv 以降）
 curl -fsSL "$RAW/dvswitch_bot.py" | sudo tee /opt/dvswitch_bot/bin/dvswitch_bot.py >/dev/null
 
 # 設定ツール
@@ -307,7 +307,7 @@ grep -m1 "^__version__" /opt/dvswitch_bot/bin/dvswitch_bot.py
 /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py --version
 ```
 
-期待値（2026-07-15 時点）: bot `V1.96vv` / vv_say `V2.0vv` / create_wav `V1.31vv`。
+期待値（2026-07-15 時点）: bot `V1.97vv` / vv_say `V2.0vv` / create_wav `V1.31vv`。
 
 ### 6.1 bot 初期設定
 
@@ -472,7 +472,7 @@ Analog_Bridge の半死状態。第4章の順序再起動（md380 → analog →
 
 | ファイル | 配置先 | 版 | 取得元（リポジトリ内） |
 |---|---|---|---|
-| dvswitch_bot.py | /opt/dvswitch_bot/bin/ | V1.96vv | ocv_dvs_vv/ |
+| dvswitch_bot.py | /opt/dvswitch_bot/bin/ | V1.97vv | ocv_dvs_vv/ |
 | bot_setup.py | /opt/dvswitch_bot/bin/ | （JT版と共通） | ocv_dvs_vv/ |
 | create_wav.sh | /opt/dvswitch_bot/bin/ | V1.31vv | ocv_dvs_vv/ |
 | vv_say.py | /opt/voicevox/ | V2.0vv | ocv_dvs_vv/ |
