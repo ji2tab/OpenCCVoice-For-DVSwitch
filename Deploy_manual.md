@@ -44,7 +44,7 @@ GitHub の最新版を、稼働中の OpenCCVoice システムに反映する手
 `create_wav.sh`（JT版）と共用ダッシュボード `app.py` を更新し、ダッシュボードを再起動して版を確認します。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/create_wav.sh | sudo tee /opt/dvswitch_bot/bin/create_wav.sh >/dev/null && sudo chmod +x /opt/dvswitch_bot/bin/create_wav.sh && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/app.py | sudo tee /opt/dvswitch_bot/web/app.py >/dev/null && sudo systemctl restart dvswitch-web && grep -m1 SCRIPT_VERSION= /opt/dvswitch_bot/bin/create_wav.sh && grep -m1 '^__version__' /opt/dvswitch_bot/web/app.py
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_JT/create_wav.sh | sudo tee /opt/dvswitch_bot/bin/create_wav.sh >/dev/null && sudo chmod +x /opt/dvswitch_bot/bin/create_wav.sh && curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/app.py | sudo tee /opt/dvswitch_bot/web/app.py >/dev/null && sudo systemctl restart dvswitch-web && grep -m1 SCRIPT_VERSION= /opt/dvswitch_bot/bin/create_wav.sh && grep -m1 '^__version__' /opt/dvswitch_bot/web/app.py
 ```
 
 ### VV版ノード（x86_64 Linux / VOICEVOX）
@@ -82,8 +82,8 @@ sudo cp /opt/dvswitch_bot/web/app.py          /opt/dvswitch_bot/web/app.py.$TS.b
 echo "backup done ($TS)"
 
 # --- 2) 取得（GitHub raw → sudo tee で上書き）---
-curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvswitch_bot.py  | sudo tee /opt/dvswitch_bot/bin/dvswitch_bot.py >/dev/null && echo "bot       fetched" && \
-curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/bot_setup.py     | sudo tee /opt/dvswitch_bot/bin/bot_setup.py    >/dev/null && echo "bot_setup fetched" && \
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_JT/dvswitch_bot.py  | sudo tee /opt/dvswitch_bot/bin/dvswitch_bot.py >/dev/null && echo "bot       fetched" && \
+curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dvs_ocv_JT/bot_setup.py     | sudo tee /opt/dvswitch_bot/bin/bot_setup.py    >/dev/null && echo "bot_setup fetched" && \
 curl -fsSL https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/dashboard/app.py | sudo tee /opt/dvswitch_bot/web/app.py          >/dev/null && echo "app       fetched"
 
 # --- 3) 構文チェック（__pycache__ を書かない ast.parse 方式）---
