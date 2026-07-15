@@ -1,9 +1,9 @@
-# dvswitch_bot.py ソフトウェア仕様書（JT版 V1.93 / VV版 V1.96vv）
+# dvswitch_bot.py ソフトウェア仕様書（JT版 V1.94 / VV版 V1.97vv）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.93** ／ VV版（`ocv_dvs_vv/`）**V1.96vv**
-**本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.96vv）』章にまとめる。
-**JT版 V1.93 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正 まで。
+**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.94** ／ VV版（`ocv_dvs_vv/`）**V1.97vv**
+**本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.97vv）』章にまとめる。
+**JT版 V1.94 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正・自局コールサイン/DMR ID の ini 起動時自動取得 まで。
 **版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 **役割:** MMDVM_Bridge のログを監視し、カーチャンク自動応答・時報・定時メッセージ・長時間通信時の識別信号（法令対応）を
 USRP プロトコルで送出する常駐デーモン。
@@ -29,7 +29,7 @@ USRP プロトコルで送出する常駐デーモン。
 11） [ログ出力仕様](#11-ログ出力仕様)
 12） [スレッド構成と終了処理](#12-スレッド構成と終了処理)
 13） [改修時の注意点](#13-改修時の注意点)
-14） [VV版差分（V1.96vv）](#14-vv版差分v196vv)
+14） [VV版差分（V1.97vv）](#14-vv版差分v197vv)
 
 ---
 
@@ -97,8 +97,8 @@ USRP プロトコルで送出する常駐デーモン。
 | `LOG_PATTERN` | `MMDVM_Bridge-*.log` | 監視対象ログのグロブパターン |
 | `UDP_IP` | `127.0.0.1` | 送信先（Analog_Bridge） |
 | `UDP_PORT` | `51000` | 送信先ポート（Analog_Bridge の rxPort と一致） |
-| `MY_CALLSIGN` | `JJ2YYK` | 自局。これと一致する送信は無視（ループ防止） |
-| `MY_DMR_ID` | `4402396` | 🔴V1.83 自局 DMR ID。Analog_Bridge.ini の gatewayDmrId と一致させる（SET_INFO 用） |
+| `MY_CALLSIGN` | ini から起動時自動取得 | 🔴V1.94 自局コールサイン。`MMDVM_Bridge.ini` の `Callsign` から起動時に自動取得する（`_read_ini_value()`/`resolvemy_station()`）。これと一致する送信は無視（ループ防止）。ini が読めない場合のみ既定値へフォールバックし WARN を出す |
+| `MY_DMR_ID` | ini から起動時自動取得 | 🔴V1.94 自局 DMR ID。`Analog_Bridge.ini` の `gatewayDmrId` から起動時に自動取得する（SET_INFO 用）。ini が読めない場合のみ既定値へフォールバックし WARN を出す |
 | `TX_METADATA_ENABLED` | `True` | 🔴V1.83 送信前に SET_INFO メタデータを送るか。False で V1.82 と同一（メタデータなし） |
 | `DICT_PATH` | `/var/lib/mecab/dic/open-jtalk/naist-jdic` | Open JTalk 辞書 |
 | `VOICE_PATH` | `/usr/share/hts-voice/mei/mei_normal.htsvoice` | 音声モデル |
@@ -627,9 +627,9 @@ REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL
 
 ---
 
-## 14. VV版差分（V1.96vv）
+## 14. VV版差分（V1.97vv）
 
-本章は **VV版（`ocv_dvs_vv/dvswitch_bot.py` V1.96vv）** に固有の差分のみを記述する。第1〜13章の本文（判定ロジック・第30条対応・USRP パケット・キャッシュ機構・ナイトモード・スレッド構成など）は JT版・VV版で共通であり、下記以外は本文どおりに動作する。
+本章は **VV版（`ocv_dvs_vv/dvswitch_bot.py` V1.97vv）** に固有の差分のみを記述する。第1〜13章の本文（判定ロジック・第30条対応・USRP パケット・キャッシュ機構・ナイトモード・スレッド構成など）は JT版・VV版で共通であり、下記以外は本文どおりに動作する。
 
 > 版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 
@@ -637,7 +637,7 @@ REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL
 
 ### 14-1. 音声合成エンジンの置き換え（Open JTalk → VOICEVOX CORE）
 
-| 項目 | JT版（本文 第9章） | VV版（V1.96vv） |
+| 項目 | JT版（本文 第9章） | VV版（V1.97vv） |
 |---|---|---|
 | 合成方式 | Open JTalk を **サブプロセス**（`open_jtalk`）で都度起動し WAV を生成 | VOICEVOX CORE の **同一プロセス内ライブラリ**（`voicevox_core.blocking`）で合成 |
 | モデルのロード | 都度（プロセス起動のたび） | **起動時に 1 回だけ**ロードし、以降は常駐 |
@@ -676,6 +676,6 @@ VV版は `voicevox_core` を含む **venv の Python で起動する**こと。
 
 ---
 
-*dvswitch_bot.py ソフトウェア仕様書（JT版 V1.93 / VV版 V1.96vv）*
-*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.93 の集大成）／ ocv_dvs_vv/dvswitch_bot.py（VV版 V1.96vv）*
+*dvswitch_bot.py ソフトウェア仕様書（JT版 V1.94 / VV版 V1.97vv）*
+*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.94 の集大成）／ ocv_dvs_vv/dvswitch_bot.py（VV版 V1.97vv）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
