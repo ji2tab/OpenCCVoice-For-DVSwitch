@@ -1,7 +1,7 @@
 # dvswitch_bot.py ソフトウェア仕様書（JT版 V1.93 / VV版 V1.96vv）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**対象バージョン:** JT版（`dvs_ocv_JT/`）**V1.93** ／ VV版（`dvs_ocv_vv/`）**V1.96vv**
+**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.93** ／ VV版（`ocv_dvs_vv/`）**V1.96vv**
 **本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.96vv）』章にまとめる。
 **JT版 V1.93 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正 まで。
 **版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
@@ -629,7 +629,7 @@ REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL
 
 ## 14. VV版差分（V1.96vv）
 
-本章は **VV版（`dvs_ocv_vv/dvswitch_bot.py` V1.96vv）** に固有の差分のみを記述する。第1〜13章の本文（判定ロジック・第30条対応・USRP パケット・キャッシュ機構・ナイトモード・スレッド構成など）は JT版・VV版で共通であり、下記以外は本文どおりに動作する。
+本章は **VV版（`ocv_dvs_vv/dvswitch_bot.py` V1.96vv）** に固有の差分のみを記述する。第1〜13章の本文（判定ロジック・第30条対応・USRP パケット・キャッシュ機構・ナイトモード・スレッド構成など）は JT版・VV版で共通であり、下記以外は本文どおりに動作する。
 
 > 版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 
@@ -677,5 +677,5 @@ VV版は `voicevox_core` を含む **venv の Python で起動する**こと。
 ---
 
 *dvswitch_bot.py ソフトウェア仕様書（JT版 V1.93 / VV版 V1.96vv）*
-*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.93 の集大成）／ dvs_ocv_vv/dvswitch_bot.py（VV版 V1.96vv）*
+*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.93 の集大成）／ ocv_dvs_vv/dvswitch_bot.py（VV版 V1.96vv）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
