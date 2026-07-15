@@ -628,13 +628,15 @@ ls -la /opt/dvswitch_bot/bin/
 
 ### 10.2 コールサインの設定
 
-🟢 **[新規導入した dvswitch_bot.py を設定]**
-
-```bash
-sudo sed -i 's/^MY_CALLSIGN = .*/MY_CALLSIGN = "JJ2ZAR"/' \
-  /opt/dvswitch_bot/bin/dvswitch_bot.py
-grep 'MY_CALLSIGN' /opt/dvswitch_bot/bin/dvswitch_bot.py
-```
+> 🟢 **V1.94 以降、自局コールサイン（`MY_CALLSIGN`）と DMR ID（`MY_DMR_ID`）は
+> 起動時に `MMDVM_Bridge.ini` の `Callsign` と `Analog_Bridge.ini` の `gatewayDmrId`
+> から自動取得される。そのため `dvswitch_bot.py` を手修正する必要はない。**
+>
+> コールサイン・DMR ID は第6章で編集した ini（`MMDVM_Bridge.ini` / `Analog_Bridge.ini`）
+> の値がそのまま使われる。値を変更したいときは `dvs_config.sh` またはダッシュボードの
+> 「DVSwitch 設定」カードで設定し、bot を再起動すれば反映される。
+> （ini が読めない場合のみ従来の既定値へフォールバックし、起動ログに WARN を出す。
+> 起動ログの `My DMR ID : ...（source: ini 自動取得）` 行で取得元を確認できる。）
 
 ### 10.3 bot 設定ファイルの作成
 
