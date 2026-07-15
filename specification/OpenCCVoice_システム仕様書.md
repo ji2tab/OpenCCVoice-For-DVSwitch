@@ -404,7 +404,7 @@ WantedBy=multi-user.target
 |---|---|---|
 | `UDP_IP` | `127.0.0.1` | 送信先（Analog_Bridge） |
 | `UDP_PORT` | `51000` | 送信先ポート（Analog の rxPort と一致） |
-| `MY_CALLSIGN` | `JJ2YYK` | 自局コールサイン（応答ログ等に使用） |
+| `MY_CALLSIGN` | ini から起動時自動取得 | 自局コールサイン（応答ログ等に使用）。🔴V1.94 以降は `MMDVM_Bridge.ini` の `Callsign` から起動時に自動取得する（読めない場合のみ既定値へフォールバックし WARN） |
 | `DICT_PATH` | `/var/lib/mecab/dic/open-jtalk/naist-jdic` | Open JTalk 辞書 |
 | `VOICE_PATH` | `/usr/share/hts-voice/mei/mei_normal.htsvoice` | 音声モデル |
 | `BOT_DIR` | `/opt/dvswitch_bot` | WAV・JSON の基準ディレクトリ |
@@ -416,7 +416,7 @@ WantedBy=multi-user.target
 | `GAP_AFTER_INTRO_SEC` | `0.5` | イントロ後の無音（連結時の「間」） |
 | `TIME_SIGNAL_LEAD_SEC` | `7` | 時報の先行送出（正時の何秒前に出すか） |
 | `NIGHT_ANN_GAP_SEC` | `1.0` | ナイト関連アナウンスの間隔 |
-| `MY_DMR_ID` | （設定値） | 自局 DMR ID。`Analog_Bridge.ini` の `gatewayDmrId` と一致させる（SET_INFO メタデータ用） |
+| `MY_DMR_ID` | ini から起動時自動取得 | 自局 DMR ID。🔴V1.94 以降は `Analog_Bridge.ini` の `gatewayDmrId` から起動時に自動取得する（SET_INFO メタデータ用。読めない場合のみ既定値へフォールバックし WARN） |
 | `TX_METADATA_ENABLED` | `True` | 送信前に SET_INFO メタデータ（コールサイン/ID）を送るか |
 | `USRP_EOT_REPEAT` | `1` | 送信終端（PTT OFF）の送出回数。取りこぼし対策で複数回送出可 |
 | `WATCHDOG_PSEUDO_END_ENABLED` | `True` | 終端パケットが落ちた送信を watchdog ログから拾って救済するか |
