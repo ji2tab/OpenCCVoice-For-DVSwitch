@@ -4,7 +4,7 @@
 
 **スクリプト配置:** `/opt/dvswitch_bot/bin/`
 
-**エディション構成（2エディション）:** 本システムには音声合成エンジンの異なる2エディションがある。**JT版（Open JTalk 版）** は `dvs_ocv_JT/`（Raspberry Pi ノード向け、上記の構成が標準）、**VV版（VOICEVOX 版）** は `dvs_ocv_vv/`（x86_64 Linux 向け）。本仕様書の本文は JT版を基準に記述し、VV版固有の差分は各所の「VV版」注記および第8章の systemd 例で補足する。Web ダッシュボード（`dashboard/app.py`）は両版で共用。版番号の `vv` サフィックスは VOICEVOX 系ノード用を示す命名規約。
+**エディション構成（2エディション）:** 本システムには音声合成エンジンの異なる2エディションがある。**JT版（Open JTalk 版）** は `ocv_dvs_jt/`（Raspberry Pi ノード向け、上記の構成が標準）、**VV版（VOICEVOX 版）** は `ocv_dvs_vv/`（x86_64 Linux 向け）。本仕様書の本文は JT版を基準に記述し、VV版固有の差分は各所の「VV版」注記および第8章の systemd 例で補足する。Web ダッシュボード（`dashboard/app.py`）は両版で共用。版番号の `vv` サフィックスは VOICEVOX 系ノード用を示す命名規約。
 
 **この仕様書について:** システムの全体像（概要）と、技術的な詳細仕様の両方を記載します。
 はじめての方はまず「第1章 これは何か」「第2章 全体構成」を読めば全体像がつかめます。
@@ -120,7 +120,7 @@ flowchart TB
 
 ### VV版（VOICEVOX 版）の構成要素
 
-VV版（`dvs_ocv_vv/`、x86_64 Linux 向け）では、上表のうち **Open JTalk + SoX** の音声合成部分が **VOICEVOX CORE** に置き換わる。SoX（8kHz/mono/16bit 変換）と md380-emu・Analog_Bridge・MMDVM_Bridge の構成は JT版と共通。
+VV版（`ocv_dvs_vv/`、x86_64 Linux 向け）では、上表のうち **Open JTalk + SoX** の音声合成部分が **VOICEVOX CORE** に置き換わる。SoX（8kHz/mono/16bit 変換）と md380-emu・Analog_Bridge・MMDVM_Bridge の構成は JT版と共通。
 
 | VV版の構成要素 | 役割 |
 |---|---|
