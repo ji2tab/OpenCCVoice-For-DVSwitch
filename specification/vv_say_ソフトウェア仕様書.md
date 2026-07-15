@@ -1,12 +1,12 @@
 # vv_say.py ソフトウェア仕様書（VV版 V2.0vv）
 
 **対象ファイル:** `/opt/voicevox/vv_say.py`
-**対象バージョン:** VV版（`dvs_ocv_vv/`）**V2.0vv**
+**対象バージョン:** VV版（`ocv_dvs_vv/`）**V2.0vv**
 **役割:** VOICEVOX CORE でテキストを音声合成し、WAV として保存する VV版固有の小ツール。`create_wav.sh`（VV版）から呼ばれ、固定 WAV の音声本体を生成する。
-**位置づけ:** 本ファイルは **VV版（VOICEVOX 系ノード）専用**。JT版（`dvs_ocv_JT/`、Open JTalk）には存在しない。版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約。
+**位置づけ:** 本ファイルは **VV版（VOICEVOX 系ノード）専用**。JT版（`ocv_dvs_jt/`、Open JTalk）には存在しない。版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約。
 
 この文書は**スクリプト本体の内部仕様**を記述する技術文書です。VV版の構築・運用手順は
-`dvs_ocv_vv/` の『VV版（VOICEVOX）構築手順書』、システム全体は別冊『システム仕様書』を参照してください。
+`ocv_dvs_vv/` の『VV版（VOICEVOX）構築手順書』、システム全体は別冊『システム仕様書』を参照してください。
 
 ---
 
@@ -137,5 +137,5 @@ vv_say.py --version
 ---
 
 *vv_say.py ソフトウェア仕様書（VV版 V2.0vv）*
-*対象: /opt/voicevox/vv_say.py（VV版固有 / dvs_ocv_vv/vv_say.py）*
+*対象: /opt/voicevox/vv_say.py（VV版固有 / ocv_dvs_vv/vv_say.py）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
