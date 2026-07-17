@@ -1,10 +1,10 @@
 # dvswitch_bot.py ソフトウェア仕様書（JT版 V1.94 / VV版 V1.98vv）
 
-**対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`
-**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.94** ／ VV版（`ocv_dvs_vv/`）**V1.98vv**
-**本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.98vv）』章にまとめる。
-**JT版 V1.94 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正・自局コールサイン/DMR ID の ini 起動時自動取得 まで。
-**版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
+**対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`  
+**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.94** ／ VV版（`ocv_dvs_vv/`）**V1.98vv**  
+**本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.98vv）』章にまとめる。  
+**JT版 V1.94 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正・自局コールサイン/DMR ID の ini 起動時自動取得 まで。  
+**版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。  
 **役割:** MMDVM_Bridge のログを監視し、カーチャンク自動応答・時報・定時メッセージ・長時間通信時の識別信号（法令対応）を
 USRP プロトコルで送出する常駐デーモン。
 
@@ -16,20 +16,20 @@ USRP プロトコルで送出する常駐デーモン。
 
 ## 目次
 
-1） [概要と責務](#1-概要と責務)
-2） [依存・実行環境](#2-依存実行環境)
-3） [定数仕様](#3-定数仕様)
-4） [設定ファイルと検証仕様](#4-設定ファイルと検証仕様)
-5） [グローバル状態と排他制御](#5-グローバル状態と排他制御)
-6） [関数仕様](#6-関数仕様)
-7） [処理フロー](#7-処理フロー)
-8） [USRP パケット仕様](#8-usrp-パケット仕様)
-9） [音声生成パイプラインとキャッシュ](#9-音声生成パイプラインとキャッシュ)
-10） [ナイトモード仕様](#10-ナイトモード仕様)
-11） [ログ出力仕様](#11-ログ出力仕様)
-12） [スレッド構成と終了処理](#12-スレッド構成と終了処理)
-13） [改修時の注意点](#13-改修時の注意点)
-14） [VV版差分（V1.98vv）](#14-vv版差分v197vv)
+1） [概要と責務](#1-概要と責務)  
+2） [依存・実行環境](#2-依存実行環境)  
+3） [定数仕様](#3-定数仕様)  
+4） [設定ファイルと検証仕様](#4-設定ファイルと検証仕様)  
+5） [グローバル状態と排他制御](#5-グローバル状態と排他制御)  
+6） [関数仕様](#6-関数仕様)  
+7） [処理フロー](#7-処理フロー)  
+8） [USRP パケット仕様](#8-usrp-パケット仕様)  
+9） [音声生成パイプラインとキャッシュ](#9-音声生成パイプラインとキャッシュ)  
+10） [ナイトモード仕様](#10-ナイトモード仕様)  
+11） [ログ出力仕様](#11-ログ出力仕様)  
+12） [スレッド構成と終了処理](#12-スレッド構成と終了処理)  
+13） [改修時の注意点](#13-改修時の注意点)  
+14） [VV版差分（V1.98vv）](#14-vv版差分v198vv)
 
 ---
 
@@ -37,14 +37,14 @@ USRP プロトコルで送出する常駐デーモン。
 
 `dvswitch_bot.py` は単一プロセスの常駐デーモンで、次の処理を行う。
 
-1） 起動アナウンス — 起動後一定秒数おいて「起動しました。」を 1 回送出（V1.62）
-2） カーチャンク自動応答 — MMDVM_Bridge ログから短時間送信を検知し、応答音声を送出。V1.75〜でキャッシュを先行生成して即応答化
-3） watchdog 擬似終端の救済 — SFR 中継で終端パケットが落ちた送信も、watchdog ログから拾って判定に流す（V1.67〜）
-4） 時報 — 毎正時に「〇〇時です」を送出。TIME_SIGNAL_MODE により 30 分案内も追加可能（V1.64〜）
-5） 定時メッセージ — 1 時間に 0〜4 回、001/002 を交互送出
-6） 無線局運用規則第30条対応 — 長時間通信（Normal QSO）セッションが継続中は、10分ごとに自局識別信号（fixed_intro.wav）を強制送信（V1.74〜）
-7） SET_INFO メタデータ送出 — 送信前に DVSwitch 公式クライアント（pyUC）同様のメタデータを Analog_Bridge へ通知し、Talker Alias を自局に保つ（V1.83, V1.90〜）
-8） ナイトモード — 時報は N1+1 時〜N2 時、定時メッセージは N1 時〜N2 時を抑制。kerchunk は24時間応答
+1） 起動アナウンス — 起動後一定秒数おいて「起動しました。」を 1 回送出（V1.62）  
+2） カーチャンク自動応答 — MMDVM_Bridge ログから短時間送信を検知し、応答音声を送出。V1.75〜でキャッシュを先行生成して即応答化  
+3） watchdog 擬似終端の救済 — SFR 中継で終端パケットが落ちた送信も、watchdog ログから拾って判定に流す（V1.67〜）  
+4） 時報 — 毎正時に「〇〇時です」を送出。TIME_SIGNAL_MODE により 30 分案内も追加可能（V1.64〜）  
+5） 定時メッセージ — 1 時間に 0〜4 回、001/002 を交互送出  
+6） 無線局運用規則第30条対応 — 長時間通信（Normal QSO）セッションが継続中は、10分ごとに自局識別信号（fixed_intro.wav）を強制送信（V1.74〜）  
+7） SET_INFO メタデータ送出 — 送信前に DVSwitch 公式クライアント（pyUC）同様のメタデータを Analog_Bridge へ通知し、Talker Alias を自局に保つ（V1.83, V1.90〜）  
+8） ナイトモード — 時報は N1+1 時〜N2 時、定時メッセージは N1 時〜N2 時を抑制。kerchunk は24時間応答  
 9） 送信直列化 — 起動アナウンス・応答・時報・ナイト・10分ID のすべてを _tx_lock で直列化し、二重送信を防止（V1.91）
 
 入出力の境界は次のとおり。
@@ -235,12 +235,12 @@ mode 1/2 では :00（と mode2 は :30 も）を時刻案内が占有するた�
 
 ### 検証段階（順に実施し、いずれか失敗で即終了）
 
-1） ファイル存在確認（無ければ終了）
-2） JSON パース（失敗で終了）
-3） オブジェクト（dict）であることの確認
-4） 必須キーの存在確認（欠落キーを列挙して終了）
-5） 型変換と範囲チェック（上表のルール。ANNOUNCE_FREQ は TIME_SIGNAL_MODE 確定後に検証）
-6） TX_GAIN・USE_CSTM_* など任意キーの検証（不正でも fatal にせずフォールバック）
+1） ファイル存在確認（無ければ終了）  
+2） JSON パース（失敗で終了）  
+3） オブジェクト（dict）であることの確認  
+4） 必須キーの存在確認（欠落キーを列挙して終了）  
+5） 型変換と範囲チェック（上表のルール。ANNOUNCE_FREQ は TIME_SIGNAL_MODE 確定後に検証）  
+6） TX_GAIN・USE_CSTM_* など任意キーの検証（不正でも fatal にせずフォールバック）  
 7） 全通過したらグローバルへ反映し、Config loaded をログ出力
 
 設計意図として、設定不備で意図しない送信パラメータのまま電波を出すことを防ぐ。systemd では `Restart=on-failure` のため、設定不備時は再起動を繰り返し、運用者が異常に気づける。
@@ -363,14 +363,14 @@ mode 1/2 では :00（と mode2 は :30 も）を時刻案内が占有するた�
 
 起動時の処理順序は次のとおり。
 
-1） `_load_config()` で設定読込・検証（不正なら `exit(1)`）
-2） `_init_reply_cache()` でキャッシュディレクトリを作り直す（V1.75〜）
-3） `_log_startup_info()` で設定値・各機能のON/OFF状態をログ出力
-4） スケジューラスレッド（`_announcement_scheduler`）を起動
-5） `_find_latest_log()` で最新ログを探し、`_open_log_file()` で末尾へシーク
-6） 起動時の共有一時ファイル（TEMP_FINAL等）を一括削除（V1.91）
-7） `Bot ready` 出力、`_assert_identity()` で自局アイデンティティを主張（V1.90）
-8） `threading.Timer` で起動アナウンスを `STARTUP_ANNOUNCE_DELAY_SEC` 秒後に予約
+1） `_load_config()` で設定読込・検証（不正なら `exit(1)`）  
+2） `_init_reply_cache()` でキャッシュディレクトリを作り直す（V1.75〜）  
+3） `_log_startup_info()` で設定値・各機能のON/OFF状態をログ出力  
+4） スケジューラスレッド（`_announcement_scheduler`）を起動  
+5） `_find_latest_log()` で最新ログを探し、`_open_log_file()` で末尾へシーク  
+6） 起動時の共有一時ファイル（TEMP_FINAL等）を一括削除（V1.91）  
+7） `Bot ready` 出力、`_assert_identity()` で自局アイデンティティを主張（V1.90）  
+8） `threading.Timer` で起動アナウンスを `STARTUP_ANNOUNCE_DELAY_SEC` 秒後に予約  
 9） ログ監視ループへ入る
 
 ### 7-2. ログ監視ループ（カーチャンク検知・watchdog擬似終端）
@@ -386,9 +386,9 @@ mode 1/2 では :00（と mode2 は :30 も）を時刻案内が占有するた�
 
 判定ロジック:
 
-1） 開始行を検知 → コールサイン（MY_CALLSIGN以外）と開始時刻を記憶。🔵V1.75 同時に `_prewarm_reply(cs)` を呼び、未キャッシュなら背景合成を開始
-2） 終了行（正常終端）を検知 → `dur = 終了 − 開始` を算出し `_handle_rx_duration(cs, dur, source="eot")` を呼ぶ
-3） 🔴V1.67 watchdog行を検知（正常終端が来なかった場合）→ ロスが `WATCHDOG_MAX_LOSS_PCT` 以下なら擬似終端として `_handle_rx_duration(cs, dur, source="watchdog")` を呼ぶ。超過なら「壊れた受信」として無視
+1） 開始行を検知 → コールサイン（MY_CALLSIGN以外）と開始時刻を記憶。🔵V1.75 同時に `_prewarm_reply(cs)` を呼び、未キャッシュなら背景合成を開始  
+2） 終了行（正常終端）を検知 → `dur = 終了 − 開始` を算出し `_handle_rx_duration(cs, dur, source="eot")` を呼ぶ  
+3） 🔴V1.67 watchdog行を検知（正常終端が来なかった場合）→ ロスが `WATCHDOG_MAX_LOSS_PCT` 以下なら擬似終端として `_handle_rx_duration(cs, dur, source="watchdog")` を呼ぶ。超過なら「壊れた受信」として無視  
 4） `_handle_rx_duration` は経路ごとの上限（eot: RX_DURATION_MAX_SEC / watchdog: WATCHDOG_RX_MAX_SEC）で以下に分岐
 
 | 条件 | 動作 |
@@ -404,17 +404,17 @@ mode 1/2 では :00（と mode2 は :30 も）を時刻案内が占有するた�
 
 kerchunk 応答は次の順で処理される。
 
-1） `_ensure_cached(cs)` を呼び、キャッシュ命中（was_hit=True）ならそのまま、ミスなら合成してキャッシュに格納
-2） キャッシュ命中時のみ `REPLY_TX_LEAD_DELAY_SEC` 秒待機（SFR折り返し保護。V1.77）
-3） `send_usrp_wav_with_padding()` で USRP 送出（TX_METADATA_ENABLED なら送出前に SET_INFO メタデータも送信）
-4） `suppress_until` を設定（15秒抑制）
+1） `_ensure_cached(cs)` を呼び、キャッシュ命中（was_hit=True）ならそのまま、ミスなら合成してキャッシュに格納  
+2） キャッシュ命中時のみ `REPLY_TX_LEAD_DELAY_SEC` 秒待機（SFR折り返し保護。V1.77）  
+3） `send_usrp_wav_with_padding()` で USRP 送出（TX_METADATA_ENABLED なら送出前に SET_INFO メタデータも送信）  
+4） `suppress_until` を設定（15秒抑制）  
 5） `is_talking=False`、`_tx_lock` 解放
 
 ### 7-4. 無線局運用規則第30条対応の流れ（V1.74）
 
-1） Normal QSO 検知のたびに `_handle_qso_session(now, dur)` が呼ばれる（🔴V1.93 で今回の送信時間 `dur` を渡すよう変更）
-2） 🔴V1.93 `now` は今回送信の「終了」時刻なので `tx_start = now - dur`（今回送信の開始時刻の近似）を求め、前回の Normal QSO の「終了」から今回送信の「開始」までの純粋な無音時間 `(tx_start - qso_session_last_end)` を評価する。これが `QSO_SESSION_GAP_SEC`（60秒）超なら新セッションとして0から再開（開始時刻も `tx_start` に合わせ、最初の送信の通話時間も経過時間に含める）。それ以外は既存セッションを継続
-3） セッション経過時間が `QSO_ID_INTERVAL_SEC`（10分）の倍数を新たに跨いだら `_start_worker("regulatory_id", FIXED_INTRO_WAV)` を呼び、直近の送信終了直後というタイミングで識別信号を強制送信
+1） Normal QSO 検知のたびに `_handle_qso_session(now, dur)` が呼ばれる（🔴V1.93 で今回の送信時間 `dur` を渡すよう変更）  
+2） 🔴V1.93 `now` は今回送信の「終了」時刻なので `tx_start = now - dur`（今回送信の開始時刻の近似）を求め、前回の Normal QSO の「終了」から今回送信の「開始」までの純粋な無音時間 `(tx_start - qso_session_last_end)` を評価する。これが `QSO_SESSION_GAP_SEC`（60秒）超なら新セッションとして0から再開（開始時刻も `tx_start` に合わせ、最初の送信の通話時間も経過時間に含める）。それ以外は既存セッションを継続  
+3） セッション経過時間が `QSO_ID_INTERVAL_SEC`（10分）の倍数を新たに跨いだら `_start_worker("regulatory_id", FIXED_INTRO_WAV)` を呼び、直近の送信終了直後というタイミングで識別信号を強制送信  
 4） 送信が競合（is_talking中）でスキップされた場合はカウンタを更新せず、次回のNormal QSO検知時に再試行される（取りこぼし防止）
 
 ### 7-5. 起動アナウンス（_send_startup_announcement, V1.62／V1.91で直列化）
@@ -458,10 +458,10 @@ kerchunk 応答は次の順で処理される。
 
 ### 送信シーケンス
 
-1） 🔴V1.83 `TX_METADATA_ENABLED` なら SET_INFO メタデータを1回送出
-2） 前パディング: `PRE_POST_PADDING_PACKETS`（75）回。🔴V1.84〜V1.89 先頭 `NOISE_LEAD_PACKETS`（65）個は100Hzリード音（末尾フェード）、残りは無音
-3） 本体: WAV から `readframes(160)` で読み、320バイトに満たなければ0詰め。🔵V1.86 本体中の無音は置換しない（真の無音のまま送る）
-4） 後パディング: 無音（`\x00`×320）を75回。🔵V1.86 後パディングは常に真の無音
+1） 🔴V1.83 `TX_METADATA_ENABLED` なら SET_INFO メタデータを1回送出  
+2） 前パディング: `PRE_POST_PADDING_PACKETS`（75）回。🔴V1.84〜V1.89 先頭 `NOISE_LEAD_PACKETS`（65）個は100Hzリード音（末尾フェード）、残りは無音  
+3） 本体: WAV から `readframes(160)` で読み、320バイトに満たなければ0詰め。🔵V1.86 本体中の無音は置換しない（真の無音のまま送る）  
+4） 後パディング: 無音（`\x00`×320）を75回。🔵V1.86 後パディングは常に真の無音  
 5） PTT OFF: keyup=0 のヘッダ＋無音を `USRP_EOT_REPEAT`（既定1）回送って終了。🔴V1.82 取りこぼし対策で複数回送出可能
 
 ### 絶対時刻同期（ドリフト補正）
@@ -476,9 +476,9 @@ kerchunk 応答は次の順で処理される。
 
 `_generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silence=0.0)` の処理。`intro`/`outro` は WAV パス、`middle_text` は読み上げる日本語テキスト。🔵V1.75 で `out_path`（キャッシュ用の任意出力先）と `head_silence`（頭無音の焼き込み秒数）の引数を追加。
 
-1） open_jtalk: middle_text → TEMP_48K（48kHz WAV）。stdin へ communicate() で UTF-8 を流し込む
-2） sox: TEMP_48K → TEMP_8K（8kHz / mono / 16bit）
-3） sox: intro に `pad head_silence GAP_AFTER_INTRO_SEC` で先頭無音（🔴V1.80、kerchunk応答のみ）と末尾無音を付与 → TEMP_INTRO_PADDED
+1） open_jtalk: middle_text → TEMP_48K（48kHz WAV）。stdin へ communicate() で UTF-8 を流し込む  
+2） sox: TEMP_48K → TEMP_8K（8kHz / mono / 16bit）  
+3） sox: intro に `pad head_silence GAP_AFTER_INTRO_SEC` で先頭無音（🔴V1.80、kerchunk応答のみ）と末尾無音を付与 → TEMP_INTRO_PADDED  
 4） sox: TEMP_INTRO_PADDED + TEMP_8K [+ outro] を連結。TX_GAIN が1.0以外なら `vol` 効果を付与 → out_path
 
 outro が None の場合は連結しない（時報・起動・ナイト・10分IDはアウトロなし）。戻り値は True/False。途中の open_jtalk/sox が失敗したら False を返し、呼び出し側は送出しない。
@@ -499,10 +499,10 @@ outro が None の場合は連結しない（時報・起動・ナイト・10分
 
 処理の流れ:
 
-1） ヘッダ受信時に `_prewarm_reply(cs)` を呼び、未キャッシュなら背景スレッドで先行生成を開始
-2） `_ensure_cached(cs)` はロック外の高速ヒット判定を行い、命中していれば即座に (path, True) を返す
-3） 未命中時は `_cs_build_lock(cs)` を取得し、待機中に他スレッドが生成済みでないか再確認してから合成
-4） 合成は `.building.wav` の一時名で行い、完成後 `os.replace()` で原子的に本名へ差し替える（🔴V1.76: 一時ファイルも必ず.wav拡張子にする。SoXは拡張子でフォーマット判別するため）
+1） ヘッダ受信時に `_prewarm_reply(cs)` を呼び、未キャッシュなら背景スレッドで先行生成を開始  
+2） `_ensure_cached(cs)` はロック外の高速ヒット判定を行い、命中していれば即座に (path, True) を返す  
+3） 未命中時は `_cs_build_lock(cs)` を取得し、待機中に他スレッドが生成済みでないか再確認してから合成  
+4） 合成は `.building.wav` の一時名で行い、完成後 `os.replace()` で原子的に本名へ差し替える（🔴V1.76: 一時ファイルも必ず.wav拡張子にする。SoXは拡張子でフォーマット判別するため）  
 5） 署名ファイル（`.sig`）を書き込み、以後のヒット判定に使う
 
 REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL に生成、キャッシュ機構を経由しない）。
@@ -595,9 +595,9 @@ REPLY_CACHE_ENABLED=False のときは V1.74 と同一挙動（毎回 TEMP_FINAL
 
 ### 終了処理（Graceful Shutdown）
 
-1） SIGTERM / SIGINT を `_handle_signal` が捕捉し `should_exit=True`
-2） 各ループが条件を抜ける
-3） メインはログファイルを閉じ、スケジューラスレッドを最大15秒join
+1） SIGTERM / SIGINT を `_handle_signal` が捕捉し `should_exit=True`  
+2） 各ループが条件を抜ける  
+3） メインはログファイルを閉じ、スケジューラスレッドを最大15秒join  
 4） `Bot stopped — goodbye 73` を出力して終了
 
 送出中（`send_usrp_wav_with_padding` のループ）も `should_exit` を見ており、中断時はfinallyでPTT OFF（USRP_EOT_REPEAT回）を送ってからソケットを閉じる。
@@ -692,6 +692,6 @@ VV版では、本文 §3・§8 が示す既定値（JT版 V1.94 基準）に対�
 
 > 🔴 `NOISE_LEAD_PACKETS = 5` は `len(_FADE_STEPS)==5` と等しく、`_lead_block()` の仕様上5個すべてがフェード（振幅 112→82→52→30→12）になり、振幅 150 の定常トーンは1ブロックも送出されない。それでもゲートは開く。**V1.88 の旧コメント（頭欠け時は 65/75 に戻す）は実測と逆であり誤り**で、5 を安易に戻すと頭欠けが再発する。ゲートの挙動モデルは未解明（トーン 0.1s で頭欠けなし・1.3s で頭欠けありを V1.85/V1.88 の説では説明できない）で、上記は理屈ではなく実測で決めた値。値の変更時は必ず実機で頭欠け・ブーンを確認すること。
 
-*dvswitch_bot.py ソフトウェア仕様書（JT版 V1.94 / VV版 V1.98vv）*
-*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.94 の集大成）／ ocv_dvs_vv/dvswitch_bot.py（VV版 V1.98vv）*
+*dvswitch_bot.py ソフトウェア仕様書（JT版 V1.94 / VV版 V1.98vv）*  
+*対象: /opt/dvswitch_bot/bin/dvswitch_bot.py（JT版 daemon, V1.60〜V1.94 の集大成）／ ocv_dvs_vv/dvswitch_bot.py（VV版 V1.98vv）*  
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
