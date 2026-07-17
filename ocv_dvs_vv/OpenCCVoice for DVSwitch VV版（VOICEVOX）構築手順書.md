@@ -14,7 +14,7 @@
 
 - VV版の動作要件は **x86_64 の Linux（Debian 12 / Ubuntu 24.04 系で検証）** です。ベアメタル・VM・コンテナのいずれでも構築できます。
 - **Incus コンテナで環境を用意する場合**は、先に別冊『Incus コンテナ/incus構築マニュアル.md』を実施し、SSH でログインできる状態にしてから本書の第2章へ合流してください。
-- JT版（Open JTalk / Raspberry Pi 用、`ocv_dvs_jt/`）とはスクリプトが別系統です。VV版のファイルは `ocv_dvs_vv/` 配下、版番号は **`vv` サフィックス**（例: V1.97vv）で区別されます。
+- JT版（Open JTalk / Raspberry Pi 用、`ocv_dvs_jt/`）とはスクリプトが別系統です。VV版のファイルは `ocv_dvs_vv/` 配下、版番号は **`vv` サフィックス**（例: V1.98vv）で区別されます。
 - Web ダッシュボードは JT版・VV版で**共用**です（`dashboard/app.py`、V3.11 以降）。
 
 ### 0.2 システム構成
@@ -43,7 +43,7 @@
           │  USRP/UDP (rx:51000 / tx:51001)
           ▼
 ┌────────────────────┐
-│  dvswitch_bot.py   │   ← V1.97vv。カーチャンク検出→応答合成→USRP送出 (venv内Python常駐)
+│  dvswitch_bot.py   │   ← V1.98vv。カーチャンク検出→応答合成→USRP送出 (venv内Python常駐)
 └────────────────────┘
           │
           └── 起動時に1回ロード ──▶ [ VOICEVOX CORE 0.16.x ]  ← 音声合成 (同一プロセス内)
@@ -285,7 +285,7 @@ aplay /tmp/vv_test.wav   # スピーカーがあれば再生確認（無けれ�
 ```bash
 RAW="https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_vv"
 
-# bot 本体（VV版 V1.97vv 以降）
+# bot 本体（VV版 V1.98vv 以降）
 curl -fsSL "$RAW/dvswitch_bot.py" | sudo tee /opt/dvswitch_bot/bin/dvswitch_bot.py >/dev/null
 
 # 設定ツール
@@ -307,7 +307,7 @@ grep -m1 "^__version__" /opt/dvswitch_bot/bin/dvswitch_bot.py
 /opt/dvswitch_bot/venv/bin/python3 /opt/voicevox/vv_say.py --version
 ```
 
-期待値（2026-07-15 時点）: bot `V1.97vv` / vv_say `V2.0vv` / create_wav `V1.31vv`。
+期待値（2026-07-15 時点）: bot `V1.98vv` / vv_say `V2.0vv` / create_wav `V1.31vv`。
 
 ### 6.1 bot 初期設定
 
@@ -455,7 +455,7 @@ ONNX Runtime の版が変わっています。現行スクリプト（V2.0vv/V1.
 旧版の 48kHz ハードコードです。V1.95b/V2.0vv 以降で撤去済み。更新してください。
 
 **A-7. 相手局の受信機が応答冒頭でフリーズする／頭切れ（途中参加）**
-TGIF が先頭の無音 DMR フレームを黙って落とし VoiceLCHeader が失われる既知事象。現行 bot は先頭を位相連続 100Hz マイクロトーン（約 -47dBFS）に置換して対策済み。旧版なら bot を更新。
+TGIF が先頭の無音 DMR フレームを黙って落とし VoiceLCHeader が失われる既知事象。現行 bot は先頭を位相連続 100Hz マイクロトーン（約 -47dBFS）に置換して対策済み。旧版なら bot を更新。 なお V1.98vv では送出タイミングを実測調整し（前パディング 1.7s・送出前待機 0.5s）、intro 頭欠けの解消と立ち上がり短縮（受信終了→intro 開始 約 2.2s）を行っている。
 
 **A-8. 同時 restart 後に無音**
 Analog_Bridge の半死状態。第4章の順序再起動（md380 → analog → mmdvm → bot、3秒間隔）で復旧。
@@ -472,7 +472,7 @@ Analog_Bridge の半死状態。第4章の順序再起動（md380 → analog →
 
 | ファイル | 配置先 | 版 | 取得元（リポジトリ内） |
 |---|---|---|---|
-| dvswitch_bot.py | /opt/dvswitch_bot/bin/ | V1.97vv | ocv_dvs_vv/ |
+| dvswitch_bot.py | /opt/dvswitch_bot/bin/ | V1.98vv | ocv_dvs_vv/ |
 | bot_setup.py | /opt/dvswitch_bot/bin/ | （JT版と共通） | ocv_dvs_vv/ |
 | create_wav.sh | /opt/dvswitch_bot/bin/ | V1.31vv | ocv_dvs_vv/ |
 | vv_say.py | /opt/voicevox/ | V2.0vv | ocv_dvs_vv/ |
