@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.94 —
+ — JJ2YYK デジピーター自動応答システム  V1.95 —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -48,10 +48,11 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V1.94 (daemon, V1.93 + 自局コールサイン/DMR ID の ini 自動取得)
+ Document Version: V1.95 (daemon, V1.94 + CACHE_DIR 消失時の自己修復)
+ 　（V1.94: V1.93 + 自局コールサイン/DMR ID の ini 自動取得）
  　（V1.93: V1.92 + 第30条セッションのギャップ判定バグ修正・
                           QSO_SESSION_GAP_SEC を独立定数化し 60 秒へ変更)
- Last Updated: 2026-07-07
+ Last Updated: 2026-07-20
 ================================================================================
 """
 
@@ -61,7 +62,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.94"
+__version__ = "V1.95"
 
 import os
 import sys
@@ -239,7 +240,7 @@ STARTUP_ANNOUNCE_DELAY_SEC = 5.0
 # ない値のため三位一体（bot/setup/dashboard）の対象外とする。
 REPLY_CACHE_ENABLED = True     # False で V1.74 と同一挙動（毎回 TEMP_FINAL に生成）
 PREWARM_ON_HEADER   = True     # ヘッダ受信時に背景で先行生成してキャッシュを温める
-CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上・毎起動クリア（SD 保護）
+CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上（SD 保護）。起動時に中身をクリアし、生成直前に存在を自己修復（V1.95）
 CACHE_SCHEMA = "v1"            # 読み/結合仕様の版。仕様変更時に上げると全キャッシュ再生成
 
 # 🔴 V1.77: キャッシュ命中時の送出前ガード（RF ターンアラウンド保護）。
@@ -1102,6 +1103,27 @@ def _ensure_cached(cs):
                               head_silence=PRE_AUDIO_SILENCE_SEC)
         return (TEMP_FINAL, False) if ok else (None, False)
 
+    # 🔴 V1.95: CACHE_DIR の存在を生成直前に毎回確認・再作成する（自己修復）。
+    # systemd-logind の RemoveIPC=yes（Debian 既定）により、実行ユーザーの最後の
+    # ログインセッションが閉じた時点で /dev/shm 配下の当ユーザー所有物（POSIX 共有
+    # メモリ扱い）が一掃される事象が実機で発生した（2026-07-20, ocv-uhf。詳細は
+    # docs/incident_20260720_removeipc.md）。本質対策はホスト側の
+    # `loginctl enable-linger <user>` だが、外部要因による /dev/shm 消失一般への
+    # 防御として、書き込み前の再作成を恒久化する（tmpfs への makedirs は
+    # 存在確認のみで済むためコストは無視できる）。
+    # 万一ディレクトリを作成できない場合は、キャッシュを諦めて V1.74 相当の
+    # 非キャッシュ経路（TEMP_FINAL へ毎回生成）に退避し、応答自体は継続する。
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    except OSError as e:
+        logger.error(_fmt("!!", "Cache dir", CACHE_DIR, str(e)))
+        cs_kana = "".join([CHAR_TO_KANA.get(ch, ch) for ch in cs.upper()])
+        middle = f"{cs_kana}局の、"
+        intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
+        ok = _generate_hybrid(intro, middle, FIXED_OUTRO_WAV, out_path=TEMP_FINAL,
+                              head_silence=PRE_AUDIO_SILENCE_SEC)
+        return (TEMP_FINAL, False) if ok else (None, False)
+
     path = _cache_path(cs)
     sig_path = f"{path}.sig"
     sig_now = _reply_signature()
@@ -1371,7 +1393,7 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V1.93 (daemon, V1.92 + 第30条ギャップ判定修正) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V1.95 (daemon, V1.94 + CACHE_DIR 自己修復) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     # 🔵 V1.94: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
     logger.info(f"  My DMR ID         : {MY_DMR_ID}  (source: ini 自動取得)")
