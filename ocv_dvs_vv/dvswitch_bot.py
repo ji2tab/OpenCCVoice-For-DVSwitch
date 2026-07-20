@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V1.98vv —
+ — JJ2YYK デジピーター自動応答システム  V1.99vv —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -12,6 +12,26 @@
 
  バージョンごとの詳細な変更履歴（V1.60〜）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
+
+ 【V1.99vv の要点（V1.98vv からの変更）】
+  CACHE_DIR（/dev/shm 上の応答キャッシュディレクトリ）が稼働中に外部要因で
+  消失し、以後の全カーチャンク応答が SoX rc=2 で失敗し続ける障害への対策。
+  2026-07-20 に JT版ノード（ocv-uhf）で実際に発生した。原因は systemd-logind の
+  RemoveIPC=yes（Debian 既定）: 実行ユーザーの最後のログインセッションが閉じた
+  時点で、/dev/shm 配下の当ユーザー所有物（POSIX 共有メモリ扱い）が一掃される。
+  systemd サービスはログインセッションに数えられないため、bot 稼働中でも
+  保護されない。詳細は docs/incident_20260720_removeipc.md を参照。
+
+  1. _ensure_cached() の入口で毎回 os.makedirs(CACHE_DIR, exist_ok=True) を実行
+     （自己修復）。カーチャンク応答と Precache の両パスがここを通るため1箇所で
+     両方をカバーする。作成できない場合はキャッシュを諦めて非キャッシュ経路
+     （TEMP_FINAL へ毎回生成）に退避し、応答自体は継続する。
+  2. CACHE_DIR 定義行のコメント修正（「毎起動クリア」は実態と不一致。実体は
+     起動時の中身クリア + 本修正による生成直前の自己修復）。
+
+  【本質対策はホスト側】コード側の自己修復は多層防御であり、本質対策は
+  実行ユーザーへの `sudo loginctl enable-linger <user>` の適用（永続・要1回）。
+  一般ユーザーで /dev/shm を使うノード全てで必要（JT版 V1.95 と同時に展開）。
 
  【V1.98vv の要点（V1.97vv からの変更）】
   応答の立ち上がり（カーチャンク受信終了 → 相手に声が届くまで）の短縮と、
@@ -105,12 +125,13 @@
      ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
        systemd 常駐化時も ExecStart を venv の python3 にする。
 
- Document Version: V1.98vv (daemon, V1.97vv + 立ち上がり短縮・頭欠け解消の実測値反映)
+ Document Version: V1.99vv (daemon, V1.98vv + CACHE_DIR 消失時の自己修復)
+ 　（V1.98vv: V1.97vv + 立ち上がり短縮・頭欠け解消の実測値反映）
  　（V1.97vv: V1.96vv + 自局コールサイン/DMR ID の ini 自動取得）
  　（V1.96vv: V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化）
  ※ 版番号の "vv" サフィックスは VOICEVOX 系ノード用ファイルであることを示す
    （Open JTalk 系 Pi ノード用の同名ファイルと区別する命名規約。2026-07-14 導入）。
- Last Updated: 2026-07-17
+ Last Updated: 2026-07-20
 ================================================================================
 """
 
@@ -120,7 +141,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V1.98vv"
+__version__ = "V1.99vv"
 
 import os
 import sys
@@ -415,7 +436,7 @@ STARTUP_ANNOUNCE_DELAY_SEC = 5.0
 # ない値のため三位一体（bot/setup/dashboard）の対象外とする。
 REPLY_CACHE_ENABLED = True     # False で V1.74 と同一挙動（毎回 TEMP_FINAL に生成）
 PREWARM_ON_HEADER   = True     # ヘッダ受信時に背景で先行生成してキャッシュを温める
-CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上・毎起動クリア（SD 保護）
+CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上（SD 保護）。起動時に中身をクリアし、生成直前に存在を自己修復（V1.99vv）
 CACHE_SCHEMA = "v2"            # 読み/結合仕様の版。V1.95a: 署名項目変更（VOICEVOX）に伴い v1→v2
 
 # 🔴 V1.77: キャッシュ命中時の送出前ガード（RF ターンアラウンド保護）。
@@ -1294,6 +1315,27 @@ def _ensure_cached(cs):
     生成失敗時は (None, False)。"""
     # キャッシュ無効時は V1.74 と同一挙動（毎回 TEMP_FINAL に生成）。
     if not REPLY_CACHE_ENABLED:
+        cs_kana = "".join([CHAR_TO_KANA.get(ch, ch) for ch in cs.upper()])
+        middle = f"{cs_kana}局の、"
+        intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
+        ok = _generate_hybrid(intro, middle, FIXED_OUTRO_WAV, out_path=TEMP_FINAL,
+                              head_silence=PRE_AUDIO_SILENCE_SEC)
+        return (TEMP_FINAL, False) if ok else (None, False)
+
+    # 🔴 V1.99vv: CACHE_DIR の存在を生成直前に毎回確認・再作成する（自己修復）。
+    # systemd-logind の RemoveIPC=yes（Debian 既定）により、実行ユーザーの最後の
+    # ログインセッションが閉じた時点で /dev/shm 配下の当ユーザー所有物（POSIX 共有
+    # メモリ扱い）が一掃される事象が JT版実機で発生した（2026-07-20, ocv-uhf。
+    # 詳細は docs/incident_20260720_removeipc.md）。本質対策はホスト側の
+    # `loginctl enable-linger <user>` だが、外部要因による /dev/shm 消失一般への
+    # 防御として、書き込み前の再作成を恒久化する（tmpfs への makedirs は
+    # 存在確認のみで済むためコストは無視できる）。
+    # 万一ディレクトリを作成できない場合は、キャッシュを諦めて V1.74 相当の
+    # 非キャッシュ経路（TEMP_FINAL へ毎回生成）に退避し、応答自体は継続する。
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    except OSError as e:
+        logger.error(_fmt("!!", "Cache dir", CACHE_DIR, str(e)))
         cs_kana = "".join([CHAR_TO_KANA.get(ch, ch) for ch in cs.upper()])
         middle = f"{cs_kana}局の、"
         intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
