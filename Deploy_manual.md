@@ -8,7 +8,7 @@ GitHub の最新版を、稼働中の OpenCCVoice システムに反映する手
 > bot 本体の初期導入）は構築マニュアルを参照してください。本書はその後、GitHub 上で更新された
 > コードを稼働中システムへ反映する「更新作業」だけを扱います。
 
-対象: すでに OpenCCVoice が構築済みのノード（JT版＝Raspberry Pi / Pi-Star 同居環境、VV版＝x86_64 Linux / VOICEVOX 環境）
+対象: すでに OpenCCVoice が構築済みのノード（JT版＝Raspberry Pi / Pi-Star 同居環境、VV版＝x86_64 Linux / VOICEVOX 環境）  
 やること: GitHub から最新コードを取得 → 構文チェック → サービス再起動
 
 ---
