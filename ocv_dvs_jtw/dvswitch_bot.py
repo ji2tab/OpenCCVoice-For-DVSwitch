@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.00jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.01jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -52,7 +52,8 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.00jtw (daemon, V1.95 + 時報への当地天気読み上げ〔Open-Meteo〕/ JTW版)
+ Document Version: V2.01jtw (daemon, V2.00jtw + コメント用語統一〔ケロ→カーチャンク〕)
+ 　（V2.00jtw: V1.95 + 時報への当地天気読み上げ〔Open-Meteo〕/ JTW版）
  　（V1.95: V1.94 + CACHE_DIR 消失時の自己修復）
  　（V1.94: V1.93 + 自局コールサイン/DMR ID の ini 自動取得）
  　（V1.93: V1.92 + 第30条セッションのギャップ判定バグ修正・
@@ -67,7 +68,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.00jtw"
+__version__ = "V2.01jtw"
 
 import os
 import sys
@@ -264,7 +265,7 @@ REPLY_TX_LEAD_DELAY_SEC = 1.0
 # ============================================================
 # 🔵 V1.80: 検出即送出化（GPIO 依存排除）
 # ============================================================
-# ケロ検出直後に即座に送出し、実音声前の無音パッドで頭欠けを防ぐ。
+# カーチャンク検出直後に即座に送出し、実音声前の無音パッドで頭欠けを防ぐ。
 # GPIO ファイルの存在・権限に依存せず、純粋なソフト制御。
 PRE_AUDIO_SILENCE_SEC = 1.5           # 実音声前の無音パッド（受信側の途中参加同期の助走）。V1.87で復活
 
@@ -334,7 +335,7 @@ _reply_lock = threading.Lock()
 # コールサイン単位のビルド用ロック群（プリキャッシュと応答の競合を防ぐ）。
 _gen_lock = threading.Lock()
 # 🔴 V1.91: 送信フロー全体（生成→送出）を直列化するロック。
-# 起動アナウンス・ケロ応答・時報・ナイト・10分ID が同時に走ることによる
+# 起動アナウンス・カーチャンク応答・時報・ナイト・10分ID が同時に走ることによる
 # 二重送信／共有 TEMP_FINAL の上書き競合／UDPストリーム混線を防ぐ。
 # ロック順序は常に _tx_lock（外）→ _gen_lock（内）。プリキャッシュは
 # _gen_lock のみ取得（送信ではないため _tx_lock は取らない）。デッドロックなし。
@@ -1084,7 +1085,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
 
     # 🔴 V1.90: 他局の受信が終わった直後に自局アイデンティティを再主張。
     # AB の「最後に聞いた局」状態（JJ2ZAR 等）を JJ2YYK に上書きし、
-    # 応答の Talker Alias がケロした局のコールサインを引きずるのを防ぐ。
+    # 応答の Talker Alias がカーチャンクした局のコールサインを引きずるのを防ぐ。
     if cs != MY_CALLSIGN:
         _assert_identity()
 
@@ -1403,7 +1404,7 @@ def _reply_executor(mode, val, extra=None):
     global is_talking, suppress_until
     started_at = time.monotonic()
     # 🔴 V1.91: 送信フロー全体を直列化（二重送信・ストリーム破壊の防止）。
-    # 起動アナウンス・ケロ応答・時報・ナイト等が同時に走ると、UDP ストリームが
+    # 起動アナウンス・カーチャンク応答・時報・ナイト等が同時に走ると、UDP ストリームが
     # 混ざる／共有 TEMP_FINAL を上書きし合う。ここで一本化する。
     if not _tx_lock.acquire(blocking=False):
         logger.info(_fmt("..", "TX queue", str(val), "waiting for current TX"))
@@ -1614,7 +1615,7 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V2.00jtw (daemon, V1.95 + 時報への当地天気読み上げ / JTW版) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V2.01jtw (daemon, V2.00jtw + 用語統一 / JTW版) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     # 🔵 V1.94: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
     logger.info(f"  My DMR ID         : {MY_DMR_ID}  (source: ini 自動取得)")
