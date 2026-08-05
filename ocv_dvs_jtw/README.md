@@ -34,7 +34,7 @@ DVSwitch 自動音声応答システムの **JTW版**（JT版 + 時報への当�
 ## 主なファイル
 
 - `dvswitch_bot.py` — **V2.01jtw** 常駐 bot（JT V1.95 + 天気読み上げ）
-- `bot_setup.py` — **JTW版**（WEATHER キーの対話設定・引き継ぎ対応。旧版で設定を作り直すと天気キーが消えるため、JTW ノードでは必ずこちらを使うこと）
+- `bot_setup.py` — **JTW版 V2.02jtw**（WEATHER キーの対話設定・引き継ぎ対応、座標初期値を `MMDVM_Bridge.ini` から補完。旧版で設定を作り直すと天気キーが消えるため、JTW ノードでは必ずこちらを使うこと）
 - `create_wav.sh` — JT版と同一（固定WAVに変更なし）
 - `dvs_config.sh` / `test_send.py` — JT版・VV版と共通（同一内容）
 
@@ -44,4 +44,6 @@ Web ダッシュボード（リポジトリ直下の [`dashboard/app.py`](../das
 
 ## 関連ドキュメント
 
-構築手順・運用は JT版のマニュアル類（[`../ocv_dvs_jt/`](../ocv_dvs_jt/)）をそのまま参照してください。ソフトウェア仕様書は [`../specification/`](../specification/) を参照。
+- [OpenCCVoice_構築導入設定_完全マニュアル.md](./OpenCCVoice_%E6%A7%8B%E7%AF%89%E5%B0%8E%E5%85%A5%E8%A8%AD%E5%AE%9A_%E5%AE%8C%E5%85%A8%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB.md) — **JTW版**の構築・導入・設定マニュアル（本フォルダ版。取得URL・天気設定・トラブルシューティング対応済み）
+- 操作マニュアル・カスタム音声・Pi-Star 同居手順などは JT版（[`../ocv_dvs_jt/`](../ocv_dvs_jt/)）と共通のため、そちらを参照
+- ソフトウェア仕様書は [`../specification/`](../specification/) を参照
