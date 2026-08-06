@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
- bot_setup.py — DVSwitch Bot 設定ツール（JTW版 / V2.02jtw）
+ bot_setup.py — DVSwitch Bot 設定ツール（JTW版 / V2.03jtw）
    dvswitch_bot.py（デーモン版）が読む設定ファイル
    /opt/dvswitch_bot/bot_config.json を対話で作成・更新する。
 
@@ -26,10 +26,10 @@
    USE_CSTM_002        : 002 にカスタム音声 cstm_002.wav を使う（true/false）
                          ※カスタム選択時にファイルが無ければ本体が標準へ自動フォールバック
                          ※カスタムファイルは利用者が /opt/dvswitch_bot/ 直下に用意する
-   WEATHER_ENABLED     : 時報に当地の天気を続けて読む（true/false, JTW版 V2.00jtw）
+   WEATHER_ENABLED     : 定時音声（時報/30分/001/002）に当地の天気を付ける
+                         （true/false, JTW版 V2.03jtw〜。取得・合成は voice_make.py）
    WEATHER_LATITUDE    : 天気取得の緯度（有効時のみ。例 35.2167）
    WEATHER_LONGITUDE   : 天気取得の経度（有効時のみ。例 137.0333）
-   WEATHER_HOURS       : 天気を読む正時（有効時のみ。省略＝全時刻）
                          ※TIME_SIGNAL_MODE=0（時報なし）とは併用不可（本体が起動拒否）
 
 【配置】
@@ -43,6 +43,9 @@
  ※ /opt/dvswitch_bot/ への書き込みのため sudo 推奨。
 
  【版履歴（本ツール）】
+   V2.03jtw : 定時音声の生成が voice_make.py（vmp）へ分離されたことに追随。
+              WEATHER_HOURS（時刻絞り）を廃止（全定時音声へ一様付与）。天気の
+              併用不可条件を「時報も定時メッセージも無い（mode0 かつ freq0）」に修正。
    V2.02jtw : 天気の座標初期値を MMDVM_Bridge.ini [Info] から補完（Enter で採用）。
               機械可読 __version__ 行を新設（以後ダッシュボード等から版を追える）。
    V2.00jtw : 天気読み上げ（WEATHER_*）の対話設定・既存キー引き継ぎに対応。
@@ -55,7 +58,7 @@
 # ============================================================
 # 本体 dvswitch_bot.py の __version__ と同じ流儀。bot_setup.py 側の変更で
 # 版を上げるときはこの文字列と上の docstring 版履歴を一致させること。
-__version__ = "V2.02jtw"
+__version__ = "V2.03jtw"
 
 import os
 import sys
@@ -84,7 +87,7 @@ DEFAULTS = {
 # 持たせると、第三者局が Enter 連打で他所の天気を放送する事故になるため）。
 # 既存 config に在れば do_edit が base に引き継ぎ、OFF に切り替えても値は保存し
 # 続ける（再度 ON にしたとき前回の座標が初期表示される）。
-_WEATHER_EXTRA_KEYS = ("WEATHER_LATITUDE", "WEATHER_LONGITUDE", "WEATHER_HOURS")
+_WEATHER_EXTRA_KEYS = ("WEATHER_LATITUDE", "WEATHER_LONGITUDE")
 
 # 🔵 V2.00jtw: 座標の初期値ソース。bot_config.json に無い場合は
 # MMDVM_Bridge.ini の [Info] Latitude/Longitude から引く（V1.94 の
@@ -214,8 +217,9 @@ def validate(cfg):
     if "WEATHER_ENABLED" in cfg and not isinstance(cfg["WEATHER_ENABLED"], bool):
         errors.append(f"WEATHER_ENABLED は true / false（現在 {cfg['WEATHER_ENABLED']!r}）")
     if cfg.get("WEATHER_ENABLED") is True:
-        if ts_mode == 0:
-            errors.append("WEATHER_ENABLED=true は TIME_SIGNAL_MODE=0（時報なし）と併用不可")
+        if ts_mode == 0 and cfg.get("ANNOUNCE_FREQ", 0) == 0:
+            errors.append("WEATHER_ENABLED=true ですが、時報も定時メッセージも無効です"
+                          "（TIME_SIGNAL_MODE=0 かつ ANNOUNCE_FREQ=0）。天気を付ける音声がありません")
         try:
             w_lat = float(cfg["WEATHER_LATITUDE"])
             w_lon = float(cfg["WEATHER_LONGITUDE"])
@@ -225,11 +229,6 @@ def validate(cfg):
         else:
             if not (-90.0 <= w_lat <= 90.0) or not (-180.0 <= w_lon <= 180.0):
                 errors.append(f"WEATHER_LATITUDE / WEATHER_LONGITUDE が範囲外（現在 {w_lat} / {w_lon}）")
-        if "WEATHER_HOURS" in cfg:
-            wh = cfg["WEATHER_HOURS"]
-            if (not isinstance(wh, list) or not wh
-                    or not all(isinstance(h, int) and 0 <= h <= 23 for h in wh)):
-                errors.append(f"WEATHER_HOURS は 0〜23 の整数の配列（現在 {wh!r}）")
 
     return errors
 
@@ -366,27 +365,6 @@ def ask_latlon(prompt, cur, lo, hi):
         return v
 
 
-def ask_hours(cur):
-    """🔵 V2.00jtw: 天気を読む正時の入力。カンマ区切り（例 7,12,18）。
-    「*」で全時刻。戻り値: 整数リスト（重複除去・昇順） / None（全時刻＝キー省略）。"""
-    cur_disp = "全時刻" if cur is None else ",".join(str(h) for h in cur)
-    while True:
-        s = input(f"天気を読む正時（カンマ区切り 例 7,12,18 / * で全時刻）[現在: {cur_disp}]: ").strip()
-        if s == "":
-            return cur
-        if s == "*":
-            return None
-        try:
-            hours = sorted(set(int(x) for x in s.split(",") if x.strip() != ""))
-        except ValueError:
-            print("   → 0〜23 の整数をカンマ区切りで入力してください（例 7,12,18）。")
-            continue
-        if not hours or not all(0 <= h <= 23 for h in hours):
-            print("   → 0〜23 の範囲で1つ以上指定してください。")
-            continue
-        return hours
-
-
 # ------------------------------------------------------------
 # 対話本体
 # ------------------------------------------------------------
@@ -492,18 +470,20 @@ def do_edit():
                                    base.get("USE_CSTM_002", False))
 
     # --- 天気読み上げ（V2.00jtw / JTW版）---
-    # 時報に続けて Open-Meteo の当地天気（天気＋気温）を読む。正時2分前に取得・
-    # 音声事前生成し、正時は再生のみ（時報の正確性最優先・三段フォールバック）。
+    # 定時音声（時報/30分/001/002）に続けて Open-Meteo の当地天気（天気＋気温）を
+    # 付ける。voice_make.py が発火2分前に取得・事前生成し、発火時は再生のみ。
+    # 地名は wav_source.json の location（create_wav.sh で設定）を使う。
     print("\n--- 天気読み上げ（JTW版）---")
-    if cfg["TIME_SIGNAL_MODE"] == 0:
-        print("  時刻案内が mode 0（なし）のため、天気読み上げは設定できません（OFF固定）。")
+    _no_voice = (cfg["TIME_SIGNAL_MODE"] == 0 and cfg.get("ANNOUNCE_FREQ", 0) == 0)
+    if _no_voice:
+        print("  時報も定時メッセージも無いため、天気は設定できません（OFF固定）。")
         cfg["WEATHER_ENABLED"] = False
         for k in _WEATHER_EXTRA_KEYS:
             if k in base:
-                cfg[k] = base[k]   # 値は保存し続ける（mode を戻したとき再利用）
+                cfg[k] = base[k]   # 値は保存し続ける（音声を有効に戻したとき再利用）
     else:
-        print("  時報に続けて「続いて当地の天気は、晴れ、気温は25度です」を読み上げます。")
-        print("  座標は https://www.google.com/maps で自局位置を右クリックすると確認できます。")
+        print("  時報・30分・001/002 の後ろに「○○の天気は、晴れ、気温は25度です」を付けます。")
+        print("  （○○は create_wav.sh で設定した地名。座標は Google マップで確認できます）")
         cfg["WEATHER_ENABLED"] = ask_bool("天気読み上げを有効にしますか？",
                                           base.get("WEATHER_ENABLED", False))
         if cfg["WEATHER_ENABLED"]:
@@ -522,10 +502,7 @@ def do_edit():
                           f"（{_ll[0]}, {_ll[1]} / Enter で採用）。")
             cfg["WEATHER_LATITUDE"] = ask_latlon("緯度（例 35.2167）", _cur_lat, -90.0, 90.0)
             cfg["WEATHER_LONGITUDE"] = ask_latlon("経度（例 137.0333）", _cur_lon, -180.0, 180.0)
-            _hours = ask_hours(base.get("WEATHER_HOURS"))
-            if _hours is not None:
-                cfg["WEATHER_HOURS"] = _hours
-            # None（全時刻）はキー省略＝本体が全時刻(0〜23)として扱う
+            # V2.03jtw: 天気は全定時音声へ一様付与（時刻絞り WEATHER_HOURS は廃止）。
         else:
             for k in _WEATHER_EXTRA_KEYS:
                 if k in base:
@@ -564,10 +541,8 @@ def do_edit():
     print(f"   カスタム音声   : intro={_cstm(cfg['USE_CSTM_INTRO'])} "
           f"001={_cstm(cfg['USE_CSTM_001'])} 002={_cstm(cfg['USE_CSTM_002'])}")
     if cfg.get("WEATHER_ENABLED"):
-        _wh = cfg.get("WEATHER_HOURS")
-        _wh_str = "全時刻" if _wh is None else "・".join(f"{h}時" for h in _wh)
         print(f"   天気読み上げ   : ON  ({cfg['WEATHER_LATITUDE']}, {cfg['WEATHER_LONGITUDE']}) "
-              f"対象={_wh_str}")
+              f"全定時音声に付与")
     else:
         print("   天気読み上げ   : OFF")
     print("----------------------------------------------------------")
