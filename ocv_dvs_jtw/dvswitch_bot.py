@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.01jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.03jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -24,10 +24,10 @@
   USE_CSTM_INTRO      : intro にカスタム音声を使う（true/false, 任意キー。既定 false）
   USE_CSTM_001        : 001 にカスタム音声を使う（true/false, 任意キー。既定 false）
   USE_CSTM_002        : 002 にカスタム音声を使う（true/false, 任意キー。既定 false）
-  WEATHER_ENABLED     : 時報に当地の天気を続けて読む（true/false, 任意キー。既定 false）
+  WEATHER_ENABLED     : 定時音声（時報/30分/001/002）に当地の天気を付ける（true/false,
+                        任意キー。既定 false）。取得・合成・地名は voice_make.py が担う
   WEATHER_LATITUDE    : 天気取得の緯度（WEATHER_ENABLED=true のとき必須）
   WEATHER_LONGITUDE   : 天気取得の経度（WEATHER_ENABLED=true のとき必須）
-  WEATHER_HOURS       : 天気を読む正時の配列 例 [7,12,18]（任意キー。省略時は全時刻）
 
 【機能】
   - 起動アナウンス（起動 N 秒後に「起動しました。」を 1 回送出）
@@ -52,7 +52,9 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.01jtw (daemon, V2.00jtw + コメント用語統一〔ケロ→カーチャンク〕)
+ Document Version: V2.03jtw (daemon, 定時音声の生成を voice_make.py〔vmp〕へ分離。
+                          bot は判定・2分前号令・スロット再生に専念。天気は全定時音声へ一様付与)
+ 　（V2.01jtw: V2.00jtw + コメント用語統一〔ケロ→カーチャンク〕）
  　（V2.00jtw: V1.95 + 時報への当地天気読み上げ〔Open-Meteo〕/ JTW版）
  　（V1.95: V1.94 + CACHE_DIR 消失時の自己修復）
  　（V1.94: V1.93 + 自局コールサイン/DMR ID の ini 自動取得）
@@ -68,7 +70,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.01jtw"
+__version__ = "V2.03jtw"
 
 import os
 import sys
@@ -83,8 +85,6 @@ import signal
 import logging
 import threading
 import subprocess
-import urllib.request
-import urllib.error
 from datetime import datetime, timedelta
 
 # ============================================================
@@ -361,163 +361,72 @@ NIGHT_END_HOUR = None
 USE_CSTM_INTRO = None
 USE_CSTM_001 = None
 USE_CSTM_002 = None
-# 🔵 V2.00jtw: 天気読み上げ（任意キー / 未設定なら機能OFF＝従来動作）
-WEATHER_ENABLED = False
-WEATHER_LATITUDE = None
-WEATHER_LONGITUDE = None
-WEATHER_HOURS = []
+# 🔵 V2.03jtw: 天気読み上げは voice_make.py（vmp）へ分離した。
+# bot 本体は天気を一切知らない（取得・合成・地名は vmp の管轄）。bot は
+# スケジュール判定（何分に何を鳴らすか・ナイト抑制・001/002 交互・カスタム
+# 使用）だけを持つ「唯一の真実の源」として、各発火の約2分前に vmp を
+# ワンショット起動（丙方式）し、「本体音声＋当地天気」の1本もの WAV を
+# スロットへ事前生成させる。発火時はそのスロットを再生するだけ（合成ゼロ）。
+#
+# 設計の要点:
+#   - 天気の ON/OFF・座標は bot_config.json（WEATHER_ENABLED 等）。bot はこの
+#     フラグを「vmp に --weather を渡すか」の判断にだけ使い、取得も文生成もしない。
+#   - スロット競合は構造的に起きない: 定時発火は最短15分間隔で排他的、合成は
+#     数秒オーダー。生成が次発火に食い込むことは設計上ありえない。カーチャンク
+#     応答は bot 側で別系統生成のため vmp と競合しない。→ ロック不要・固定名でよい。
+#   - 割り切り: 発火時にスロットが無ければ鳴らさない（vmp 内で本体音声は死守
+#     されるため、鳴らないのは vmp 自体の起動/本体合成が失敗した稀な場合のみ）。
+#   - ナイトモード抑制・起動アナウンス・第30条 10分 ID・カーチャンク応答は
+#     従来どおり bot 側で処理（vmp 管轄外・天気は付かない）。
+VMP_PATH = f"{BOT_DIR}/bin/voice_make.py"
+VMP_PREFETCH_LEAD_SEC = 120      # 発火の何秒前に vmp を起動して事前生成するか（=2分前）
+VMP_SLOT_MAX_AGE_SEC = 900       # スロットWAVの鮮度上限（秒）。超えたら使わない（15分）
+# スロットは「発火の分」ごとの固定名（/dev/shm）。競合しないため PID は付けない
+# （bot 再起動後も同じ名を使うが、鮮度印 mtime で古いものは弾く）。
+def _slot_path(minute):
+    return f"/dev/shm/ocv_slot_{minute:02d}.wav"
 
-# ============================================================
-# 🔵 V2.00jtw: 時報に続く「当地の天気」読み上げ（Open-Meteo / VV版 V2.0vv から移植）
-# ============================================================
-# WEATHER_HOURS に含まれる時刻の毎正時の時報（mode "time_signal"）に限り、
-# 「N時です。続いて当地の天気は、晴れ、気温は25度です」をイントロ込みの
-# 1本もの WAV として正時の約2分前に事前生成し、正時は再生するだけにする。
-# 設計原則（VV版 V2.0vv で確定した仕様）:
-#   (1) 時報の正確性を最優先する。JT版（Pi）は Open JTalk 合成に約1.5秒、
-#       天気込みの長文では2秒超かかる見込みのため、事前生成方式が特に効く。
-#       正時の発火時は合成ゼロ（=遅延ゼロ）で送出できる。
-#   (2) 三段フォールバック（時報は絶対に落とさない）:
-#         a. 事前生成WAVあり             → 即送出（合成スキップ）
-#         b. WAVは無いがテキスト取得済み → その場で天気付きを合成
-#         c. 取得も失敗                  → 「N時です」のみ従来どおり合成
-#   (3) 追加依存なし。requests ではなく標準ライブラリ urllib を使用
-#       （Pi Zero W 等の第三者ノードへも追加インストール不要）。タイムアウト5秒。
-#   (4) 設定は bot_config.json の任意キー（未設定なら機能OFF＝完全に従来動作）:
-#       WEATHER_ENABLED(bool) / WEATHER_LATITUDE(float) / WEATHER_LONGITUDE(float)
-#       / WEATHER_HOURS(0〜23 の整数配列, 省略時は全時刻)。
-#       WEATHER_ENABLED=true と TIME_SIGNAL_MODE=0 の併用は矛盾のため起動拒否。
-#   (5) 事前生成は _generate_hybrid（_gen_lock で直列化済み）を専用出力先で
-#       呼ぶだけ。カーチャンク応答のプリキャッシュと同じ流儀で、送信ロック
-#       （_tx_lock）は取らない（送信ではないため）。
-#   (6) 三位一体（bot_setup.py / app.py の UI 対応）は任意キーのため即時必須で
-#       はなく、実波検証後に別途実施する（VV版と同方針）。
-WEATHER_PREFETCH_LEAD_SEC = 120       # 正時の何秒前に取得・事前生成するか（=2分前）
-WEATHER_FETCH_TIMEOUT_SEC = 5         # Open-Meteo 取得タイムアウト（秒）
-WEATHER_FRESH_SEC = 900               # 取得テキストの鮮度上限（秒）。超えたら b 経路でも使わない
-WEATHER_PREBUILT_MAX_AGE_SEC = 900    # 事前生成WAVの鮮度上限（秒）。超えたら使わず捨てる
-WEATHER_PREBUILT_WAV = f"/dev/shm/ts_weather_prebuilt_{_PID}.wav"
+# vmp へ渡す「この発火は天気を付けるか」。現状は一様仕様（WEATHER_ENABLED が
+# true なら全定時発火に付ける）。将来ここを分岐させれば「時報だけ/001 だけ」等の
+# 付け分けが、bot 側の判断1箇所で実現できる（vmp は関与しない）。
+def _weather_wanted():
+    return bool(WEATHER_ENABLED)
 
-# 事前取得の共有状態（_weather_lock で保護。時刻はすべて time.monotonic() 基準）
-_weather_lock = threading.Lock()
-_weather_text = None            # 取得済みの天気文（「続いて当地の天気は、…」）
-_weather_text_mono = 0.0        # 上記を取得した時刻
-_weather_prebuilt_hour = None   # 事前生成WAVが対象とする「時」（None=無し）
-_weather_prebuilt_mono = 0.0    # 事前生成が完成した時刻
-_weather_attempt_hour = None    # この「時」向けの取得を試行済みか（失敗時の連打防止）
+def _vmp_spawn(kind, minute, hour=None, base=None):
+    """vmp をワンショット起動して、minute のスロットに本体音声(+天気)を作らせる。
+    kind: "time_signal" / "half_hour" / "message"
+    hour: time_signal/half_hour で必須（読み上げる時）
+    base: message で必須（本体WAVパス: 001.wav / cstm_001.wav 等）
+    非ブロッキング（Popen で投げっぱなし）。2分前なので発火まで十分間に合う。
+    stderr は bot の stderr に流れ、journal に vmp ログとして残る。"""
+    slot = _slot_path(minute)
+    cmd = [sys.executable, VMP_PATH, "--kind", kind, "--slot", slot]
+    if hour is not None:
+        cmd += ["--hour", str(hour)]
+    if base is not None:
+        cmd += ["--base", base]
+    if _weather_wanted():
+        cmd.append("--weather")
+    try:
+        subprocess.Popen(cmd)
+        logger.info(_fmt("..", "vmp spawn", f":{minute:02d}",
+                         f"{kind}"
+                         + (f" hour={hour}" if hour is not None else "")
+                         + (f" base={os.path.basename(base)}" if base else "")
+                         + (" +weather" if _weather_wanted() else "")))
+    except Exception as e:
+        logger.error(_fmt("!!", "vmp spawn", f":{minute:02d}", str(e)))
 
-# WMO weather code → 読み上げ語。Open-Meteo の current.weather_code 準拠。
-# 表に無いコードは「天気」を省略し気温のみ読む（_weather_sentence 参照）。
-_WMO_TEXT = {
-    0: "快晴", 1: "晴れ", 2: "晴れ、ときどき曇り", 3: "曇り",
-    45: "霧", 48: "霧",
-    51: "霧雨", 53: "霧雨", 55: "霧雨",
-    56: "冷たい霧雨", 57: "冷たい霧雨",
-    61: "弱い雨", 63: "雨", 65: "強い雨",
-    66: "冷たい雨", 67: "冷たい雨",
-    71: "弱い雪", 73: "雪", 75: "強い雪", 77: "細かい雪",
-    80: "にわか雨", 81: "にわか雨", 82: "強いにわか雨",
-    85: "にわか雪", 86: "強いにわか雪",
-    95: "雷雨", 96: "ひょうを伴う雷雨", 99: "ひょうを伴う雷雨",
-}
-
-
-def _weather_fetch():
-    """Open-Meteo の current から (weather_code, temperature_2m) を取る。
-    失敗時は例外を上げる（呼び出し側でログして諦める）。"""
-    url = ("https://api.open-meteo.com/v1/forecast"
-           f"?latitude={WEATHER_LATITUDE}&longitude={WEATHER_LONGITUDE}"
-           "&current=weather_code,temperature_2m&timezone=Asia%2FTokyo")
-    with urllib.request.urlopen(url, timeout=WEATHER_FETCH_TIMEOUT_SEC) as r:
-        d = json.load(r)
-    cur = d["current"]
-    return int(cur["weather_code"]), float(cur["temperature_2m"])
-
-
-def _weather_sentence(code, temp):
-    """読み上げ文を組む。氷点下対応。未知コードは天気を省略し気温のみ。"""
-    t = int(round(temp))
-    temp_part = f"気温は氷点下{-t}度です" if t < 0 else f"気温は{t}度です"
-    wx = _WMO_TEXT.get(code)
-    if wx:
-        return f"続いて当地の天気は、{wx}、{temp_part}"
-    return f"続いて当地の{temp_part}"
-
-
-def _weather_take_prebuilt(hour):
-    """hour 用の事前生成WAVが有効ならパスを返す（無効なら None）。
-    鮮度上限超えの古い prebuilt は使わず捨てる。"""
-    with _weather_lock:
-        if (_weather_prebuilt_hour == hour
-                and os.path.exists(WEATHER_PREBUILT_WAV)
-                and (time.monotonic() - _weather_prebuilt_mono) <= WEATHER_PREBUILT_MAX_AGE_SEC):
-            return WEATHER_PREBUILT_WAV
+def _slot_ready(minute):
+    """発火時、minute のスロットが有効（存在＋鮮度内）なら パスを返す。
+    無効なら None（bot は割り切りで鳴らさない）。使用後は呼び出し側が破棄。"""
+    slot = _slot_path(minute)
+    try:
+        if os.path.exists(slot) and (time.time() - os.path.getmtime(slot)) <= VMP_SLOT_MAX_AGE_SEC:
+            return slot
+    except OSError:
+        pass
     return None
-
-
-def _weather_take_text():
-    """b 経路用: 取得済みで鮮度内の天気文を返す（無ければ None）。"""
-    with _weather_lock:
-        if _weather_text and (time.monotonic() - _weather_text_mono) <= WEATHER_FRESH_SEC:
-            return _weather_text
-    return None
-
-
-def _weather_prefetch_loop():
-    """正時の WEATHER_PREFETCH_LEAD_SEC 秒前に天気を取得し、イントロ込みの
-    1本もの WAV（time_intro + 「N時です。続いて当地の天気は、…」）を事前生成する。
-    各正時につき試行は1回（_weather_attempt_hour で連打防止）。取得成功なら
-    テキストを保持（b 経路用）し、続けて WAV 生成を試みる（a 経路用）。
-    合成は _generate_hybrid が _gen_lock で直列化するため、カーチャンク応答の
-    プリキャッシュと同時に走っても安全。"""
-    global _weather_text, _weather_text_mono
-    global _weather_prebuilt_hour, _weather_prebuilt_mono, _weather_attempt_hour
-    logger.info(_fmt("..", "Weather", "prefetch", "loop started"))
-    while not should_exit:
-        try:
-            now = datetime.now()
-            cand = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            secs = (cand - now).total_seconds()
-            hour = cand.hour
-            if (0 < secs <= WEATHER_PREFETCH_LEAD_SEC
-                    and _weather_attempt_hour != hour
-                    and hour in WEATHER_HOURS
-                    and not _is_night_suppressed(hour)):
-                _weather_attempt_hour = hour
-                try:
-                    code, temp = _weather_fetch()
-                except Exception as e:
-                    logger.warning(_fmt("!!", "Weather", f"{hour:02d}:00",
-                                        f"取得失敗（時報は天気なしで定刻送出）: {e}"))
-                    continue
-                sentence = _weather_sentence(code, temp)
-                with _weather_lock:
-                    _weather_text = sentence
-                    _weather_text_mono = time.monotonic()
-                logger.info(_fmt("..", "Weather", f"{hour:02d}:00",
-                                 f"取得OK code={code} temp={temp:.1f} → 「{sentence}」"))
-                # イントロ込み1本ものを事前生成（tmp も .wav 終わり必須: SoX が拡張子で判別）
-                middle = f"{hour}時です。{sentence}"
-                tmp = f"{WEATHER_PREBUILT_WAV[:-4]}.building.wav"
-                if _generate_hybrid(TIME_INTRO_WAV, middle, None, out_path=tmp):
-                    try:
-                        os.replace(tmp, WEATHER_PREBUILT_WAV)
-                        with _weather_lock:
-                            _weather_prebuilt_hour = hour
-                            _weather_prebuilt_mono = time.monotonic()
-                        logger.info(_fmt("..", "Weather prebuilt", f"{hour:02d}:00",
-                                         "用の音声を事前生成OK（正時は再生のみ）"))
-                    except OSError as e:
-                        _safe_remove(tmp)
-                        logger.error(_fmt("!!", "Weather prebuilt", f"{hour:02d}:00", str(e)))
-                else:
-                    _safe_remove(tmp)
-                    logger.error(_fmt("!!", "Weather prebuilt", f"{hour:02d}:00",
-                                      "合成失敗（正時はテキストから合成にフォールバック）"))
-        except Exception as e:
-            logger.error(_fmt("!!", "Weather loop", "", str(e)))
-        time.sleep(10)
-    logger.info(_fmt("..", "Weather", "prefetch", "loop stopped"))
 
 
 # コールサイン → カナ変換テーブル
@@ -572,7 +481,7 @@ def _load_config():
     global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ, TIME_SIGNAL_MODE
     global TX_GAIN, NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
     global USE_CSTM_INTRO, USE_CSTM_001, USE_CSTM_002
-    global WEATHER_ENABLED, WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_HOURS
+    global WEATHER_ENABLED, WEATHER_LATITUDE, WEATHER_LONGITUDE
 
     # 1) 存在確認
     if not os.path.exists(CONFIG_PATH):
@@ -674,13 +583,18 @@ def _load_config():
     # ON のときだけ座標を厳格検証する（誤った土地の天気を放送しないため fatal）。
     # TIME_SIGNAL_MODE=0（時報なし）との併用は「天気を読む時報が存在しない」矛盾
     # 設定のため起動拒否する（VV版 V2.0vv と同じ仕様）。
+    # 🔵 V2.03jtw: WEATHER_ENABLED は「vmp に --weather を渡すか」のフラグ。
+    # 取得・合成・地名は vmp が担うが、座標の妥当性は bot 側でも検証しておく
+    # （誤った土地の天気を放送しないための早期ガード）。時報も定時メッセージも
+    # 無い設定（mode0 かつ freq0）との併用は「天気を付ける相手が居ない」ため拒否。
+    # WEATHER_HOURS（時刻絞り）は一様仕様化に伴い廃止した。
     weather_enabled = _as_bool("WEATHER_ENABLED")
     weather_lat = None
     weather_lon = None
-    weather_hours = list(range(24))
     if weather_enabled:
-        if ts_mode == 0:
-            _fatal_config("WEATHER_ENABLED=true は TIME_SIGNAL_MODE=0（時報なし）と併用できません")
+        if ts_mode == 0 and freq == 0:
+            _fatal_config("WEATHER_ENABLED=true ですが、時報も定時メッセージも無効です"
+                          "（TIME_SIGNAL_MODE=0 かつ ANNOUNCE_FREQ=0）。天気を付ける音声がありません")
         try:
             weather_lat = float(cfg["WEATHER_LATITUDE"])
             weather_lon = float(cfg["WEATHER_LONGITUDE"])
@@ -690,15 +604,6 @@ def _load_config():
         if not (-90.0 <= weather_lat <= 90.0) or not (-180.0 <= weather_lon <= 180.0):
             _fatal_config(f"WEATHER_LATITUDE / WEATHER_LONGITUDE が範囲外です "
                           f"（現在: {weather_lat} / {weather_lon}）")
-        if "WEATHER_HOURS" in cfg:
-            wh = cfg["WEATHER_HOURS"]
-            if (not isinstance(wh, list) or not wh
-                    or not all(isinstance(h, int) and 0 <= h <= 23 for h in wh)):
-                _fatal_config(f"WEATHER_HOURS は 0〜23 の整数の配列です（現在: {wh!r}）")
-            weather_hours = sorted(set(wh))
-        else:
-            logger.info(_fmt("..", "Config", "WEATHER_HOURS",
-                             "未設定のため全時刻（0〜23時）を対象にします"))
 
     # 5) 反映
     RX_DURATION_MIN_SEC = rx_min
@@ -715,7 +620,6 @@ def _load_config():
     WEATHER_ENABLED = weather_enabled
     WEATHER_LATITUDE = weather_lat
     WEATHER_LONGITUDE = weather_lon
-    WEATHER_HOURS = weather_hours
 
     logger.info(_fmt("..", "Config", "loaded", CONFIG_PATH))
 
@@ -907,6 +811,28 @@ def send_usrp_wav_with_padding(wav_path):
 
 
 # ============================================================
+# 🔵 V2.03jtw: スロット再生（送信時 TX_GAIN 制御）
+# ============================================================
+# vmp が作ったスロット WAV（素の音量）を送出する。TX_GAIN は「送信の属性」と
+# して、生成側（vmp）ではなく送出の瞬間に bot がかける。こうすると (1) 音量変更が
+# スロット作り直しなしで即反映され、(2) カーチャンク応答（bot 生成）と定時系
+# （vmp 生成）で音量制御のかかり方が「送出時に一元」で揃う。
+def _send_with_gain(wav_path):
+    """wav_path を送出する。TX_GAIN が等倍以外なら vol をかけた一時ファイルを
+    作ってから送る（fixed_file の従来手法と同一）。gain 適用に失敗しても素の
+    ファイルで送出は続ける（無音化・送出停止を避ける）。"""
+    play_path = wav_path
+    if TX_GAIN is not None and TX_GAIN != 1.0:
+        try:
+            subprocess.run(["sox", wav_path, TEMP_FINAL, "vol", f"{TX_GAIN}"], check=True)
+            play_path = TEMP_FINAL
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error(_fmt("!!", "Gain failed", os.path.basename(wav_path), str(e)))
+            play_path = wav_path
+    send_usrp_wav_with_padding(play_path)
+
+
+# ============================================================
 # ナイトモード判定
 # ============================================================
 def _is_night_suppressed(hour):
@@ -956,74 +882,100 @@ def _get_trigger_minutes():
     return table.get(ANNOUNCE_FREQ, [])
 
 
+def _all_trigger_minutes():
+    """この設定で音声が出る全ての「分」を、種別つきで返す。
+    返り値: dict {minute: (kind, hourly)} 。kind は "time_signal"/"half_hour"/
+    "message"。message は 001/002 交互のため、発火順を保つよう昇順で扱う。
+    - time_signal(:00) と half_hour(:30) は TIME_SIGNAL_MODE による。
+    - message の分は _get_trigger_minutes()（時刻案内が占有する分は除かれている）。
+    """
+    out = {}
+    if TIME_SIGNAL_MODE >= 1:
+        out[0] = ("time_signal", None)
+    if TIME_SIGNAL_MODE == 2:
+        out[30] = ("half_hour", None)
+    for mm in _get_trigger_minutes():
+        out[mm] = ("message", None)
+    return out
+
+
+def _msg_base_for(msg_index):
+    """001/002 交互の本体WAVパスを返す（cstm 解決込み）。号令時に bot が決めて
+    vmp に渡す（cstm 判定は bot の一元管理・vmp は知らない）。"""
+    idx = msg_index % len(MSG_FILES)
+    use_cstm = USE_CSTM_001 if idx == 0 else USE_CSTM_002
+    return _resolve_wav(use_cstm, CSTM_MSG_FILES[idx], MSG_FILES[idx],
+                        os.path.basename(MSG_FILES[idx]))
+
+
+def _night_suppressed_for(kind, hour):
+    """種別ごとのナイト抑制判定。time_signal は N1 時のみ出す（突入告知）。
+    half_hour / message は N1 時台から抑制。"""
+    if kind == "time_signal":
+        return _is_night_suppressed(hour)
+    return _is_night_suppressed_message(hour)
+
+
 def _announcement_scheduler():
-    fired_signal_key = None       # 直近に発火した時刻案内の境界キー (date, hour, minute)
-    fired_message_minute = None
-    msg_index = 0
+    """🔵 V2.03jtw: 各発火の「約2分前」に vmp を号令してスロットを事前生成させ、
+    発火時刻の直前（lead）にスロットを再生する2フェーズ構成。
+
+    - スケジュール判定（何分に何を鳴らすか・ナイト抑制・001/002 交互・cstm）は
+      すべてこの scheduler が持つ「唯一の真実の源」。vmp はスケジュールを知らない。
+    - 号令フェーズ: 各発火分の VMP_PREFETCH_LEAD_SEC 秒前に一度だけ vmp を起動。
+      抑制対象の分は号令しない（＝スロットが作られず、発火時も鳴らない）。
+    - 発火フェーズ: 発火分の TIME_SIGNAL_LEAD_SEC 秒前に、スロットを再生。
+    """
+    spawned_key = None        # 直近に号令した (date, hour, minute)
+    fired_key = None          # 直近に発火した (date, hour, minute)
+    msg_index = 0             # 001/002 交互カウンタ（message を号令するたびに進める）
 
     logger.info(_fmt("..", "Scheduler", "started"))
+    triggers = _all_trigger_minutes()
+    logger.info(_fmt("..", "Scheduler", "triggers",
+                     "分=" + ",".join(f"{mm:02d}({k})" for mm, (k, _) in sorted(triggers.items()))))
 
     while not should_exit:
         now = datetime.now()
 
-        # ---- 時刻案内（time_signal :00 / half_hour_signal :30）----
-        # lead 秒前に発火。mode1=:00 のみ、mode2=:00 と :30。
-        if TIME_SIGNAL_MODE >= 1:
-            boundary_minutes = [0] if TIME_SIGNAL_MODE == 1 else [0, 30]
-            for bmin in boundary_minutes:
-                cand = now.replace(minute=bmin, second=0, microsecond=0)
-                if cand <= now:
-                    cand += timedelta(hours=1)
-                secs = (cand - now).total_seconds()
-                if 0 < secs <= TIME_SIGNAL_LEAD_SEC:
-                    key = (cand.date(), cand.hour, bmin)
-                    if fired_signal_key != key:
-                        fired_signal_key = key
-                        target_hour = cand.hour
-                        if bmin == 0:
-                            # 時報: N1 時は送出（突入アナウンスのため）
-                            if _is_night_suppressed(target_hour):
-                                logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:00",
-                                                 "time_signal suppressed (night mode)"))
-                            else:
-                                logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:00",
-                                                 f"time_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
-                                _start_worker("time_signal", target_hour)
-                        else:
-                            # 30分案内: 定時メッセージと同じ抑制窓（N1時〜N2時）を使う。
-                            # → N1:00 の突入アナウンス後に N1:30 が鳴らないようにするため。
-                            if _is_night_suppressed_message(target_hour):
-                                logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:30",
-                                                 "half_hour_signal suppressed (night mode)"))
-                            else:
-                                logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:30",
-                                                 f"half_hour_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
-                                _start_worker("half_hour_signal", target_hour)
+        for minute, (kind, _) in triggers.items():
+            cand = now.replace(minute=minute, second=0, microsecond=0)
+            if cand <= now:
+                cand += timedelta(hours=1)
+            secs = (cand - now).total_seconds()
+            hour = cand.hour
+            key = (cand.date(), cand.hour, minute)
 
-        # ---- 定時メッセージ（001/002 交互）----
-        # トリガー分ちょうどに発火（リード無し）。:00 は TIME_SIGNAL_MODE==0 のときのみ
-        # _get_trigger_minutes() に含まれる（mode1/2 では時刻案内が占有）。
-        m = now.minute
-        if m in _get_trigger_minutes():
-            current_minute_key = (now.hour, m)
-            if fired_message_minute != current_minute_key:
-                fired_message_minute = current_minute_key
-                if _is_night_suppressed_message(now.hour):
-                    logger.info(_fmt("..", "NightSkip",
-                                     f"{now.hour:02d}:{m:02d}",
-                                     "scheduled_message suppressed (night mode)"))
+            # ---- 号令フェーズ（約2分前に1回）----
+            # lead より前、かつ prefetch 窓に入ったら vmp を起動。
+            if (TIME_SIGNAL_LEAD_SEC < secs <= VMP_PREFETCH_LEAD_SEC
+                    and spawned_key != key):
+                spawned_key = key
+                if _night_suppressed_for(kind, hour):
+                    logger.info(_fmt("..", "NightSkip", f"{hour:02d}:{minute:02d}",
+                                     f"{kind} suppressed (no vmp spawn)"))
                 else:
-                    # 🔵 V1.73: 001/002 を個別に cstm 解決（欠落時は標準へフォールバック）。
-                    _idx = msg_index % len(MSG_FILES)
-                    _use_cstm = USE_CSTM_001 if _idx == 0 else USE_CSTM_002
-                    target = _resolve_wav(
-                        _use_cstm, CSTM_MSG_FILES[_idx], MSG_FILES[_idx],
-                        os.path.basename(MSG_FILES[_idx]))
-                    logger.info(_fmt("..", "Trigger",
-                                     os.path.basename(target),
-                                     "scheduled_message"))
-                    _start_worker("fixed_file", target)
-                    msg_index += 1
+                    if kind == "message":
+                        base = _msg_base_for(msg_index)
+                        _vmp_spawn("message", minute, base=base)
+                        msg_index += 1
+                    elif kind == "time_signal":
+                        _vmp_spawn("time_signal", minute, hour=hour)
+                    else:  # half_hour
+                        _vmp_spawn("half_hour", minute, hour=hour)
+
+            # ---- 発火フェーズ（lead 秒前に1回）----
+            if 0 < secs <= TIME_SIGNAL_LEAD_SEC and fired_key != key:
+                fired_key = key
+                if _night_suppressed_for(kind, hour):
+                    # 号令もしていないので何もしない（ログは号令フェーズで既出）
+                    pass
+                else:
+                    label = f"{hour:02d}:{minute:02d}"
+                    logger.info(_fmt("..", "Trigger", label, f"{kind} (lead {TIME_SIGNAL_LEAD_SEC}s)"))
+                    # 発火ワーカーには「分」を渡してスロットを再生させる。
+                    _start_worker(kind if kind != "half_hour" else "half_hour_signal",
+                                  minute, extra=label)
 
         time.sleep(1)
 
@@ -1434,78 +1386,32 @@ def _reply_executor(mode, val, extra=None):
             else:
                 logger.error(_fmt("!!", "Gen failed", val, "hybrid audio"))
 
-        elif mode == "time_signal":
-            target_str = f"{val:02d}:00"
-            # 🔵 V2.00jtw: 三段フォールバック（a: 事前生成WAV → b: テキストから
-            # その場合成 → c: 従来の「N時です」のみ）。時報は絶対に落とさない。
-            prebuilt = _weather_take_prebuilt(val) if WEATHER_ENABLED else None
-            if prebuilt:
-                # a. 事前生成済み → 再生するだけ（合成ゼロ・遅延ゼロ）。使用後に破棄。
-                logger.info(_fmt("TX", "Sending", target_str, "time_signal (prebuilt)"))
-                send_usrp_wav_with_padding(prebuilt)
-                _safe_remove(prebuilt)
+        elif mode in ("time_signal", "half_hour_signal", "message"):
+            # 🔵 V2.03jtw: 定時系はすべて「vmp が 2 分前に作ったスロットを再生」に
+            # 統一した。val は発火の「分」(minute)。extra は表示用ラベル。
+            # スロット有 → 送信時 TX_GAIN をかけて送出（使用後に破棄）。
+            # スロット無/古い → 割り切りで鳴らさない（vmp 内で本体音声は死守される
+            # ため、鳴らないのは vmp 起動失敗・本体合成失敗の稀な場合のみ）。
+            minute = val
+            label = extra or f":{minute:02d}"
+            slot = _slot_ready(minute)
+            if slot:
+                logger.info(_fmt("TX", "Sending", label, f"{mode} (slot)"))
+                _send_with_gain(slot)
+                _safe_remove(slot)
                 elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "TimeSignal", target_str, f"{elapsed:.1f}s (prebuilt)"))
-
-                if NIGHT_MODE_ENABLED and val == NIGHT_START_HOUR:
-                    _send_night_mode_announcement()
-            else:
-                middle = f"{val}時です"
-                wx_note = ""
-                if WEATHER_ENABLED and val in WEATHER_HOURS:
-                    # b. WAV は無いがテキストは取得済み（鮮度内）→ 天気付きで合成
-                    wx = _weather_take_text()
-                    if wx:
-                        middle = f"{val}時です。{wx}"
-                        wx_note = "+weather"
-                logger.info(_fmt("TX", "Generate", target_str, f"time_signal {wx_note}".rstrip()))
-                if _generate_hybrid(TIME_INTRO_WAV, middle, None):
-                    logger.info(_fmt("TX", "Sending", target_str, "time_signal"))
-                    send_usrp_wav_with_padding(TEMP_FINAL)
-                    elapsed = time.monotonic() - started_at
-                    logger.info(_fmt("TX", "TimeSignal", target_str, f"{elapsed:.1f}s"))
-
-                    if NIGHT_MODE_ENABLED and val == NIGHT_START_HOUR:
-                        _send_night_mode_announcement()
-                else:
-                    logger.error(_fmt("!!", "Gen failed", target_str, "time_signal"))
-
-        elif mode == "half_hour_signal":
-            middle = f"{val}時30分です"
-            target_str = f"{val:02d}:30"
-            logger.info(_fmt("TX", "Generate", target_str, "half_hour_signal"))
-            if _generate_hybrid(TIME_INTRO_WAV, middle, None):
-                logger.info(_fmt("TX", "Sending", target_str, "half_hour_signal"))
-                send_usrp_wav_with_padding(TEMP_FINAL)
-                elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "HalfHour", target_str, f"{elapsed:.1f}s"))
-            else:
-                logger.error(_fmt("!!", "Gen failed", target_str, "half_hour_signal"))
-
-        elif mode == "fixed_file":
-            basename = os.path.basename(val)
-            if os.path.exists(val):
-                # 🔴 V1.68: 固定再生（001/002）にも同じ送出音量ゲインを適用する。
-                # fixed_file は _generate_hybrid を通らないため、ここで個別に vol を
-                # かけた一時ファイルを作って送出する。失敗時は素のファイルで送る
-                # （音量調整に失敗しても無音化・送出停止は避ける）。
-                play_path = val
-                if TX_GAIN is not None and TX_GAIN != 1.0:
+                logger.info(_fmt("TX", "Slot", label, f"{elapsed:.1f}s"))
+                # 時報が N1 時ちょうどならナイトモード突入告知（従来どおり bot 生成）
+                if mode == "time_signal" and NIGHT_MODE_ENABLED:
                     try:
-                        subprocess.run(
-                            ["sox", val, TEMP_FINAL, "vol", f"{TX_GAIN}"],
-                            check=True,
-                        )
-                        play_path = TEMP_FINAL
-                    except subprocess.CalledProcessError as e:
-                        logger.error(_fmt("!!", "Gain failed", basename, f"rc={e.returncode}"))
-                        play_path = val
-                logger.info(_fmt("TX", "Sending", basename, "scheduled"))
-                send_usrp_wav_with_padding(play_path)
-                elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "Scheduled", basename, f"{elapsed:.1f}s"))
+                        hour_now = datetime.now().hour
+                    except Exception:
+                        hour_now = -1
+                    if hour_now == NIGHT_START_HOUR:
+                        _send_night_mode_announcement()
             else:
-                logger.error(_fmt("!!", "File missing", basename, val))
+                logger.warning(_fmt("!!", "Slot missing", label,
+                                    f"{mode}: vmp 未生成/期限切れのため送出せず（割り切り）"))
 
         elif mode == "regulatory_id":
             # 🔴 V1.74: 無線局運用規則 第30条対応の識別信号強制送信。
@@ -1615,7 +1521,7 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V2.01jtw (daemon, V2.00jtw + 用語統一 / JTW版) starting up (PID: {_PID})")
+    logger.info(f"DVSwitch Bot V2.03jtw (daemon, 定時音声を vmp へ分離 / JTW版) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     # 🔵 V1.94: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
     logger.info(f"  My DMR ID         : {MY_DMR_ID}  (source: ini 自動取得)")
@@ -1638,13 +1544,15 @@ def _log_startup_info():
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
     _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
     logger.info(f"  Time signal mode  : {TIME_SIGNAL_MODE} ({_ts_desc}, lead {TIME_SIGNAL_LEAD_SEC}s)")
-    # 🔵 V2.00jtw: 天気読み上げの状態
+    # 🔵 V2.03jtw: 天気読み上げの状態（実処理は voice_make.py が担当）
     if WEATHER_ENABLED:
-        logger.info(f"  Weather readout   : ON  hours={WEATHER_HOURS} "
-                    f"({WEATHER_LATITUDE},{WEATHER_LONGITUDE}) via Open-Meteo "
-                    f"(prefetch {WEATHER_PREFETCH_LEAD_SEC}s 前 / 正時は事前生成WAVを再生のみ)")
+        logger.info(f"  Weather readout   : ON  ({WEATHER_LATITUDE},{WEATHER_LONGITUDE}) "
+                    f"via voice_make.py (発火{VMP_PREFETCH_LEAD_SEC}s前に事前生成 / 全定時音声に付与)")
+        logger.info(f"  vmp path          : {VMP_PATH}")
+        if not os.path.exists(VMP_PATH):
+            logger.warning(f"  [vmp] {VMP_PATH} が見つかりません — 天気付き定時音声が生成されません")
     else:
-        logger.info(f"  Weather readout   : OFF")
+        logger.info(f"  Weather readout   : OFF (定時音声は天気なし)")
     # 🔴 V1.67: watchdog 擬似終端の状態を表示
     if WATCHDOG_PSEUDO_END_ENABLED:
         logger.info(f"  Watchdog rescue   : ON  (watchdog を擬似終端として拾う / "
@@ -1775,10 +1683,8 @@ def monitor_and_reply():
 
     scheduler_thread = threading.Thread(target=_announcement_scheduler, daemon=True)
     scheduler_thread.start()
-
-    # 🔵 V2.00jtw: 天気の事前取得・事前生成スレッド（機能 ON のときのみ）
-    if WEATHER_ENABLED:
-        threading.Thread(target=_weather_prefetch_loop, daemon=True).start()
+    # 🔵 V2.03jtw: 天気の事前取得・事前生成は scheduler が発火2分前に voice_make.py
+    # （vmp）をワンショット起動して行う（専用スレッドは持たない）。
 
     start_pattern = re.compile(r"received network voice header from ([A-Z0-9/\-]+)")
     end_pattern = re.compile(r"received network end of voice transmission")
