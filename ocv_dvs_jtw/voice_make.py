@@ -35,7 +35,7 @@
   鳴らさない）。
 
  【地名】
-  天気文の地名（「続いて〇〇の天気は…」の〇〇）は wav_source.json の location を
+  天気文の地名（「〇〇の天気は…」の〇〇）は wav_source.json の location を
   読む（create_wav.sh がイントロ WAV に焼き込むのと同じ源）。これにより地名は
   1箇所（location）で管理され、イントロと天気で必ず一致する。location が無い/
   空なら「当地」にフォールバック。読みは location 側で調整可能なため vmp では
@@ -54,12 +54,13 @@
   bot と vmp で取り決めた固定パス（/dev/shm 上）。原子的差し替え（.building →
   os.replace）で書くため、書きかけを bot が再生することはない。
 
- Document Version: V1.00vmp（JTW版・初版）
+ Document Version: V1.01vmp（JTW版・本体と天気の間に WEATHER_GAP_SEC のワンテンポを追加）
+ 　（V1.00vmp: JTW版・初版）
  Last Updated: 2026-08-05
 ================================================================================
 """
 
-__version__ = "V1.00vmp"
+__version__ = "V1.01vmp"
 
 import os
 import sys
@@ -82,6 +83,10 @@ WAV_SOURCE_JSON = f"{BOT_DIR}/wav_source.json"
 
 # intro と合成音の間の無音（bot の GAP_AFTER_INTRO_SEC と揃える）
 GAP_AFTER_INTRO_SEC = 0.5
+# 🔵 V1.01vmp: 本体（時報/001 等）と天気の間に置くワンテンポの無音（秒）。
+# 「12時です」→（間）→「尾張旭の天気は…」のように、本体と天気の切れ目に
+# 一拍おいて聞きやすくする。intro↔本文の間隔とは目的が別なので独立定数にする。
+WEATHER_GAP_SEC = 0.5
 
 # 天気取得
 WEATHER_FETCH_TIMEOUT_SEC = 5
@@ -166,8 +171,8 @@ def _weather_sentence(code, temp, place):
     temp_part = f"気温は氷点下{-t}度です" if t < 0 else f"気温は{t}度です"
     wx = _WMO_TEXT.get(code)
     if wx:
-        return f"続いて{place}の天気は、{wx}、{temp_part}"
-    return f"続いて{place}の{temp_part}"
+        return f"{place}の天気は、{wx}、{temp_part}"
+    return f"{place}の{temp_part}"
 
 
 # ============================================================
@@ -253,10 +258,11 @@ def _build_slot(base_kind, base_text, base_wav, weather_text, slot_path):
         if weather_text:
             if _synth_middle(weather_text, tmp_wx48) and \
                _sox([tmp_wx48, "-r", "8000", "-c", "1", "-b", "16", tmp_wx8]):
-                # 本体との間に GAP を置くため、天気側の先頭に無音を pad
+                # 🔵 V1.01vmp: 本体と天気の間にワンテンポ（WEATHER_GAP_SEC）の
+                # 無音を置くため、天気側の先頭に無音を pad する。
                 tmp_wx8_padded = f"/dev/shm/vmp_wx8pad_{pid}.wav"
                 cleanup.append(tmp_wx8_padded)
-                if _sox([tmp_wx8, tmp_wx8_padded, "pad", f"{GAP_AFTER_INTRO_SEC}", "0"]):
+                if _sox([tmp_wx8, tmp_wx8_padded, "pad", f"{WEATHER_GAP_SEC}", "0"]):
                     parts.append(tmp_wx8_padded)
                 else:
                     parts.append(tmp_wx8)   # pad 失敗時は間なしで接ぐ（天気は落とさない）
