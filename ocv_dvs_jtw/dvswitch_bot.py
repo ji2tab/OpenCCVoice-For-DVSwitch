@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.03jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.05jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -13,6 +13,39 @@
  バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
  
+ 【V2.05jtw の要点（V2.04jtw からの変更）】
+  応答の立ち上がり（カーチャンク受信終了 → 相手に声が届くまで）の短縮と intro
+  頭欠けの解消。VV版 V1.98vv が ocv-voicevox（直 TGIF 接続）での実測で決めた値を
+  JTW版へ移植する。コード（送出ロジック）は一切変更していない。定数4つと、
+  実態と食い違っていたコメントの修正のみ。
+
+  1. REPLY_TX_LEAD_DELAY_SEC : 1.0 → 0.5
+  2. PRE_POST_PADDING_PACKETS : 75 → 85（1.5s → 1.7s）
+  3. NOISE_LEAD_PACKETS : 65 → 5（1.3s → 0.1s）
+  4. PRE_AUDIO_SILENCE_SEC : 1.5 → 0.0（ストリーム内の焼き込み頭無音を廃止）
+
+  VV版の実測（No.7 話者・キャッシュ命中時）:
+     カーチャンク受信終了 → intro 開始 : 4.02s → 2.22s
+     頭欠け : 出る → 出ない  /  ブーン : 聞こえず（据え置き）
+  JTW版でも各定数の積算は同じ 4.0s → 2.2s になる（1.0+1.5+1.5 → 0.5+1.7+0.0）。
+
+  【重要 / 未検証】上記はすべて VOICEVOX ノードでの実測値であり、JT 系ノード
+  （Open JTalk）では未検証である。特に次の2点で前提が異なる:
+    - 合成時間が違う（VOICEVOX 実測 0.9s / Open JTalk 実測 1.5s）。
+      REPLY_TX_LEAD_DELAY_SEC はキャッシュ命中時のみのガードで、ミス時は合成時間が
+      ガードを兼ねる。ミス時の総リードは JTW の方が長くなる（安全側）。
+    - 経路が違う（直 TGIF 接続か、SFR 中継を挟むか）。
+  配置後は必ず実機で「intro の頭欠け」「頭のブーン」の有無を確認すること。
+
+  【巻き戻し】頭欠けが出たら PRE_POST_PADDING_PACKETS を 85 → 90 と増やす方向で
+  試す（VV版の実測では頭欠けを決めるのは前パディング全体の長さ）。それでも直らない
+  場合は4定数すべてを V2.04jtw の値（75 / 65 / 1.0 / 1.5）へ戻せば従来動作に復帰する。
+  コードは変えていないため、定数を戻すだけで完全に元へ戻る。
+
+  【キャッシュ】PRE_AUDIO_SILENCE_SEC はキャッシュ署名（_reply_signature）に
+  含まれるため、値を変えると既存のキャッシュは自動的に無効化される。
+  CACHE_SCHEMA を上げる必要はない。
+
  【設定項目（bot_config.json）】
   RX_DURATION_MIN_SEC : 最小受信時間（秒, 0 < MIN < MAX）
   RX_DURATION_MAX_SEC : 最大受信時間（秒, カーチャンク上限）
@@ -24,8 +57,12 @@
   USE_CSTM_INTRO      : intro にカスタム音声を使う（true/false, 任意キー。既定 false）
   USE_CSTM_001        : 001 にカスタム音声を使う（true/false, 任意キー。既定 false）
   USE_CSTM_002        : 002 にカスタム音声を使う（true/false, 任意キー。既定 false）
-  WEATHER_ENABLED     : 定時音声（時報/30分/001/002）に当地の天気を付ける（true/false,
-                        任意キー。既定 false）。取得・合成・地名は voice_make.py が担う
+  WEATHER_ENABLED     : 天気読み上げの親スイッチ（true/false, 任意キー。既定 false）。
+                        取得・合成・地名は voice_make.py が担う
+  WEATHER_ON_TIME_SIGNAL : 時報（:00）・30分案内（:30）に天気を付ける
+                        （true/false, 任意キー。既定 true。V2.04jtw〜）
+  WEATHER_ON_MESSAGE  : 定時メッセージ（001/002）に天気を付ける
+                        （true/false, 任意キー。既定 true。V2.04jtw〜）
   WEATHER_LATITUDE    : 天気取得の緯度（WEATHER_ENABLED=true のとき必須）
   WEATHER_LONGITUDE   : 天気取得の経度（WEATHER_ENABLED=true のとき必須）
 
@@ -52,8 +89,11 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.03jtw (daemon, 定時音声の生成を voice_make.py〔vmp〕へ分離。
-                          bot は判定・2分前号令・スロット再生に専念。天気は全定時音声へ一様付与)
+ Document Version: V2.05jtw (daemon, VV版 V1.98vv の送出タイミング実測値を反映。
+                          立ち上がり短縮・頭欠け解消。JT系での実波検証は未実施)
+ 　（V2.04jtw: 天気の付与先を「時報系」「定時メッセージ系」で個別に指定できるようにした）
+ 　（V2.03jtw: 定時音声の生成を voice_make.py〔vmp〕へ分離。bot は判定・2分前号令・
+                          スロット再生に専念。天気は全定時音声へ一様付与）
  　（V2.01jtw: V2.00jtw + コメント用語統一〔ケロ→カーチャンク〕）
  　（V2.00jtw: V1.95 + 時報への当地天気読み上げ〔Open-Meteo〕/ JTW版）
  　（V1.95: V1.94 + CACHE_DIR 消失時の自己修復）
@@ -70,7 +110,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.03jtw"
+__version__ = "V2.05jtw"
 
 import os
 import sys
@@ -196,10 +236,23 @@ TEMP_INTRO_PADDED = f"/dev/shm/tmp_intro_padded_{_PID}.wav"
 EMPTY_HEADER_THRESHOLD_SEC = 0.1
 SUPPRESS_DURATION_SEC = 15.0
 PACKET_INTERVAL = 0.02
-PRE_POST_PADDING_PACKETS = 75
+# 🔴 V2.05jtw: 75 → 85（1.5s → 1.7s）。VV版 V1.98vv の実測（2026-07-16/17,
+# ocv-voicevox / 直 TGIF 接続）を移植した値。intro 頭欠けを決めているのはトーンの
+# 長さではなく「前パディング全体の長さ」だと判明している（NOISE_LEAD_PACKETS の
+# 注記を参照。V1.88 のコメントは誤りだった）。
+#     前パディング 0.7s → 頭欠け（確実）
+#     前パディング 1.5s → 頭欠け（3回中2回。V1.88 以来ずっとこの状態だった）
+#     前パディング 1.7s → 頭欠けなし
+# 前後で共有される値のため、後パディングも同じ 1.7s になる（送信終端側の無音）。
+# 増やす分だけ intro 開始が遅れる（＝立ち上がりが鈍る）。頭欠けが出る場合は
+# 90, 95 と増やす方向で試す。1.5〜1.7s の間を詰める余地はあるが未検証。
+# ※ JT 系ノード（Open JTalk）での実波検証は未実施。減らす場合は必ず実機で確認する。
+PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
 # 🔴 V1.82: 送信終端（USRP keyup=0）の送出回数。従来は1発のみで、取りこぼすと
 # Analog_Bridge がストリームを閉じられず、DMR 終端フレームの生成が遅延・不整に
-# なり得た（受信側無線機が受信状態のままスタックする一因）。複数回送って確実化。
+# なり得た（受信側無線機が受信状態のままスタックする一因）。
+# 🔵 V2.05jtw: コメント修正。V1.82 は「複数回送って確実化」と書いていたが、既定値は
+# 1（＝従来と同じ1発）のままで、多重送出は実際には有効になっていない。
 USRP_EOT_REPEAT = 1
 # 🔴 V1.84: 無音のノイズ充填（TGIF 先頭無音スキップ対策）。
 # パケットキャプチャ解析により、TGIF は先頭のデジタル完全無音（全ゼロ PCM →
@@ -220,18 +273,40 @@ NOISE_FILL_ENABLED = True
 # フェードアウトして無音への遷移ポップも防ぐ。
 NOISE_FILL_AMP = 150   # トーン振幅（150/32768 ≈ -47dBFS。AMBE 非無音判定の実証値）
 # 🔴 V1.88: ノイズは前パディングの先頭 NOISE_LEAD_PACKETS 個だけに短縮。
-# TGIF ゲート床（実測≈1.0〜1.3s）を跨ぐ最小限とし、残りはゼロ（無音）にして
-# ゲート開放後に聞こえるノイズの尻尾を削る。頭シャーが残る場合はここを増やし、
-# 逆に頭欠け/ハング症状が出る場合は 75（全区間ノイズ）に戻す。
-NOISE_LEAD_PACKETS = 65   # 65×20ms=1.3s
+# 🔴 V2.05jtw: 65 → 5（1.3s → 0.1s）。VV版 V1.98vv の実測を移植した値。
+# V1.88 の「TGIF ゲート床を跨ぐ最小限」という説明は誤りだった。実測では、
+# 頭欠けを決めているのは前パディング全体の長さであってトーンの長さではない
+# （トーン 0.1s で頭欠けなし / トーン 1.3s で頭欠けあり）。トーンを短くしたことで、
+# ゲート開放後に残るトーンの「ブーン」も消えた。
+#
+# 【5 という値の性質】5 は len(_FADE_STEPS)==5 と等しい。_lead_block() は末尾
+# len(_FADE_STEPS) 個をフェードにする仕様なので、5 では 5個すべてがフェードに
+# なり、振幅 150 の定常トーンは1ブロックも送出されない（振幅 112→82→52→30→12
+# のみ）。末尾の 12 は「AMBE 非無音判定の実証値 150」を大きく下回る。それでも
+# ゲートは開き、頭欠けもブーンも無い（VV版での実測）。
+#
+# 【未解明】V1.85 の「エネルギー積算型（音量が大きいほど早く開く）」も V1.88 の
+# 「床を跨ぐ最小限」も、この結果を説明できない。ゲートの挙動モデルは確立して
+# いない。これは理屈ではなく実測で決めた値である。5 未満は未検証。
+# ※ JT 系ノードでの実波検証は未実施。頭シャー/頭欠けが出る場合は 65 に戻す。
+NOISE_LEAD_PACKETS = 5    # 5×20ms=0.1s（_FADE_STEPS と同数のため全てフェード）
 # 🔴 V1.85: ゲート開放バースト。実測（V1.84: -47dBFS ノイズでスキップが
 # 3.06s→1.32s に短縮）から、TGIF のゲートはエネルギー積算型と判断。
 # 音量が大きいほど早く開く。そこでストリーム先頭の短時間だけ強めのノイズを
 # 置き、最初のフレームでゲートを開かせてヘッダを保全する（JJ2ZAR 等の実局は
 # マイク音声が即座にゲートを開くためヘッダが通る、と同じ状態を作る）。
 # バーストはキーアップ直後の 300ms・-22dBFS の柔らかいヒスで、実用上目立たない。
-GATE_BURST_PACKETS = 0    # 先頭のバーストパケット数（15×20ms=300ms）。0で無効
-GATE_BURST_AMP = 2500      # バースト振幅（2500/32768 ≈ -22dBFS）
+#
+# 🔵 V2.05jtw: 【未実装】この2定数は定義のみで、send_usrp_wav_with_padding() からも
+# _lead_block() からも参照されていない。値を変えても動作は一切変わらない（削除せず
+# 残しているのは、発想と実測メモを保存するため）。
+# 同じ狙いは NOISE_FILL_AMP を直接上げれば試せる。VV版の実測（2026-07-17）では
+# NOISE_FILL_AMP=2500（-22dBFS）にすると TGIF に食われる量が 1.5〜1.8s → 0.3〜0.5s
+# へ激減した（＝ゲートが早く開く。V1.85 の見立て自体は正しい）。ただし食われ残った
+# トーンが大きな「ブーン」として聞こえるため、前パディングの大幅短縮とセットで
+# 詰める必要がある。立ち上がりを 1s 以内にしたい場合はこの方向が唯一の道。
+GATE_BURST_PACKETS = 0    # 【未使用】先頭のバーストパケット数（15×20ms=300ms）。0で無効
+GATE_BURST_AMP = 2500     # 【未使用】バースト振幅（2500/32768 ≈ -22dBFS）
 ROTATION_CHECK_INTERVAL = 5.0
 GAP_AFTER_INTRO_SEC = 0.5
 
@@ -258,8 +333,21 @@ CACHE_SCHEMA = "v1"            # 読み/結合仕様の版。仕様変更時に�
 # 食われる。そこで命中時のみ送出前にこの秒数だけ待ち、経路が空くのを待ってから
 # キーアップする（前パディング 1.5s と合わせた総リードで頭欠けを防ぐ）。
 # ミス時は合成に約2秒かかりガードを兼ねるため待たない（従来どおり）。
-# 現場のターンアラウンドに合わせて調整可（頭が戻るなら下げて最短を探る）。0 で無効。
-REPLY_TX_LEAD_DELAY_SEC = 1.0
+#
+# 🔴 V2.05jtw: 1.0 → 0.5。VV版 V1.98vv の実測（2026-07-17）を移植した値。
+# 床を挟み込んだ結果:
+#     lead 0    → 頭欠けあり
+#     lead 0.1  → 頭欠けあり
+#     lead 0.5  → 頭欠けなし
+# V1.77 の当初の理屈（経路が空く前にキーアップすると intro 頭が食われる）は
+# 正しく、このガードは必須。定時放送（001/002・時報）は直前に受信が無いため
+# 頭欠けが起きない ── これがガードの目的が「受信の残処理待ち」であることの傍証。
+# 0.1〜0.5 の間にさらに床がある可能性はあるが未検証。0 で無効。
+#
+# ※ この値は VOICEVOX ノード（合成 0.9s・直 TGIF 接続）での実測である。JT 系は
+#   合成が 1.5s 前後と遅いぶんキャッシュミス時の総リードは長くなる（安全側）が、
+#   命中時はこの値がそのまま効く。頭欠けが出る場合は 1.0 に戻す。
+REPLY_TX_LEAD_DELAY_SEC = 0.5
 
 # ============================================================
 # ============================================================
@@ -267,7 +355,13 @@ REPLY_TX_LEAD_DELAY_SEC = 1.0
 # ============================================================
 # カーチャンク検出直後に即座に送出し、実音声前の無音パッドで頭欠けを防ぐ。
 # GPIO ファイルの存在・権限に依存せず、純粋なソフト制御。
-PRE_AUDIO_SILENCE_SEC = 1.5           # 実音声前の無音パッド（受信側の途中参加同期の助走）。V1.87で復活
+# 🔴 V2.05jtw: 1.5 → 0.0。VV版 V1.98vv と同じ構成にする。ストリーム内に焼き込む
+# 頭無音は TGIF のゲートに食われるため頭欠け対策として当てにならず（V1.86 の実測）、
+# 立ち上がりを 1.5s 遅らせるだけになっていた。頭欠けの防止は前パディング
+# （PRE_POST_PADDING_PACKETS）と送出前ガード（REPLY_TX_LEAD_DELAY_SEC）に一本化する。
+# ※ 本定数はキャッシュ署名（_reply_signature）に含まれるため、値を変えると既存の
+#   キャッシュは自動的に無効化される（CACHE_SCHEMA を上げる必要はない）。
+PRE_AUDIO_SILENCE_SEC = 0.0           # 実音声前の無音パッド（0=焼き込まない / V2.05jtw）
 
 # ============================================================
 # 🔴 V1.67: watchdog 擬似終端の設定（V1.65 から移植）
@@ -361,6 +455,11 @@ NIGHT_END_HOUR = None
 USE_CSTM_INTRO = None
 USE_CSTM_001 = None
 USE_CSTM_002 = None
+# 🔵 V2.04jtw: 天気の付与先（系統ごと）。任意キー・既定 True。
+# キーが無い既存設定では両方 True となり、V2.03jtw と同じ「全定時音声へ一様付与」
+# になる（後方互換）。親スイッチ WEATHER_ENABLED が False なら両方とも効かない。
+WEATHER_ON_TIME_SIGNAL = None
+WEATHER_ON_MESSAGE = None
 # 🔵 V2.03jtw: 天気読み上げは voice_make.py（vmp）へ分離した。
 # bot 本体は天気を一切知らない（取得・合成・地名は vmp の管轄）。bot は
 # スケジュール判定（何分に何を鳴らすか・ナイト抑制・001/002 交互・カスタム
@@ -386,11 +485,24 @@ VMP_SLOT_MAX_AGE_SEC = 900       # スロットWAVの鮮度上限（秒）。超
 def _slot_path(minute):
     return f"/dev/shm/ocv_slot_{minute:02d}.wav"
 
-# vmp へ渡す「この発火は天気を付けるか」。現状は一様仕様（WEATHER_ENABLED が
-# true なら全定時発火に付ける）。将来ここを分岐させれば「時報だけ/001 だけ」等の
-# 付け分けが、bot 側の判断1箇所で実現できる（vmp は関与しない）。
-def _weather_wanted():
-    return bool(WEATHER_ENABLED)
+# vmp へ渡す「この発火は天気を付けるか」。
+# 🔵 V2.04jtw: V2.03jtw の一様仕様（WEATHER_ENABLED だけで全定時発火に付ける）から、
+# 系統ごとの付け分けへ拡張した。V2.03jtw のコメントで予告していた分岐点がここで、
+# 判断は bot 側のこの1箇所だけ。vmp は従来どおり --weather の有無を見るのみで、
+# 改修不要（V1.01vmp のまま使える）。
+#   kind="time_signal" / "half_hour" → 時報系   … WEATHER_ON_TIME_SIGNAL
+#   kind="message"                   → メッセージ系 … WEATHER_ON_MESSAGE
+# 親スイッチ WEATHER_ENABLED が false なら kind によらず付けない。
+# 未知の kind には付けない（安全側。将来 kind を増やしたらここも必ず更新する）。
+def _weather_wanted(kind):
+    if not WEATHER_ENABLED:
+        return False
+    if kind in ("time_signal", "half_hour"):
+        return bool(WEATHER_ON_TIME_SIGNAL)
+    if kind == "message":
+        return bool(WEATHER_ON_MESSAGE)
+    logger.warning(_fmt("!!", "weather", kind, "未知の kind のため天気を付けない"))
+    return False
 
 def _vmp_spawn(kind, minute, hour=None, base=None):
     """vmp をワンショット起動して、minute のスロットに本体音声(+天気)を作らせる。
@@ -405,7 +517,10 @@ def _vmp_spawn(kind, minute, hour=None, base=None):
         cmd += ["--hour", str(hour)]
     if base is not None:
         cmd += ["--base", base]
-    if _weather_wanted():
+    # 🔵 V2.04jtw: 天気を付けるかは kind（発火の系統）で決まる。
+    # ログとコマンドで判定がズレないよう、1回だけ評価して使い回す。
+    _wx = _weather_wanted(kind)
+    if _wx:
         cmd.append("--weather")
     try:
         subprocess.Popen(cmd)
@@ -413,7 +528,7 @@ def _vmp_spawn(kind, minute, hour=None, base=None):
                          f"{kind}"
                          + (f" hour={hour}" if hour is not None else "")
                          + (f" base={os.path.basename(base)}" if base else "")
-                         + (" +weather" if _weather_wanted() else "")))
+                         + (" +weather" if _wx else "")))
     except Exception as e:
         logger.error(_fmt("!!", "vmp spawn", f":{minute:02d}", str(e)))
 
@@ -482,6 +597,7 @@ def _load_config():
     global TX_GAIN, NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
     global USE_CSTM_INTRO, USE_CSTM_001, USE_CSTM_002
     global WEATHER_ENABLED, WEATHER_LATITUDE, WEATHER_LONGITUDE
+    global WEATHER_ON_TIME_SIGNAL, WEATHER_ON_MESSAGE
 
     # 1) 存在確認
     if not os.path.exists(CONFIG_PATH):
@@ -568,13 +684,16 @@ def _load_config():
     # 🔵 V1.73: カスタム音声フラグ（任意キー / 既定 False）。
     # intro / 001 / 002 を個別に「カスタムを使う(True) / 標準(False)」で指定する。
     # bool 以外（未設定含む不正値）は安全側に False（標準）として扱い、起動は止めない。
-    def _as_bool(key):
-        v = cfg.get(key, False)
+    # 🔵 V2.04jtw: 既定値を引数化（従来の呼び出しは default=False のまま無影響）。
+    # WEATHER_ON_* は「キーが無ければ True」＝V2.03jtw と同じ一様付与にするために
+    # default=True で呼ぶ。
+    def _as_bool(key, default=False):
+        v = cfg.get(key, default)
         if isinstance(v, bool):
             return v
         logger.warning(_fmt("!!", key, str(v),
-                            "bool でないため False（標準音声）として扱う"))
-        return False
+                            f"bool でないため {default} として扱う"))
+        return default
     use_cstm_intro = _as_bool("USE_CSTM_INTRO")
     use_cstm_001   = _as_bool("USE_CSTM_001")
     use_cstm_002   = _as_bool("USE_CSTM_002")
@@ -585,16 +704,30 @@ def _load_config():
     # 設定のため起動拒否する（VV版 V2.0vv と同じ仕様）。
     # 🔵 V2.03jtw: WEATHER_ENABLED は「vmp に --weather を渡すか」のフラグ。
     # 取得・合成・地名は vmp が担うが、座標の妥当性は bot 側でも検証しておく
-    # （誤った土地の天気を放送しないための早期ガード）。時報も定時メッセージも
-    # 無い設定（mode0 かつ freq0）との併用は「天気を付ける相手が居ない」ため拒否。
+    # （誤った土地の天気を放送しないための早期ガード）。
     # WEATHER_HOURS（時刻絞り）は一様仕様化に伴い廃止した。
+    #
+    # 🔵 V2.04jtw: 付与先（WEATHER_ON_*）を導入。既定 True のため、キーの無い
+    # 既存設定は両方 True＝V2.03jtw と同じ一様付与になる（後方互換）。
+    # 併用不可の判定も「実際に天気を付ける先が1つも無いか」へ一般化した。
+    #   時報系   : WEATHER_ON_TIME_SIGNAL かつ ts_mode >= 1
+    #   メッセージ系: WEATHER_ON_MESSAGE     かつ freq > 0
+    # 両方 false なら、V2.03jtw の「mode0 かつ freq0」と同じく起動を拒否する
+    # （この一般化は旧条件を包含する）。
     weather_enabled = _as_bool("WEATHER_ENABLED")
+    weather_on_ts = _as_bool("WEATHER_ON_TIME_SIGNAL", True)
+    weather_on_msg = _as_bool("WEATHER_ON_MESSAGE", True)
     weather_lat = None
     weather_lon = None
     if weather_enabled:
-        if ts_mode == 0 and freq == 0:
-            _fatal_config("WEATHER_ENABLED=true ですが、時報も定時メッセージも無効です"
-                          "（TIME_SIGNAL_MODE=0 かつ ANNOUNCE_FREQ=0）。天気を付ける音声がありません")
+        _tgt_ts = weather_on_ts and ts_mode >= 1
+        _tgt_msg = weather_on_msg and freq > 0
+        if not (_tgt_ts or _tgt_msg):
+            _fatal_config(
+                "WEATHER_ENABLED=true ですが、天気を付ける音声が1つもありません"
+                f"（時報系: 付与={weather_on_ts} / TIME_SIGNAL_MODE={ts_mode}、"
+                f"メッセージ系: 付与={weather_on_msg} / ANNOUNCE_FREQ={freq}）。"
+                "付与先を有効にするか、時刻案内モード・定時メッセージを有効にしてください")
         try:
             weather_lat = float(cfg["WEATHER_LATITUDE"])
             weather_lon = float(cfg["WEATHER_LONGITUDE"])
@@ -618,6 +751,8 @@ def _load_config():
     USE_CSTM_001 = use_cstm_001
     USE_CSTM_002 = use_cstm_002
     WEATHER_ENABLED = weather_enabled
+    WEATHER_ON_TIME_SIGNAL = weather_on_ts
+    WEATHER_ON_MESSAGE = weather_on_msg
     WEATHER_LATITUDE = weather_lat
     WEATHER_LONGITUDE = weather_lon
 
@@ -732,7 +867,9 @@ def _send_usrp_metadata(sock, seq: int) -> int:
 
 
 def send_usrp_wav_with_padding(wav_path):
-    """WAV を USRP プロトコルで送信(前後 1.5 秒のパディング付き、絶対時刻同期)"""
+    """WAV を USRP プロトコルで送信（前後パディング付き、絶対時刻同期）。
+    🔵 V2.05jtw: docstring 修正。パディングは 1.5 秒固定ではなく
+    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。"""
     sock = None
     wf = None
     seq = 0
@@ -1521,7 +1658,9 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    logger.info(f"DVSwitch Bot V2.03jtw (daemon, 定時音声を vmp へ分離 / JTW版) starting up (PID: {_PID})")
+    # 🔵 V2.04jtw: 起動バナーの版をベタ書きから __version__ 参照へ変更
+    # （VV版 V1.95a と同じ整理。版上げ時の二重管理・更新漏れを解消する）。
+    logger.info(f"DVSwitch Bot {__version__} (daemon, 定時音声を vmp へ分離 / JTW版) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
     # 🔵 V1.94: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
     logger.info(f"  My DMR ID         : {MY_DMR_ID}  (source: ini 自動取得)")
@@ -1546,8 +1685,16 @@ def _log_startup_info():
     logger.info(f"  Time signal mode  : {TIME_SIGNAL_MODE} ({_ts_desc}, lead {TIME_SIGNAL_LEAD_SEC}s)")
     # 🔵 V2.03jtw: 天気読み上げの状態（実処理は voice_make.py が担当）
     if WEATHER_ENABLED:
+        # 🔵 V2.04jtw: 実際に天気が付く系統を明示する（設定ミスの早期発見のため、
+        # 付与先の指定と、その系統が有効かどうかの両方を反映して表示する）。
+        _wx_tgt = []
+        if WEATHER_ON_TIME_SIGNAL and TIME_SIGNAL_MODE >= 1:
+            _wx_tgt.append(":00" + ("/:30" if TIME_SIGNAL_MODE == 2 else ""))
+        if WEATHER_ON_MESSAGE and ANNOUNCE_FREQ > 0:
+            _wx_tgt.append("001/002")
         logger.info(f"  Weather readout   : ON  ({WEATHER_LATITUDE},{WEATHER_LONGITUDE}) "
-                    f"via voice_make.py (発火{VMP_PREFETCH_LEAD_SEC}s前に事前生成 / 全定時音声に付与)")
+                    f"via voice_make.py (発火{VMP_PREFETCH_LEAD_SEC}s前に事前生成 / "
+                    f"付与先: {' + '.join(_wx_tgt) if _wx_tgt else 'なし'})")
         logger.info(f"  vmp path          : {VMP_PATH}")
         if not os.path.exists(VMP_PATH):
             logger.warning(f"  [vmp] {VMP_PATH} が見つかりません — 天気付き定時音声が生成されません")
