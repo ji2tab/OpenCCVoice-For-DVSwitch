@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
- bot_setup.py — DVSwitch Bot 設定ツール（JTW版 / V2.03jtw）
+ bot_setup.py — DVSwitch Bot 設定ツール（JTW版 / V2.04jtw）
    dvswitch_bot.py（デーモン版）が読む設定ファイル
    /opt/dvswitch_bot/bot_config.json を対話で作成・更新する。
 
@@ -26,11 +26,16 @@
    USE_CSTM_002        : 002 にカスタム音声 cstm_002.wav を使う（true/false）
                          ※カスタム選択時にファイルが無ければ本体が標準へ自動フォールバック
                          ※カスタムファイルは利用者が /opt/dvswitch_bot/ 直下に用意する
-   WEATHER_ENABLED     : 定時音声（時報/30分/001/002）に当地の天気を付ける
+   WEATHER_ENABLED     : 天気読み上げの親スイッチ
                          （true/false, JTW版 V2.03jtw〜。取得・合成は voice_make.py）
+   WEATHER_ON_TIME_SIGNAL : 時報（:00）・30分案内（:30）に天気を付ける
+                         （true/false, 任意キー。既定 true。JTW版 V2.04jtw〜）
+   WEATHER_ON_MESSAGE  : 定時メッセージ（001/002）に天気を付ける
+                         （true/false, 任意キー。既定 true。JTW版 V2.04jtw〜）
    WEATHER_LATITUDE    : 天気取得の緯度（有効時のみ。例 35.2167）
    WEATHER_LONGITUDE   : 天気取得の経度（有効時のみ。例 137.0333）
-                         ※TIME_SIGNAL_MODE=0（時報なし）とは併用不可（本体が起動拒否）
+                         ※WEATHER_ENABLED=true でも、付与先（時報系/メッセージ系）が
+                           1つも無い設定は不可（本体が起動拒否）
 
 【配置】
    /opt/dvswitch_bot/bin/bot_setup.py
@@ -43,6 +48,14 @@
  ※ /opt/dvswitch_bot/ への書き込みのため sudo 推奨。
 
  【版履歴（本ツール）】
+   V2.04jtw : 天気の付与先を「時報系（:00/:30）」と「定時メッセージ系（001/002）」で
+              個別に選べるようにした（WEATHER_ON_TIME_SIGNAL / WEATHER_ON_MESSAGE）。
+              どちらも任意キーで既定 true のため、キーの無い既存設定は V2.03jtw と
+              完全に同一の動作（全定時音声へ一様付与）になる。付与先が存在しない系統
+              （時刻案内 OFF / 定時メッセージ 0 回）は対話で問わず OFF 固定にする。
+              検証は「付与先が1つも無ければエラー」に一般化（V2.03jtw の
+              「mode0 かつ freq0 は不可」を包含する）。
+              ※本体 dvswitch_bot.py V2.04jtw / ダッシュボード app.py V3.2 と対で運用する。
    V2.03jtw : 定時音声の生成が voice_make.py（vmp）へ分離されたことに追随。
               WEATHER_HOURS（時刻絞り）を廃止（全定時音声へ一様付与）。天気の
               併用不可条件を「時報も定時メッセージも無い（mode0 かつ freq0）」に修正。
@@ -58,7 +71,7 @@
 # ============================================================
 # 本体 dvswitch_bot.py の __version__ と同じ流儀。bot_setup.py 側の変更で
 # 版を上げるときはこの文字列と上の docstring 版履歴を一致させること。
-__version__ = "V2.03jtw"
+__version__ = "V2.04jtw"
 
 import os
 import sys
@@ -81,6 +94,10 @@ DEFAULTS = {
     "USE_CSTM_001": False,
     "USE_CSTM_002": False,
     "WEATHER_ENABLED": False,
+    # 🔵 V2.04jtw: 天気の付与先。既定 true（＝キーが無い既存設定は V2.03jtw と
+    # 同じ「全定時音声へ一様付与」になる）。WEATHER_ENABLED=false のときは効かない。
+    "WEATHER_ON_TIME_SIGNAL": True,
+    "WEATHER_ON_MESSAGE": True,
 }
 
 # 🔵 V2.00jtw: 天気読み上げの座標・対象時刻。DEFAULTS に置かない（土地の既定値を
@@ -145,8 +162,9 @@ TX_GAIN_MAX = 5.0   # これ以下
 #   TX_GAIN        : V1.68 で追加
 #   USE_CSTM_*     : V1.73 で追加（intro/001/002 のカスタム音声選択）
 #   WEATHER_*      : V2.00jtw で追加（時報への当地天気読み上げ / JTW版）
+#   WEATHER_ON_*   : V2.04jtw で追加（天気の付与先の個別指定）
 _OPTIONAL_KEYS = ("TX_GAIN", "USE_CSTM_INTRO", "USE_CSTM_001", "USE_CSTM_002",
-                  "WEATHER_ENABLED")
+                  "WEATHER_ENABLED", "WEATHER_ON_TIME_SIGNAL", "WEATHER_ON_MESSAGE")
 REQUIRED_KEYS = [k for k in DEFAULTS if k not in _OPTIONAL_KEYS]
 
 
@@ -211,15 +229,28 @@ def validate(cfg):
         if k in cfg and not isinstance(cfg[k], bool):
             errors.append(f"{k} は true / false（現在 {cfg[k]!r}）")
 
-    # 🔵 V2.00jtw: 天気読み上げ（dvswitch_bot.py V2.00jtw の _load_config と同一基準）。
-    # WEATHER_ENABLED は任意キー。true のときのみ座標を厳格に検証し、
-    # TIME_SIGNAL_MODE=0（時報なし）との併用は入口で弾く（本体も起動拒否する）。
+    # 🔵 V2.00jtw / V2.04jtw: 天気読み上げ（dvswitch_bot.py V2.04jtw の _load_config と同一基準）。
+    # WEATHER_ENABLED は任意キー。true のときのみ座標を厳格に検証する。
+    # 🔵 V2.04jtw: 付与先（WEATHER_ON_*）を導入したため、併用不可の判定を
+    # 「実際に天気を付ける先が1つも無いか」へ一般化した。付与先の有無は
+    #     時報系   : WEATHER_ON_TIME_SIGNAL かつ TIME_SIGNAL_MODE >= 1
+    #     メッセージ系: WEATHER_ON_MESSAGE     かつ ANNOUNCE_FREQ > 0
+    # で判定する。両方 false なら、V2.03jtw の「mode0 かつ freq0」と同じくエラー。
     if "WEATHER_ENABLED" in cfg and not isinstance(cfg["WEATHER_ENABLED"], bool):
         errors.append(f"WEATHER_ENABLED は true / false（現在 {cfg['WEATHER_ENABLED']!r}）")
+    for k in ("WEATHER_ON_TIME_SIGNAL", "WEATHER_ON_MESSAGE"):
+        if k in cfg and not isinstance(cfg[k], bool):
+            errors.append(f"{k} は true / false（現在 {cfg[k]!r}）")
     if cfg.get("WEATHER_ENABLED") is True:
-        if ts_mode == 0 and cfg.get("ANNOUNCE_FREQ", 0) == 0:
-            errors.append("WEATHER_ENABLED=true ですが、時報も定時メッセージも無効です"
-                          "（TIME_SIGNAL_MODE=0 かつ ANNOUNCE_FREQ=0）。天気を付ける音声がありません")
+        # 任意キーのため既定 true（＝キーが無ければ V2.03jtw と同じ一様付与）
+        _on_ts = cfg.get("WEATHER_ON_TIME_SIGNAL", True) is not False
+        _on_msg = cfg.get("WEATHER_ON_MESSAGE", True) is not False
+        _tgt_ts = _on_ts and ts_mode >= 1
+        _tgt_msg = _on_msg and int(cfg.get("ANNOUNCE_FREQ", 0)) > 0
+        if not (_tgt_ts or _tgt_msg):
+            errors.append("WEATHER_ENABLED=true ですが、天気を付ける音声が1つもありません"
+                          f"（時報系: 付与={_on_ts}/mode={ts_mode}, "
+                          f"メッセージ系: 付与={_on_msg}/freq={cfg.get('ANNOUNCE_FREQ', 0)}）")
         try:
             w_lat = float(cfg["WEATHER_LATITUDE"])
             w_lon = float(cfg["WEATHER_LONGITUDE"])
@@ -474,18 +505,46 @@ def do_edit():
     # 付ける。voice_make.py が発火2分前に取得・事前生成し、発火時は再生のみ。
     # 地名は wav_source.json の location（create_wav.sh で設定）を使う。
     print("\n--- 天気読み上げ（JTW版）---")
-    _no_voice = (cfg["TIME_SIGNAL_MODE"] == 0 and cfg.get("ANNOUNCE_FREQ", 0) == 0)
-    if _no_voice:
+    # 🔵 V2.04jtw: 付与先の系統ごとに「そもそも鳴る音声があるか」を先に見る。
+    # 無い系統は対話で問わず OFF 固定にする（選ばせても意味がないため）。
+    _has_ts = (cfg["TIME_SIGNAL_MODE"] >= 1)            # 時報 :00 / 30分案内 :30
+    _has_msg = (int(cfg.get("ANNOUNCE_FREQ", 0)) > 0)   # 定時メッセージ 001/002
+    # 付与先の既定は base（既存設定 → 無ければ DEFAULTS の true）
+    cfg["WEATHER_ON_TIME_SIGNAL"] = base.get("WEATHER_ON_TIME_SIGNAL", True)
+    cfg["WEATHER_ON_MESSAGE"] = base.get("WEATHER_ON_MESSAGE", True)
+    if not (_has_ts or _has_msg):
         print("  時報も定時メッセージも無いため、天気は設定できません（OFF固定）。")
         cfg["WEATHER_ENABLED"] = False
         for k in _WEATHER_EXTRA_KEYS:
             if k in base:
                 cfg[k] = base[k]   # 値は保存し続ける（音声を有効に戻したとき再利用）
     else:
-        print("  時報・30分・001/002 の後ろに「○○の天気は、晴れ、気温は25度です」を付けます。")
+        print("  定時音声の後ろに「○○の天気は、晴れ、気温は25度です」を付けます。")
         print("  （○○は create_wav.sh で設定した地名。座標は Google マップで確認できます）")
         cfg["WEATHER_ENABLED"] = ask_bool("天気読み上げを有効にしますか？",
                                           base.get("WEATHER_ENABLED", False))
+        if cfg["WEATHER_ENABLED"]:
+            # --- 付与先の選択（V2.04jtw）---
+            # 鳴る音声が無い系統は問わずに OFF 固定（理由を明示する）。
+            print("\n  天気を付ける対象を選びます（両方 ON も可）。")
+            if _has_ts:
+                cfg["WEATHER_ON_TIME_SIGNAL"] = ask_bool(
+                    "  時報（:00 / :30）に天気を付ける？",
+                    base.get("WEATHER_ON_TIME_SIGNAL", True))
+            else:
+                cfg["WEATHER_ON_TIME_SIGNAL"] = False
+                print("  ※ 時刻案内が無効（mode 0）のため、時報への付与は OFF 固定です。")
+            if _has_msg:
+                cfg["WEATHER_ON_MESSAGE"] = ask_bool(
+                    "  定時メッセージ（001/002）に天気を付ける？",
+                    base.get("WEATHER_ON_MESSAGE", True))
+            else:
+                cfg["WEATHER_ON_MESSAGE"] = False
+                print("  ※ 定時メッセージが 0 回のため、そちらへの付与は OFF 固定です。")
+            # 付与先が両方 OFF なら天気自体を OFF に倒す（保存時の検証エラーを未然に回避）
+            if not (cfg["WEATHER_ON_TIME_SIGNAL"] or cfg["WEATHER_ON_MESSAGE"]):
+                print("  ※ 付与先が両方 OFF のため、天気読み上げ自体を OFF にしました。")
+                cfg["WEATHER_ENABLED"] = False
         if cfg["WEATHER_ENABLED"]:
             # 🔵 初期値の補完: bot_config.json に無ければ MMDVM_Bridge.ini の
             # [Info] Latitude/Longitude を初期表示する（Enter で採用可）。
@@ -541,8 +600,14 @@ def do_edit():
     print(f"   カスタム音声   : intro={_cstm(cfg['USE_CSTM_INTRO'])} "
           f"001={_cstm(cfg['USE_CSTM_001'])} 002={_cstm(cfg['USE_CSTM_002'])}")
     if cfg.get("WEATHER_ENABLED"):
+        # 🔵 V2.04jtw: 付与先を明示する（両方 ON なら従来どおり「全定時音声」）
+        _wt = []
+        if cfg.get("WEATHER_ON_TIME_SIGNAL", True):
+            _wt.append("時報:00" + ("・:30" if ts == 2 else ""))
+        if cfg.get("WEATHER_ON_MESSAGE", True):
+            _wt.append(f"定時メッセージ（{msg_str}）")
         print(f"   天気読み上げ   : ON  ({cfg['WEATHER_LATITUDE']}, {cfg['WEATHER_LONGITUDE']}) "
-              f"全定時音声に付与")
+              f"付与先: {' / '.join(_wt) if _wt else 'なし'}")
     else:
         print("   天気読み上げ   : OFF")
     print("----------------------------------------------------------")
