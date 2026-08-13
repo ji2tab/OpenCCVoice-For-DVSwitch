@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V3.11
+ app.py  V3.2
 
  ■ 位置づけ
    V2 系（V2.0〜V2.87bvv）の機能を統合したメジャーバージョン。
@@ -34,6 +34,29 @@
      ※ jtalk 側は create_wav.sh V1.2 以降（--regen 対応）が必要。
   3. 🔵 保存ヒットの文言と保存後メッセージを jtalk / VOICEVOX で出し分け。
 
+ 【V3.2 の要点（V3.11 からの変更）】
+  1. 🔵 天気読み上げ（JTW版）の設定に対応。Bot設定カードの下に「天気読み上げ」
+     カードを新設し、次を編集できるようにした。
+       WEATHER_ENABLED         天気読み上げの親スイッチ
+       WEATHER_ON_TIME_SIGNAL  時報（:00）・30分案内（:30）に付ける
+       WEATHER_ON_MESSAGE      定時メッセージ（001/002）に付ける
+       WEATHER_LATITUDE / WEATHER_LONGITUDE  取得座標
+     付与先を系統ごとに選べるのは dvswitch_bot.py V2.04jtw / bot_setup.py V2.04jtw
+     から。検証条件（付与先が1つも無ければ不可・座標必須・範囲）は三者で同一。
+  2. 🔵 JTW ノード以外では天気カードを丸ごとグレーアウトし、注記のみ表示する
+     （共有ダッシュボードの流儀。VOICEVOX 話者変更 UI と同じ考え方）。
+     判定は jtw_available(): bin/voice_make.py が存在する、または bot の版文字列に
+     "jtw" を含む。片方が取得できなくても拾えるよう OR で判定する。
+  3. 🔴 未知キー保護を追加（V3.11 以前の欠陥の修正）。従来の保存ルートは
+     bot_config.json を「ダッシュボードが知っているキーだけ」で作り直していたため、
+     JTW ノードで保存すると WEATHER_* が黙って消えていた（JTW版 README の警告は
+     この挙動を指す）。V3.2 では既存ファイルを土台にして差分更新するため、
+     ダッシュボードが知らないキーは保存しても失われない。将来 bot 側にキーが
+     増えても、ダッシュボードを更新するまでの間に設定を壊さない。
+  4. 🔵 bot_config.json の組み立て・検証を build_bot_cfg() / validate_bot_cfg() に
+     集約し、/bot_config と /save_all の重複（従来2箇所に同じ dict と assert が
+     並んでいた）を解消した。検証条件の追加漏れが起きない構造にする。
+
  【V3.0 の要点（V2.87bvv からの変更）】
   1. 🔵 V2 系機能の統合・整理。機能セットは V2.87bvv と同一
      （3カード一括保存 / 順序再起動 / 時刻案内モード / TX_GAIN / カスタム音声 /
@@ -51,7 +74,10 @@
      V2.58 / V2.59 の typo 修正と同系統。入力ラベルが本来意図の淡色表示になる。
 
  【対応バージョン】
-   dvswitch_bot.py : V1.96vv 以降（VOICEVOX 系）/ V1.93 以降（Open JTalk 系。
+   dvswitch_bot.py : V2.04jtw 以降（JTW 系。天気の付与先を系統ごとに指定するため。
+                     V2.03jtw 以前でも保存は壊れないが、付与先の指定は無視され
+                     全定時音声へ一様付与になる）
+                   : V1.96vv 以降（VOICEVOX 系）/ V1.93 以降（Open JTalk 系。
                      読み上げ内容編集のための bot 改修は不要 — 固定WAVを送出時に
                      読み直し、キャッシュも mtime で自動無効化するため）
    create_wav.sh   : --regen 対応版が必要（VOICEVOX 系: V1.3avv 以降 /
@@ -73,7 +99,7 @@
 # 版を上げるときは docstring の表記と必ず一致させること。
 # テンプレートのヘッダ/フッタは context_processor 経由（{{ app_version }}）で
 # この値を参照するため、テンプレート内に版のベタ書きはない。
-__version__ = "V3.11"
+__version__ = "V3.2"
 
 import os, json, re, subprocess, glob, time, wave, contextlib
 from datetime import datetime
@@ -134,6 +160,29 @@ REGEN_TIMEOUT_SEC = 300  # 再生成の上限。vv_say.py は1ファイルごと
 def voicevox_available():
     """このノードで VOICEVOX 話者変更が使えるか（共有ダッシュボード対応）。"""
     return os.path.isdir(VOICEVOX_VVM_DIR) and os.path.exists(VENV_PY)
+
+
+# 🔵 V3.2: 天気読み上げ（JTW版）まわり。
+# 本ダッシュボードは JT / VV / JTW の各ノードで共有する。天気は JTW版だけの機能
+# なので、非 JTW ノードでは天気カードをグレーアウトし、保存ルートでも天気キーに
+# 一切触れない（VOICEVOX 話者変更 UI と同じ流儀）。
+VMP_PATH = "/opt/dvswitch_bot/bin/voice_make.py"   # JTW版の天気音声生成ツール
+WEATHER_LAT_MIN, WEATHER_LAT_MAX = -90.0, 90.0
+WEATHER_LON_MIN, WEATHER_LON_MAX = -180.0, 180.0
+
+
+def jtw_available():
+    """このノードが JTW版（天気読み上げ対応）かどうか。
+
+    判定は次の OR:
+      1) /opt/dvswitch_bot/bin/voice_make.py が存在する（実体ベース・確実）
+      2) bot の版文字列に "jtw" を含む（例 V2.04jtw）
+    どちらか一方が取得できない状況（vmp を別パスに置いた / ExecStart から版を
+    拾えない）でも拾えるよう OR にしている。ファイル存在の方が安いため先に見る。
+    """
+    if os.path.exists(VMP_PATH):
+        return True
+    return "jtw" in (get_bot_version() or "").lower()
 
 app = Flask(__name__)
 
@@ -392,6 +441,7 @@ def index():
         wav_source=get_wav_source(),
         voices=get_voice_list(),
         voicevox_ok=voicevox_available(),
+        jtw_ok=jtw_available(),
         test_wavs=get_test_wavs(),
         backups=list_backups(),
         change_log=change_log,
@@ -790,35 +840,118 @@ def test_send():
     return redirect("/")
 
 
+# 🔵 V3.2: bot_config.json の組み立てと検証を1箇所に集約する。
+# 従来は /bot_config と /save_all に同じ dict と assert が並んでおり、条件を足す
+# たびに二重メンテが必要だった（三位一体の原則を1ファイル内でも守る）。
+def build_bot_cfg(form, old_cfg):
+    """フォームから bot_config.json の内容を組み立てて返す。
+
+    🔴 V3.2 未知キー保護: 既存ファイル(old_cfg)を土台にして差分更新する。
+    従来は毎回まっさらな dict を作っていたため、ダッシュボードが知らないキー
+    （JTW版の WEATHER_* など）が保存のたびに消えていた。土台にすることで、
+    bot 側にキーが増えてもダッシュボードを更新するまで設定を壊さない。
+
+    天気キーは JTW ノードのときだけフォームの値で上書きする。非 JTW ノードでは
+    触れないため、他系統の設定ファイルを持ち込んでも値は保持される。
+    """
+    cfg = dict(old_cfg) if isinstance(old_cfg, dict) else {}
+    cfg.update({
+        "RX_DURATION_MIN_SEC": float(form["rx_min"]),
+        "RX_DURATION_MAX_SEC": float(form["rx_max"]),
+        "TIME_SIGNAL_MODE":    int(form.get("time_signal_mode", 1)),
+        "ANNOUNCE_FREQ":       int(form["freq"]),
+        "NIGHT_MODE_ENABLED":  form.get("night_enabled") == "on",
+        "NIGHT_START_HOUR":    int(form["night_start"]),
+        "NIGHT_END_HOUR":      int(form["night_end"]),
+        "TX_GAIN":             float(form.get("tx_gain", 1.0)),
+        "USE_CSTM_INTRO":      form.get("use_cstm_intro") == "on",
+        "USE_CSTM_001":        form.get("use_cstm_001") == "on",
+        "USE_CSTM_002":        form.get("use_cstm_002") == "on",
+    })
+    if jtw_available():
+        cfg.update(_weather_from_form(form))
+    return cfg
+
+
+def _weather_from_form(form):
+    """天気キーをフォームから組み立てる（JTW ノードでのみ呼ばれる）。
+
+    座標は空欄なら辞書に入れない＝既存値を維持する（build_bot_cfg が old_cfg を
+    土台にしているため）。天気 OFF のまま座標欄を空で保存しても、以前入力した
+    座標は消えない（bot_setup.py が OFF でも座標を保存し続けるのと同じ思想）。
+    """
+    d = {
+        "WEATHER_ENABLED":        form.get("weather_enabled") == "on",
+        "WEATHER_ON_TIME_SIGNAL": form.get("weather_on_time_signal") == "on",
+        "WEATHER_ON_MESSAGE":     form.get("weather_on_message") == "on",
+    }
+    lat = (form.get("weather_lat") or "").strip()
+    lon = (form.get("weather_lon") or "").strip()
+    if lat != "":
+        d["WEATHER_LATITUDE"] = float(lat)
+    if lon != "":
+        d["WEATHER_LONGITUDE"] = float(lon)
+    return d
+
+
+def validate_bot_cfg(cfg):
+    """bot_config.json の検証。問題があれば AssertionError を送出する。
+    条件は dvswitch_bot.py / bot_setup.py と同一基準に揃えること（三位一体）。"""
+    assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
+    assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
+    assert cfg["TIME_SIGNAL_MODE"] in (0, 1, 2), "時刻案内モードは0/1/2"
+    _vf = VALID_FREQ_BY_MODE[cfg["TIME_SIGNAL_MODE"]]
+    assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
+    assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
+    assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
+    assert TX_GAIN_MIN < cfg["TX_GAIN"] <= TX_GAIN_MAX, f"送出音量は{TX_GAIN_MIN}超〜{TX_GAIN_MAX}以下"
+    _validate_weather(cfg)
+
+
+def _validate_weather(cfg):
+    """🔵 V3.2: 天気（JTW版）の検証。bot_setup.py V2.04jtw の validate と同一基準。
+
+    - WEATHER_ENABLED が false／キー無しなら何も見ない（従来ノードは素通り）
+    - true のときは「実際に天気を付ける先」が1つ以上あること
+        時報系   : WEATHER_ON_TIME_SIGNAL かつ TIME_SIGNAL_MODE >= 1
+        メッセージ系: WEATHER_ON_MESSAGE     かつ ANNOUNCE_FREQ > 0
+      （V2.03jtw の「mode0 かつ freq0 は不可」を包含する一般化）
+    - 座標は必須かつ範囲内
+    付与先キーの既定は true（キーが無い既存設定は一様付与＝V2.03jtw と同じ）。
+    """
+    if not cfg.get("WEATHER_ENABLED"):
+        return
+    on_ts = cfg.get("WEATHER_ON_TIME_SIGNAL", True) is not False
+    on_msg = cfg.get("WEATHER_ON_MESSAGE", True) is not False
+    tgt_ts = on_ts and int(cfg.get("TIME_SIGNAL_MODE", 1)) >= 1
+    tgt_msg = on_msg and int(cfg.get("ANNOUNCE_FREQ", 0)) > 0
+    assert tgt_ts or tgt_msg, (
+        "天気を付ける音声がありません"
+        "（時報に付けるなら時刻案内モードを1以上に、"
+        "定時メッセージに付けるなら送出する分を1つ以上にしてください）")
+    try:
+        lat = float(cfg["WEATHER_LATITUDE"])
+        lon = float(cfg["WEATHER_LONGITUDE"])
+    except (KeyError, ValueError, TypeError):
+        raise AssertionError("天気を有効にするには緯度・経度が必要です（例 35.2167 / 137.0333）")
+    assert WEATHER_LAT_MIN <= lat <= WEATHER_LAT_MAX, \
+        f"緯度は{WEATHER_LAT_MIN}〜{WEATHER_LAT_MAX}（現在 {lat}）"
+    assert WEATHER_LON_MIN <= lon <= WEATHER_LON_MAX, \
+        f"経度は{WEATHER_LON_MIN}〜{WEATHER_LON_MAX}（現在 {lon}）"
+
+
 @app.route("/bot_config", methods=["POST"])
 def bot_config_save():
     try:
-        cfg = {
-            "RX_DURATION_MIN_SEC": float(request.form["rx_min"]),
-            "RX_DURATION_MAX_SEC": float(request.form["rx_max"]),
-            "TIME_SIGNAL_MODE":    int(request.form.get("time_signal_mode", 1)),
-            "ANNOUNCE_FREQ":       int(request.form["freq"]),
-            "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
-            "NIGHT_START_HOUR":    int(request.form["night_start"]),
-            "NIGHT_END_HOUR":      int(request.form["night_end"]),
-            "TX_GAIN":             float(request.form.get("tx_gain", 1.0)),
-            "USE_CSTM_INTRO":      request.form.get("use_cstm_intro") == "on",
-            "USE_CSTM_001":        request.form.get("use_cstm_001") == "on",
-            "USE_CSTM_002":        request.form.get("use_cstm_002") == "on",
-        }
-        assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
-        assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
-        assert cfg["TIME_SIGNAL_MODE"] in (0, 1, 2), "時刻案内モードは0/1/2"
-        _vf = VALID_FREQ_BY_MODE[cfg["TIME_SIGNAL_MODE"]]
-        assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
-        assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
-        assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
-        assert TX_GAIN_MIN < cfg["TX_GAIN"] <= TX_GAIN_MAX, f"送出音量は{TX_GAIN_MIN}超〜{TX_GAIN_MAX}以下"
+        # 🔵 V3.2: 組み立て・検証は build_bot_cfg / validate_bot_cfg に集約。
+        # old_cfg は未知キー保護の土台と、変更ログの比較元を兼ねる。
         old_cfg = read_json(BOT_CONFIG)
+        cfg = build_bot_cfg(request.form, old_cfg)
+        validate_bot_cfg(cfg)
         write_json(BOT_CONFIG, cfg)
         append_change_log("Bot設定", old_cfg, cfg)
         set_flash(msg="Bot設定を保存しました。サービスを再起動してください。"); return redirect("/")
-    except (AssertionError, ValueError) as e:
+    except (AssertionError, ValueError, KeyError) as e:
         set_flash(err=f"入力エラー: {e}"); return redirect("/")
 
 @app.route("/dvs_config", methods=["POST"])
@@ -895,28 +1028,11 @@ def save_all():
         backup_ini()
 
         # --- Bot設定 (bot_config.json) ---
-        cfg = {
-            "RX_DURATION_MIN_SEC": float(request.form["rx_min"]),
-            "RX_DURATION_MAX_SEC": float(request.form["rx_max"]),
-            "TIME_SIGNAL_MODE":    int(request.form.get("time_signal_mode", 1)),
-            "ANNOUNCE_FREQ":       int(request.form["freq"]),
-            "NIGHT_MODE_ENABLED":  request.form.get("night_enabled") == "on",
-            "NIGHT_START_HOUR":    int(request.form["night_start"]),
-            "NIGHT_END_HOUR":      int(request.form["night_end"]),
-            "TX_GAIN":             float(request.form.get("tx_gain", 1.0)),
-            "USE_CSTM_INTRO":      request.form.get("use_cstm_intro") == "on",
-            "USE_CSTM_001":        request.form.get("use_cstm_001") == "on",
-            "USE_CSTM_002":        request.form.get("use_cstm_002") == "on",
-        }
-        assert cfg["RX_DURATION_MIN_SEC"] > 0, "最小受信時間は0より大"
-        assert cfg["RX_DURATION_MIN_SEC"] < cfg["RX_DURATION_MAX_SEC"], "MIN < MAX であること"
-        assert cfg["TIME_SIGNAL_MODE"] in (0, 1, 2), "時刻案内モードは0/1/2"
-        _vf = VALID_FREQ_BY_MODE[cfg["TIME_SIGNAL_MODE"]]
-        assert cfg["ANNOUNCE_FREQ"] in _vf, f"定時メッセージは{'/'.join(map(str, _vf))}"
-        assert 0 <= cfg["NIGHT_START_HOUR"] <= 23
-        assert 0 <= cfg["NIGHT_END_HOUR"] <= 23
-        assert TX_GAIN_MIN < cfg["TX_GAIN"] <= TX_GAIN_MAX, f"送出音量は{TX_GAIN_MIN}超〜{TX_GAIN_MAX}以下"
+        # 🔵 V3.2: 組み立て・検証は build_bot_cfg / validate_bot_cfg に集約
+        # （/bot_config と同一処理。未知キー保護つき）。
         old_cfg = read_json(BOT_CONFIG)
+        cfg = build_bot_cfg(request.form, old_cfg)
+        validate_bot_cfg(cfg)
         write_json(BOT_CONFIG, cfg)
         append_change_log("Bot設定", old_cfg, cfg)
 
@@ -1062,6 +1178,11 @@ font-weight:bold;
   input:focus,select:focus{border-color:var(--orange2)}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  /* 🔵 V3.2: 非対応ノードでカードごと無効化する（天気カード用）。
+     view-mode の入力欄グレーアウトと同じ見え方に揃え、操作を受け付けない。 */
+  .card-na .card-body{opacity:.55}
+  .card-na input,.card-na select{pointer-events:none;background:#e8e8e8;color:#888}
+  .wx-sub{margin-left:22px}
   .toggle-label{color:var(--text)}
   input[type=checkbox]{width:14px;height:14px;accent-color:var(--orange2)}
 
@@ -1328,6 +1449,9 @@ margin-bottom:6px;border-left:4px solid;
 <form id="save-form" method="post" action="/save_all">
 <div class="grid3">
 
+  <!-- 🔵 V3.2: 左セル＝Bot設定 + 天気読み上げ の2カード縦積み
+       （中央セルの DVSwitch設定 + カスタム音声 と同じ構成にした） -->
+  <div style="display:grid;gap:12px;align-content:start">
   <div class="card">
     <div class="card-head">Bot 設定 — bot_config.json</div>
     <div class="card-body">
@@ -1383,6 +1507,72 @@ margin-bottom:6px;border-left:4px solid;
         </div>
       </div>
   </div>
+
+  <!-- 🔵 V3.2: 天気読み上げカード（Bot設定の下・左セル内）。
+       JTW版（voice_make.py を持つノード）でのみ操作可能。非 JTW ノードでは
+       card-na でカードごとグレーアウトし、注記だけを出す（共有ダッシュボード）。
+       非 JTW ノードでは保存ルートも天気キーに触れないため、フォームに値が
+       出ていても設定は書き換わらない。 -->
+  <div class="card {% if not jtw_ok %}card-na{% endif %}">
+    <div class="card-head">天気読み上げ — JTW版</div>
+    <div class="card-body">
+        {% if jtw_ok %}
+        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+          定時音声の後ろに「○○の天気は、晴れ、気温は25度です」を付けます。
+          地名（○○）は下の「読み上げ内容」の地名と共通です。取得は Open-Meteo。
+        </div>
+        {% else %}
+        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+          このノードは JTW版（天気読み上げ対応）ではないため設定できません。
+          表示のみで、保存しても bot_config.json の天気設定は変更されません。
+        </div>
+        {% endif %}
+        <div class="toggle-row">
+          <input type="checkbox" name="weather_enabled" id="wx_chk"
+            {% if bot_cfg.get('WEATHER_ENABLED', False) %}checked{% endif %}
+            {% if not jtw_ok %}disabled{% endif %}
+            onchange="toggleWeather(this.checked)">
+          <label class="toggle-label" for="wx_chk">天気読み上げを有効にする</label>
+        </div>
+        <div id="wx-fields" {% if not bot_cfg.get('WEATHER_ENABLED', False) %}style="display:none"{% endif %}>
+          <div class="section-title">天気を付ける対象</div>
+          <div class="toggle-row wx-sub">
+            <input type="checkbox" name="weather_on_time_signal" id="wx_ts_chk"
+              {% if bot_cfg.get('WEATHER_ON_TIME_SIGNAL', True) %}checked{% endif %}
+              {% if not jtw_ok %}disabled{% endif %}>
+            <label class="toggle-label" for="wx_ts_chk">時報（:00）・30分案内（:30）</label>
+          </div>
+          <div class="toggle-row wx-sub">
+            <input type="checkbox" name="weather_on_message" id="wx_msg_chk"
+              {% if bot_cfg.get('WEATHER_ON_MESSAGE', True) %}checked{% endif %}
+              {% if not jtw_ok %}disabled{% endif %}>
+            <label class="toggle-label" for="wx_msg_chk">定時メッセージ（001/002）</label>
+          </div>
+          <div class="section-title">取得座標</div>
+          <div class="row2">
+            <div class="field">
+              <label>緯度（-90〜90）</label>
+              <input type="text" name="weather_lat" placeholder="{{ info.lat or '35.2167' }}"
+                value="{{ bot_cfg.get('WEATHER_LATITUDE', '') }}"
+                {% if not jtw_ok %}disabled{% endif %}>
+            </div>
+            <div class="field">
+              <label>経度（-180〜180）</label>
+              <input type="text" name="weather_lon" placeholder="{{ info.lon or '137.0333' }}"
+                value="{{ bot_cfg.get('WEATHER_LONGITUDE', '') }}"
+                {% if not jtw_ok %}disabled{% endif %}>
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--muted)">
+            空欄で保存すると、以前の座標をそのまま維持します。
+            未設定のまま有効にはできません（MMDVM Info の緯度経度を目安に入力）。
+          </div>
+        </div>
+    </div>
+  </div>
+
+  </div>
+  <!-- /左セル -->
 
   <!-- 🔵 V2.83: 中央セル＝DVSwitch設定 + カスタム音声 の2カード縦積み -->
   <div style="display:grid;gap:12px;align-content:start">
@@ -1687,6 +1877,12 @@ function refreshStatus(){
 setInterval(refreshStatus,20000);
 function toggleNight(on){
   document.getElementById("night-fields").style.display=on?"":"none";
+}
+// 🔵 V3.2: 天気読み上げの詳細（付与先・座標）を親スイッチに連動して開閉する
+// （ナイトモードの toggleNight と同じ流儀）。
+function toggleWeather(on){
+  var el=document.getElementById("wx-fields");
+  if(el) el.style.display=on?"":"none";
 }
 
 // 🔴 V2.70: 定時メッセージの選択肢を時刻案内モードに連動させる
