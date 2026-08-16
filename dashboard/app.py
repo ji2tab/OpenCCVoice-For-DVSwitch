@@ -3,7 +3,7 @@
 """
 ================================================================================
  OpenCCVoice for DVSwitch Web Dashboard
- app.py  V3.2
+ app.py  V3.21
 
  ■ 位置づけ
    V2 系（V2.0〜V2.87bvv）の機能を統合したメジャーバージョン。
@@ -33,6 +33,12 @@
      ノードの挙動（話者記録＋話者変更時のみ再起動）は V3.0 と不変。
      ※ jtalk 側は create_wav.sh V1.2 以降（--regen 対応）が必要。
   3. 🔵 保存ヒットの文言と保存後メッセージを jtalk / VOICEVOX で出し分け。
+
+ 【V3.21 の要点（V3.2 からの変更）】
+  1. 🔵 天気読み上げカードのレイアウト変更（機能は V3.2 と同一）。左セルの縦積みから
+     「読み上げ内容」と同じ全幅カードに移し、内部を「天気を付ける対象｜取得座標」の
+     2カラム横並びにしてコンパクトにした。カードは save-form 内のままなので weather_*
+     は従来どおり /save_all に送信される。非 JTW のグレーアウト・保存ルート・検証は不変。
 
  【V3.2 の要点（V3.11 からの変更）】
   1. 🔵 天気読み上げ（JTW版）の設定に対応。Bot設定カードの下に「天気読み上げ」
@@ -99,7 +105,7 @@
 # 版を上げるときは docstring の表記と必ず一致させること。
 # テンプレートのヘッダ/フッタは context_processor 経由（{{ app_version }}）で
 # この値を参照するため、テンプレート内に版のベタ書きはない。
-__version__ = "V3.2"
+__version__ = "V3.21"
 
 import os, json, re, subprocess, glob, time, wave, contextlib
 from datetime import datetime
@@ -1508,69 +1514,6 @@ margin-bottom:6px;border-left:4px solid;
       </div>
   </div>
 
-  <!-- 🔵 V3.2: 天気読み上げカード（Bot設定の下・左セル内）。
-       JTW版（voice_make.py を持つノード）でのみ操作可能。非 JTW ノードでは
-       card-na でカードごとグレーアウトし、注記だけを出す（共有ダッシュボード）。
-       非 JTW ノードでは保存ルートも天気キーに触れないため、フォームに値が
-       出ていても設定は書き換わらない。 -->
-  <div class="card {% if not jtw_ok %}card-na{% endif %}">
-    <div class="card-head">天気読み上げ — JTW版</div>
-    <div class="card-body">
-        {% if jtw_ok %}
-        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
-          定時音声の後ろに「○○の天気は、晴れ、気温は25度です」を付けます。
-          地名（○○）は下の「読み上げ内容」の地名と共通です。取得は Open-Meteo。
-        </div>
-        {% else %}
-        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
-          このノードは JTW版（天気読み上げ対応）ではないため設定できません。
-          表示のみで、保存しても bot_config.json の天気設定は変更されません。
-        </div>
-        {% endif %}
-        <div class="toggle-row">
-          <input type="checkbox" name="weather_enabled" id="wx_chk"
-            {% if bot_cfg.get('WEATHER_ENABLED', False) %}checked{% endif %}
-            {% if not jtw_ok %}disabled{% endif %}
-            onchange="toggleWeather(this.checked)">
-          <label class="toggle-label" for="wx_chk">天気読み上げを有効にする</label>
-        </div>
-        <div id="wx-fields" {% if not bot_cfg.get('WEATHER_ENABLED', False) %}style="display:none"{% endif %}>
-          <div class="section-title">天気を付ける対象</div>
-          <div class="toggle-row wx-sub">
-            <input type="checkbox" name="weather_on_time_signal" id="wx_ts_chk"
-              {% if bot_cfg.get('WEATHER_ON_TIME_SIGNAL', True) %}checked{% endif %}
-              {% if not jtw_ok %}disabled{% endif %}>
-            <label class="toggle-label" for="wx_ts_chk">時報（:00）・30分案内（:30）</label>
-          </div>
-          <div class="toggle-row wx-sub">
-            <input type="checkbox" name="weather_on_message" id="wx_msg_chk"
-              {% if bot_cfg.get('WEATHER_ON_MESSAGE', True) %}checked{% endif %}
-              {% if not jtw_ok %}disabled{% endif %}>
-            <label class="toggle-label" for="wx_msg_chk">定時メッセージ（001/002）</label>
-          </div>
-          <div class="section-title">取得座標</div>
-          <div class="row2">
-            <div class="field">
-              <label>緯度（-90〜90）</label>
-              <input type="text" name="weather_lat" placeholder="{{ info.lat or '35.2167' }}"
-                value="{{ bot_cfg.get('WEATHER_LATITUDE', '') }}"
-                {% if not jtw_ok %}disabled{% endif %}>
-            </div>
-            <div class="field">
-              <label>経度（-180〜180）</label>
-              <input type="text" name="weather_lon" placeholder="{{ info.lon or '137.0333' }}"
-                value="{{ bot_cfg.get('WEATHER_LONGITUDE', '') }}"
-                {% if not jtw_ok %}disabled{% endif %}>
-            </div>
-          </div>
-          <div style="font-size:10px;color:var(--muted)">
-            空欄で保存すると、以前の座標をそのまま維持します。
-            未設定のまま有効にはできません（MMDVM Info の緯度経度を目安に入力）。
-          </div>
-        </div>
-    </div>
-  </div>
-
   </div>
   <!-- /左セル -->
 
@@ -1696,6 +1639,73 @@ margin-bottom:6px;border-left:4px solid;
   </div>
 
 </div>
+
+  <!-- 🔵 V3.21: 天気読み上げカード（全幅・横並び）。grid3 の下・save-form 内に置くので
+       weather_* は /save_all に送信される。JTW版でのみ操作可能。非 JTW ノードでは card-na で
+       カードごとグレーアウトし注記のみ表示（保存ルートも天気キーに触れない）。 -->
+  <div class="card card-below-grid {% if not jtw_ok %}card-na{% endif %}">
+    <div class="card-head">天気読み上げ — JTW版</div>
+    <div class="card-body">
+        {% if jtw_ok %}
+        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+          定時音声の後ろに「○○の天気は、晴れ、気温は25度です」を付けます。
+          地名（○○）は下の「読み上げ内容」の地名と共通です。取得は Open-Meteo。
+        </div>
+        {% else %}
+        <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+          このノードは JTW版（天気読み上げ対応）ではないため設定できません。
+          表示のみで、保存しても bot_config.json の天気設定は変更されません。
+        </div>
+        {% endif %}
+        <div class="toggle-row">
+          <input type="checkbox" name="weather_enabled" id="wx_chk"
+            {% if bot_cfg.get('WEATHER_ENABLED', False) %}checked{% endif %}
+            {% if not jtw_ok %}disabled{% endif %}
+            onchange="toggleWeather(this.checked)">
+          <label class="toggle-label" for="wx_chk">天気読み上げを有効にする</label>
+        </div>
+        <div id="wx-fields" {% if not bot_cfg.get('WEATHER_ENABLED', False) %}style="display:none"{% endif %}>
+          <div class="grid2">
+            <div>
+              <div class="section-title">天気を付ける対象</div>
+              <div class="toggle-row wx-sub">
+                <input type="checkbox" name="weather_on_time_signal" id="wx_ts_chk"
+                  {% if bot_cfg.get('WEATHER_ON_TIME_SIGNAL', True) %}checked{% endif %}
+                  {% if not jtw_ok %}disabled{% endif %}>
+                <label class="toggle-label" for="wx_ts_chk">時報（:00）・30分案内（:30）</label>
+              </div>
+              <div class="toggle-row wx-sub">
+                <input type="checkbox" name="weather_on_message" id="wx_msg_chk"
+                  {% if bot_cfg.get('WEATHER_ON_MESSAGE', True) %}checked{% endif %}
+                  {% if not jtw_ok %}disabled{% endif %}>
+                <label class="toggle-label" for="wx_msg_chk">定時メッセージ（001/002）</label>
+              </div>
+            </div>
+            <div>
+              <div class="section-title">取得座標</div>
+              <div class="row2">
+                <div class="field">
+                  <label>緯度（-90〜90）</label>
+                  <input type="text" name="weather_lat" placeholder="{{ info.lat or '35.2167' }}"
+                    value="{{ bot_cfg.get('WEATHER_LATITUDE', '') }}"
+                    {% if not jtw_ok %}disabled{% endif %}>
+                </div>
+                <div class="field">
+                  <label>経度（-180〜180）</label>
+                  <input type="text" name="weather_lon" placeholder="{{ info.lon or '137.0333' }}"
+                    value="{{ bot_cfg.get('WEATHER_LONGITUDE', '') }}"
+                    {% if not jtw_ok %}disabled{% endif %}>
+                </div>
+              </div>
+              <div style="font-size:10px;color:var(--muted);margin-top:6px">
+                空欄で保存すると、以前の座標をそのまま維持します。
+                未設定のまま有効にはできません（MMDVM Info の緯度経度を目安に入力）。
+              </div>
+            </div>
+          </div>
+        </div>
+    </div>
+  </div>
 
 <!-- 🔵 V2.78: 読み上げ内容（wav_source.json）— 3カラムの下に幅いっぱいで表示。
      create_wav.sh が記録した各WAVの実際の読み上げ内容。閲覧専用（編集不可）。
