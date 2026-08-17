@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.3   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.4   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -64,16 +64,26 @@ r"""
          応答 USRP パケットを複製送信するミラーポート(既定 51002)を追加受信できる
          ように、--mirror-port を新設。51001 と 51002 の両方を listen し、同一ハブへ
          流して同じブラウザで混ぜて鳴らす。--mirror-port 0（既定）でミラー無効。
+   V0.4  🔵 案A（ミックスせず優先1本化）。V0.3 は 51001 と 51002 を単純合流して
+         いたため、送受信の輻輳で両系統が同時に来ると1本のWSへ倍レートで流れ込み、
+         ブラウザの再生キューが伸びて「再生が半速化」する不具合があった。
+         51002(priority=bot応答) を最優先とし、priority 受信中はホールド期間
+         (PRIORITY_HOLD_SEC) だけ 51001(rx=他局受信) を捨てて合流させない。
+         これで常に1系統ぶんのレートになり半速化しない。あわせて priority
+         セッション先頭の PRIORITY_LEAD_SKIP パケットを再生スキップし、bot が
+         RF 対策で入れる先頭 100Hz 微小トーンがミラーで「ブブッ」と鳴るのを抑制
+         （RF側の対策は無改修のまま／bot・ブラウザ側も無改修、本ファイルのみで完結）。
 ================================================================================
 """
 
-__version__ = "V0.3"
+__version__ = "V0.4"
 
 import argparse
 import asyncio
 import ssl
 import struct
 import sys
+import time
 from collections import deque
 
 try:
@@ -100,6 +110,17 @@ USRP_TYPE_VOICE = 0
 # 1クライアントあたりの音声キュー上限（超過分は捨ててレイテンシ肥大を防ぐ）
 CLIENT_QUEUE_MAX = 50
 
+# 🔵 V0.4: 案A（ミックスせず優先1本化）。51002(priority=bot応答)を最優先とし、
+# priority 受信中は 51001(RX=他局受信) を捨てて合流させない。これにより
+# 同時受信時に2系統が1本のWSへ倍レートで流れ込み「再生が半速化」する問題を防ぐ。
+PRIORITY_HOLD_SEC    = 0.2   # priority を1発受けたら、この秒数 RX を抑制（20ms間隔に対し十分な保持）
+PRIORITY_SESSION_GAP = 0.5   # priority がこの秒数途切れたら「新しいbot応答」とみなす
+# 各 priority セッション先頭のスキップ数。bot は RF 対策で先頭に 100Hz 微小トーン
+# （NOISE_LEAD_PACKETS=5）を入れており、それがミラーでは「ブブッ」という雑音として
+# 鳴る。RF側の対策は残したまま、Webでは先頭数パケットを再生しないことで抑制する。
+# 5(トーン)＋余裕。トーンの後は無音パディングなので多めに捨てても実害はない。
+PRIORITY_LEAD_SKIP   = 8
+
 # --verbose 時のコンソール出力
 VERBOSE = False
 
@@ -117,6 +138,10 @@ class AudioHub:
         self.clients = set()
         self.pkt_count = 0
         self.last_keyup = 0
+        # 🔵 V0.4: 優先(priority=51002)制御の状態
+        self.priority_hold_until = 0.0   # この時刻まで RX を抑制する
+        self.priority_last_ts = 0.0      # 直近に priority を受けた時刻（セッション判定用）
+        self.priority_skip_remaining = 0 # 現セッションで残りスキップするパケット数
 
     def register(self):
         q = asyncio.Queue(maxsize=CLIENT_QUEUE_MAX)
@@ -126,7 +151,33 @@ class AudioHub:
     def unregister(self, q):
         self.clients.discard(q)
 
-    def broadcast(self, audio: bytes):
+    def feed(self, role: str, audio: bytes, keyup: int):
+        """role='priority'(51002/bot応答) と role='rx'(51001/他局受信) を
+        ミックスせず1本化する（案A）。priority を最優先し、priority 受信中は
+        ホールド期間 rx を捨てる。priority セッション先頭はトーン抑制でスキップ。
+        戻り値: 実際にブラウザへ流したら True（verbose ログ判定用）。"""
+        now = time.monotonic()
+        if role == "priority":
+            # 新しい bot 応答の立ち上がり検出 → 先頭スキップをセット
+            if now - self.priority_last_ts > PRIORITY_SESSION_GAP:
+                self.priority_skip_remaining = PRIORITY_LEAD_SKIP
+            self.priority_last_ts = now
+            self.priority_hold_until = now + PRIORITY_HOLD_SEC
+            # 先頭トーン区間はブラウザへ流さない（ホールドは上で確定済み）
+            if self.priority_skip_remaining > 0:
+                self.priority_skip_remaining -= 1
+                return False
+            self._broadcast(audio, keyup)
+            return True
+        else:  # rx
+            # bot 応答中（ホールド中）は他局受信を捨てて合流させない
+            if now < self.priority_hold_until:
+                return False
+            self._broadcast(audio, keyup)
+            return True
+
+    def _broadcast(self, audio: bytes, keyup: int):
+        self.last_keyup = keyup
         for q in self.clients:
             if q.full():
                 # 詰まっているクライアントは古いフレームを1つ捨てて最新を優先
@@ -144,8 +195,10 @@ class AudioHub:
 # Analog_Bridge からの USRP UDP を受ける asyncio プロトコル
 # ----------------------------------------------------------------------------
 class USRPReceiver(asyncio.DatagramProtocol):
-    def __init__(self, hub: AudioHub):
+    def __init__(self, hub: AudioHub, role: str = "rx"):
         self.hub = hub
+        self.role = role            # 🔵 V0.4: "rx"(51001) / "priority"(51002)
+        self._first_logged = False
 
     def datagram_received(self, data: bytes, addr):
         if len(data) < USRP_HDR_LEN + 2:
@@ -159,14 +212,15 @@ class USRPReceiver(asyncio.DatagramProtocol):
         audio = data[USRP_HDR_LEN:]
         if not audio:
             return
-        if self.hub.pkt_count == 0:
-            vlog(f"[rx] first voice packet from {addr[0]}:{addr[1]} "
+        if not self._first_logged:
+            self._first_logged = True
+            vlog(f"[rx:{self.role}] first voice packet from {addr[0]}:{addr[1]} "
                  f"({len(audio)} bytes, keyup={keyup})")
         self.hub.pkt_count += 1
+        played = self.hub.feed(self.role, audio, keyup)
         if VERBOSE and self.hub.pkt_count % 50 == 0:
-            vlog(f"[rx] packets={self.hub.pkt_count} keyup={keyup} clients={len(self.hub.clients)}")
-        self.hub.last_keyup = keyup
-        self.hub.broadcast(audio)
+            vlog(f"[rx:{self.role}] packets={self.hub.pkt_count} keyup={keyup} "
+                 f"played={played} clients={len(self.hub.clients)}")
 
     def error_received(self, exc):
         sys.stderr.write(f"[usrp] UDP error: {exc}\n")
@@ -357,12 +411,13 @@ async def _on_startup(app: web.Application):
     loop = asyncio.get_event_loop()
     app["udp_transports"] = []
     for label, port in app["listen_ports"]:
+        role = "priority" if label == "mirror" else "rx"
         transport, _ = await loop.create_datagram_endpoint(
-            lambda: USRPReceiver(app["hub"]),
+            lambda r=role: USRPReceiver(app["hub"], role=r),
             local_addr=(app["usrp_addr"], port),
         )
         app["udp_transports"].append(transport)
-        vlog(f"[udp] endpoint ready on {app['usrp_addr']}:{port} ({label})")
+        vlog(f"[udp] endpoint ready on {app['usrp_addr']}:{port} ({label}/{role})")
 
 
 async def _on_cleanup(app: web.Application):
