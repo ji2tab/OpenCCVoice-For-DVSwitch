@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.5   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.7   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -79,10 +79,22 @@ r"""
          なってクリック（プツプツ）が出ていた。届いた PCM をリングバッファに貯め、
          1本の連続再生ノードから線形補間で「連続」リサンプルして読み出す方式へ変更。
          境界クリックが消え、プリバッファも 120→240ms に深くして到着ジッタを吸収する。
+   V0.6  🔵 「プツプツ」が V0.5 でも残るため、再生を AudioWorklet（音声専用スレッド）へ
+         変更。V0.5 の createScriptProcessor はメインスレッド動作で、GC や UI 負荷で
+         コールバックが遅延すると途切れが出た。worklet はメインスレッドから独立して
+         動くため途切れにくい。リング/線形補間の連続リサンプルは踏襲。AudioWorklet
+         非対応環境のみ ScriptProcessor へ自動フォールバック（サーバ/bot は無改修）。
+   V0.7  🔵 語頭（無音→発話）でのプツッを解消。V0.6 まではアンダーラン時に
+         readPos を writeCount へジャンプさせており、その位置不連続が語頭で段差
+         （クリック）になっていた（他局受信・bot応答の両方で発生）。V0.7 では
+         アンダーラン時に位置ジャンプせず読み位置を据え置き、直前サンプルを保持
+         しつつ約5msのエンベロープで無音へフェード／復帰時フェードインして段差を
+         丸める。枯渇後の再プリバッファは 80ms と浅めにして語頭遅延を抑える。
+         worklet・ScriptProcessor 両経路に適用（サーバ/bot は無改修）。
 ================================================================================
 """
 
-__version__ = "V0.5"
+__version__ = "V0.7"
 
 import argparse
 import asyncio
@@ -327,20 +339,21 @@ INDEX_HTML = """<!DOCTYPE html>
 
 <script>
 // ============================================================
-// 🔵 V0.5: リングバッファ + 連続再生（継ぎ目クリック除去）
+// 🔵 V0.6: AudioWorklet による連続再生（音声専用スレッド）
 // ------------------------------------------------------------
-// V0.4 までは 20ms ごとの 8kHz 小バッファを個別に AudioBuffer 化して
-// 並べていた。ブラウザは各バッファを独立に出力レート(48kHz等)へリサンプル
-// するため、バッファ境界で波形が不連続になり「常時プツプツ」が出ていた。
-// V0.5 では届いた PCM をリングバッファに貯め、1本の連続再生ノードから
-// 途切れなく読み出して「連続」リサンプル（線形補間）する。境界クリックが
-// 消え、深めのプリバッファ(240ms)で到着ジッタも吸収する。
+// V0.5 は createScriptProcessor（メインスレッド動作・非推奨）を使っており、
+// GC や UI 負荷でコールバックが遅延すると音が途切れ「プツプツ」が残った。
+// V0.6 では音声専用スレッドで動く AudioWorklet に切り替える。届いた PCM を
+// worklet 内リングに貯め、process() が出力レートで線形補間の連続リサンプルを
+// して読み出す。メインスレッドの負荷から独立するため途切れにくい。
+// AudioWorklet 非対応環境のみ、従来の ScriptProcessor へフォールバックする。
 // ============================================================
 const SR = 8000;                 // USRP 音声は 8kHz モノラル
-const PREBUFFER_SEC = 0.24;      // ジッタバッファ 240ms（貯めてから再生開始）
-const RING_CAP = SR * 8;         // リング容量 8 秒ぶん
+const PREBUFFER_SEC = 0.24;      // ジッタバッファ 240ms
+const RING_CAP = SR * 8;         // リング容量 8 秒ぶん（フォールバック用）
 
 let ac=null, ws=null, gain=null, node=null, running=false, pkts=0;
+// フォールバック(ScriptProcessor)用の状態
 let ring=null, writeCount=0, readPos=0, primed=false;
 
 const btn   = document.getElementById('btn');
@@ -360,6 +373,69 @@ btn.addEventListener('click', async ()=>{
   if(!running){ await connect(); } else { disconnect(); }
 });
 
+// ---- AudioWorklet プロセッサのソース（Blob 経由で addModule する）----
+const WORKLET_SRC = `
+class USRPPlayer extends AudioWorkletProcessor {
+  constructor(options){
+    super();
+    const o = (options && options.processorOptions) || {};
+    this.SR = o.sr || 8000;
+    this.prebuf   = (o.prebufSec   || 0.24) * this.SR;  // 初回プリバッファ
+    this.reprebuf = (o.reprebufSec || 0.08) * this.SR;  // 枯渇後の再プリバッファ（語頭遅延を抑えるため浅め）
+    this.cap = this.SR * 8;
+    this.ring = new Float32Array(this.cap);
+    this.writeCount = 0;
+    this.readPos = 0;
+    this.primed = false;
+    this.everPrimed = false;
+    this.env = 0;          // 出力エンベロープ 0..1（段差を丸めるフェード）
+    this.lastRaw = 0;      // 直前の補間サンプル（アンダーラン中の保持値）
+    this.rampInc = 1 / (0.005 * sampleRate);   // 約5msでフェードイン/アウト
+    this.step = this.SR / sampleRate;          // sampleRate は worklet グローバル
+    this.port.onmessage = (e)=>{
+      const i16 = new Int16Array(e.data);
+      let w = this.writeCount;
+      for(let i=0;i<i16.length;i++){ this.ring[w % this.cap] = i16[i] / 32768; w++; }
+      this.writeCount = w;
+    };
+  }
+  process(inputs, outputs){
+    const out = outputs[0][0];
+    if(!out) return true;
+    // プリバッファ（初回は深め prebuf、枯渇後の復帰は浅め reprebuf）
+    if(!this.primed){
+      const need = this.everPrimed ? this.reprebuf : this.prebuf;
+      if((this.writeCount - this.readPos) >= need){ this.primed = true; this.everPrimed = true; }
+      else { out.fill(0); return true; }
+    }
+    const inc = this.rampInc;
+    for(let i=0;i<out.length;i++){
+      const avail = this.writeCount - this.readPos;
+      let raw;
+      if(avail >= 2){
+        const idx = Math.floor(this.readPos);
+        const frac = this.readPos - idx;
+        const s0 = this.ring[idx % this.cap];
+        const s1 = this.ring[(idx+1) % this.cap];
+        raw = s0 + (s1 - s0) * frac;
+        this.lastRaw = raw;
+        this.readPos += this.step;
+        if(this.env < 1){ this.env = Math.min(1, this.env + inc); }   // フェードイン
+      } else {
+        // アンダーラン: 読み位置は据え置き（位置ジャンプによる不連続を作らない）。
+        // 直前サンプルを保持しつつエンベロープを 0 へフェードして段差を丸める。
+        if(this.env > 0){ this.env = Math.max(0, this.env - inc); }   // フェードアウト
+        raw = this.lastRaw;
+        if(this.env <= 0){ this.primed = false; }   // 完全に無音化したら再プリバッファへ（無音中なのでクリックは出ない）
+      }
+      out[i] = raw * this.env;
+    }
+    return true;
+  }
+}
+registerProcessor('usrp-player', USRPPlayer);
+`;
+
 async function connect(){
   ac = new (window.AudioContext||window.webkitAudioContext)();
   await ac.resume();
@@ -367,41 +443,61 @@ async function connect(){
   gain.gain.value = vol.value/100;
   gain.connect(ac.destination);
 
-  // リング初期化
-  ring = new Float32Array(RING_CAP);
-  writeCount = 0; readPos = 0; primed = false;
-
-  // 連続再生ノード（出力レートで onaudioprocess が回り、8kHz リングから
-  // 線形補間で読み出す。境界をまたいで連続に補間するためクリックが出ない）
-  const bufSize = 2048;
-  node = ac.createScriptProcessor(bufSize, 0, 1);
-  const step = SR / ac.sampleRate;   // 例 8000/48000 = 0.1667（1出力サンプルあたりの読み進み）
-  node.onaudioprocess = (e)=>{
-    const out = e.outputBuffer.getChannelData(0);
-    const prebufSamples = PREBUFFER_SEC * SR;
-    // プリバッファが溜まるまで（または枯れて再プライム中は）無音
-    if(!primed){
-      if((writeCount - readPos) >= prebufSamples){ primed = true; }
-      else { out.fill(0); return; }
+  let useWorklet = !!(ac.audioWorklet);
+  if(useWorklet){
+    try{
+      const blob = new Blob([WORKLET_SRC], {type:'application/javascript'});
+      const url = URL.createObjectURL(blob);
+      await ac.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      node = new AudioWorkletNode(ac, 'usrp-player', {
+        numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC }
+      });
+      node.connect(gain);
+    }catch(err){
+      console.warn('AudioWorklet 初期化失敗、ScriptProcessor へフォールバック:', err);
+      useWorklet = false;
     }
-    for(let i=0;i<out.length;i++){
-      const avail = writeCount - readPos;
-      if(avail < 2){
-        // アンダーラン: 無音を出し、読み位置を書き込み位置へ合わせて再プライムへ
-        out[i] = 0;
-        readPos = writeCount;
-        primed = false;
-        continue;
+  }
+  if(!useWorklet){
+    // ---- フォールバック: ScriptProcessor（worklet と同じフェード方式）----
+    ring = new Float32Array(RING_CAP); writeCount=0; readPos=0; primed=false;
+    let everPrimed=false, env=0, lastRaw=0;
+    node = ac.createScriptProcessor(2048, 0, 1);
+    const step = SR / ac.sampleRate;
+    const inc = 1 / (0.005 * ac.sampleRate);
+    const prebufSamples   = PREBUFFER_SEC * SR;
+    const reprebufSamples = 0.08 * SR;
+    node.onaudioprocess = (e)=>{
+      const out = e.outputBuffer.getChannelData(0);
+      if(!primed){
+        const need = everPrimed ? reprebufSamples : prebufSamples;
+        if((writeCount - readPos) >= need){ primed = true; everPrimed = true; }
+        else { out.fill(0); return; }
       }
-      const idx = Math.floor(readPos);
-      const frac = readPos - idx;
-      const s0 = ring[idx % RING_CAP];
-      const s1 = ring[(idx+1) % RING_CAP];
-      out[i] = s0 + (s1 - s0) * frac;
-      readPos += step;
-    }
-  };
-  node.connect(gain);
+      for(let i=0;i<out.length;i++){
+        const avail = writeCount - readPos;
+        let raw;
+        if(avail >= 2){
+          const idx = Math.floor(readPos);
+          const frac = readPos - idx;
+          const s0 = ring[idx % RING_CAP];
+          const s1 = ring[(idx+1) % RING_CAP];
+          raw = s0 + (s1 - s0) * frac;
+          lastRaw = raw;
+          readPos += step;
+          if(env < 1){ env = Math.min(1, env + inc); }
+        } else {
+          if(env > 0){ env = Math.max(0, env - inc); }
+          raw = lastRaw;
+          if(env <= 0){ primed = false; }
+        }
+        out[i] = raw * env;
+      }
+    };
+    node.connect(gain);
+  }
 
   const proto = location.protocol==='https:' ? 'wss' : 'ws';
   ws = new WebSocket(proto+'://'+location.host+'/ws');
@@ -409,7 +505,17 @@ async function connect(){
   ws.onopen  = ()=>{ running=true; btn.textContent='切断'; btn.className=''; setState('接続中','live'); };
   ws.onclose = ()=>{ if(running){ setState('切断','busy'); } };
   ws.onerror = ()=>{ setState('エラー','busy'); };
-  ws.onmessage = ev=>{ pkts++; enqueue(ev.data); updateStat(); };
+  ws.onmessage = ev=>{
+    pkts++;
+    if(node && node.port){
+      // Worklet: ArrayBuffer を転送（コピーなし）
+      node.port.postMessage(ev.data, [ev.data]);
+    } else {
+      // フォールバック: メインスレッドのリングへ書く
+      enqueue(ev.data);
+    }
+    updateStat();
+  };
 }
 
 function disconnect(){
@@ -422,13 +528,10 @@ function disconnect(){
   setState('未接続','');
 }
 
-// 届いた 16bit PCM をリングへ書き込む（Float32 に正規化）
+// フォールバック時のみ使用: 届いた 16bit PCM をメインスレッドのリングへ
 function enqueue(arrbuf){
   const i16 = new Int16Array(arrbuf);
-  for(let i=0;i<i16.length;i++){
-    ring[writeCount % RING_CAP] = i16[i] / 32768;
-    writeCount++;
-  }
+  for(let i=0;i<i16.length;i++){ ring[writeCount % RING_CAP] = i16[i] / 32768; writeCount++; }
 }
 
 function updateStat(){
