@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.14  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.15  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -136,10 +136,20 @@ r"""
          サンプル(>DUP_MIN_PEAK=5000)を含む」を AND 条件に追加。壊れフレーム
          (peak≈27000)は確実に落ち、正常音声の静音部は偶然一致しても通る。
          （bot は無改修）
+   V0.15 🔵 語頭切れ修正＋こもり軽減（再生JSのみ／サーバ・bot 無改修）。
+         (1) 語頭切れ:「ジェイ・ジェイ」の2音目が半分欠ける症状は、語間の短い
+         無音でバッファが枯れるたびに再プリバッファ(120ms)を貯め直し、その間に
+         次の語頭を消費していたのが原因。再プリバッファを廃止し、枯れても読み
+         位置据え置きのままデータ到着で即フェードイン復帰する方式へ変更（プリ
+         バッファは初回接続時の1回のみ）。フェードインも 40ms→10ms に短縮
+         （初回 bububu は V0.14 の壊れフレーム破棄で根治済みのため不要）。
+         (2) こもり軽減: 1次ハイシェルフ相当の高域ブースト（差分加算, HF_BOOST=0.8,
+         カットオフ約1.2kHz）を追加。8kHz 音源の帯域は増やせないが、体感の明瞭度を
+         改善する。HF_BOOST=0 で原音に戻せる。worklet/フォールバック両対応。
 ================================================================================
 """
 
-__version__ = "V0.14"
+__version__ = "V0.15"
 
 import argparse
 import array
@@ -475,6 +485,9 @@ INDEX_HTML = """<!DOCTYPE html>
 const SR = 8000;                 // USRP 音声は 8kHz モノラル
 const PREBUFFER_SEC = 0.24;      // ジッタバッファ 240ms
 const RING_CAP = SR * 8;         // リング容量 8 秒ぶん（フォールバック用）
+// 🔵 V0.15: 高域ブースト量（こもり軽減）。0=無効(原音), 0.8=既定。
+// 効きすぎ（シャリつく）なら 0.5、物足りなければ 1.2 程度まで。
+const HF_BOOST = 0.8;
 
 let ac=null, ws=null, gain=null, node=null, running=false, pkts=0;
 // フォールバック(ScriptProcessor)用の状態
@@ -504,21 +517,28 @@ class USRPPlayer extends AudioWorkletProcessor {
     super();
     const o = (options && options.processorOptions) || {};
     this.SR = o.sr || 8000;
-    this.prebuf   = (o.prebufSec   || 0.24) * this.SR;  // 初回プリバッファ
-    this.reprebuf = (o.reprebufSec || 0.12) * this.SR;  // 枯渇後の再プリバッファ（立ち上がりの bububu を抑えるため 0.12）
+    this.prebuf = (o.prebufSec || 0.24) * this.SR;  // 初回接続時のみのプリバッファ
     this.cap = this.SR * 8;
     this.ring = new Float32Array(this.cap);
     this.writeCount = 0;
     this.readPos = 0;
     this.primed = false;
-    this.everPrimed = false;
     this.env = 0;          // 出力エンベロープ 0..1（段差を丸めるフェード）
     this.lastRaw = 0;      // 直前の補間サンプル（アンダーラン中の保持値）
-    // フェードインは緩やか(40ms)＝立ち上がりの bububu を抑制、
-    // フェードアウトは速め(5ms)＝終端の切れを保つ。
-    this.fadeInInc  = 1 / (0.040 * sampleRate);
+    // 🔵 V0.15: フェードインを 10ms へ短縮。復帰待ち(再プリバッファ)を廃止した
+    // ため、語間の短い枯れから即復帰する。40ms のままだと復帰のたびに語頭が
+    // 薄くなるので短くする（初回立ち上がりの bububu は壊れフレーム破棄=V0.14 で
+    // 根治済みのため、もう長いフェードに頼らない）。
+    this.fadeInInc  = 1 / (0.010 * sampleRate);
     this.fadeOutInc = 1 / (0.005 * sampleRate);
     this.step = this.SR / sampleRate;          // sampleRate は worklet グローバル
+    // 🔵 V0.15: 高域ブースト（1次ハイシェルフ相当）。8kHz 音源のこもり感を
+    // 軽減する。y[n] = x[n] + HF_BOOST*(x[n]-lp[n]) で高域成分を足す。
+    // lp は 1次ローパス（約1.2kHz）。HF_BOOST=0 で無効（原音）。
+    this.hfBoost = (typeof o.hfBoost === 'number') ? o.hfBoost : 0.8;
+    const fc = 1200;
+    this.lpA = Math.exp(-2 * Math.PI * fc / sampleRate);
+    this.lpState = 0;
     this.port.onmessage = (e)=>{
       const i16 = new Int16Array(e.data);
       let w = this.writeCount;
@@ -529,10 +549,12 @@ class USRPPlayer extends AudioWorkletProcessor {
   process(inputs, outputs){
     const out = outputs[0][0];
     if(!out) return true;
-    // プリバッファ（初回は深め prebuf、枯渇後の復帰は浅め reprebuf）
+    // 🔵 V0.15: プリバッファは「初回接続時の1回だけ」。以降は枯れても貯め直さず、
+    // データが来た瞬間にフェードインで即復帰する。従来は枯れるたびに 120ms
+    // 貯め直しており、その間に語頭（「ジェイ・ジェイ」の2音目など）が食われて
+    // 半分欠ける症状が出ていた。
     if(!this.primed){
-      const need = this.everPrimed ? this.reprebuf : this.prebuf;
-      if((this.writeCount - this.readPos) >= need){ this.primed = true; this.everPrimed = true; }
+      if((this.writeCount - this.readPos) >= this.prebuf){ this.primed = true; }
       else { out.fill(0); return true; }
     }
     for(let i=0;i<out.length;i++){
@@ -546,15 +568,19 @@ class USRPPlayer extends AudioWorkletProcessor {
         raw = s0 + (s1 - s0) * frac;
         this.lastRaw = raw;
         this.readPos += this.step;
-        if(this.env < 1){ this.env = Math.min(1, this.env + this.fadeInInc); }   // 緩やかフェードイン
+        if(this.env < 1){ this.env = Math.min(1, this.env + this.fadeInInc); }   // 即時フェードイン復帰
       } else {
-        // アンダーラン: 読み位置は据え置き（位置ジャンプによる不連続を作らない）。
-        // 直前サンプルを保持しつつエンベロープを 0 へフェードして段差を丸める。
-        if(this.env > 0){ this.env = Math.max(0, this.env - this.fadeOutInc); }   // 速めフェードアウト
+        // アンダーラン: 読み位置は据え置き・再プリバッファもしない。
+        // 直前サンプルを保持しつつ 5ms で無音へフェードし、データが来たら
+        // 上の分岐で即フェードイン再開する（語頭を食わない）。
+        if(this.env > 0){ this.env = Math.max(0, this.env - this.fadeOutInc); }
         raw = this.lastRaw;
-        if(this.env <= 0){ this.primed = false; }   // 完全に無音化したら再プリバッファへ（無音中なのでクリックは出ない）
       }
-      out[i] = raw * this.env;
+      // 🔵 V0.15: 高域ブースト（こもり軽減）。エンベロープ適用前の raw に対して
+      // 1次ローパスとの差分（高域）を足す。
+      this.lpState = this.lpState * this.lpA + raw * (1 - this.lpA);
+      const bright = raw + this.hfBoost * (raw - this.lpState);
+      out[i] = bright * this.env;
     }
     return true;
   }
@@ -578,7 +604,7 @@ async function connect(){
       URL.revokeObjectURL(url);
       node = new AudioWorkletNode(ac, 'usrp-player', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
-        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC }
+        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST }
       });
       node.connect(gain);
     }catch(err){
@@ -589,18 +615,18 @@ async function connect(){
   if(!useWorklet){
     // ---- フォールバック: ScriptProcessor（worklet と同じフェード方式）----
     ring = new Float32Array(RING_CAP); writeCount=0; readPos=0; primed=false;
-    let everPrimed=false, env=0, lastRaw=0;
+    let env=0, lastRaw=0, lpState=0;
     node = ac.createScriptProcessor(2048, 0, 1);
     const step = SR / ac.sampleRate;
-    const fadeInInc  = 1 / (0.040 * ac.sampleRate);
+    const fadeInInc  = 1 / (0.010 * ac.sampleRate);
     const fadeOutInc = 1 / (0.005 * ac.sampleRate);
-    const prebufSamples   = PREBUFFER_SEC * SR;
-    const reprebufSamples = 0.12 * SR;
+    const prebufSamples = PREBUFFER_SEC * SR;
+    const HF_BOOST = 0.8;
+    const lpA = Math.exp(-2 * Math.PI * 1200 / ac.sampleRate);
     node.onaudioprocess = (e)=>{
       const out = e.outputBuffer.getChannelData(0);
       if(!primed){
-        const need = everPrimed ? reprebufSamples : prebufSamples;
-        if((writeCount - readPos) >= need){ primed = true; everPrimed = true; }
+        if((writeCount - readPos) >= prebufSamples){ primed = true; }
         else { out.fill(0); return; }
       }
       for(let i=0;i<out.length;i++){
@@ -618,9 +644,9 @@ async function connect(){
         } else {
           if(env > 0){ env = Math.max(0, env - fadeOutInc); }
           raw = lastRaw;
-          if(env <= 0){ primed = false; }
         }
-        out[i] = raw * env;
+        lpState = lpState * lpA + raw * (1 - lpA);
+        out[i] = (raw + HF_BOOST * (raw - lpState)) * env;
       }
     };
     node.connect(gain);
