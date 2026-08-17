@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.05jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.06jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -13,6 +13,18 @@
  バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
  
+ 【V2.06jtw の要点（V2.05jtw からの変更）】
+  Web モニタ（usrp_web.py）で bot の応答音声も聞けるようにするための最小改修。
+  送出ロジック・タイミング定数は一切変更していない。追加は次の3点のみ:
+    1. ミラー定数 WEB_MIRROR_ENABLE / WEB_MIRROR_IP / WEB_MIRROR_PORT（=51002）
+    2. 送出ヘルパ _usrp_sendto()（本番51000へ送り、有効時のみ51002へ複製）
+    3. send_usrp_wav_with_padding() 内の全 USRP 送出を _usrp_sendto() 経由に変更
+  背景: Analog_Bridge の復号RX(51001)には bot 自身の応答音声が現れない（bot の
+  音は 51000→送信の一方向で、この構成ではループバックしないと実測で確定）。
+  そこで応答 USRP を 51002 へも複製し、usrp_web.py 側で 51001 と混ぜて再生する。
+  ミラーは送出のみ・失敗は握りつぶすため、本番送出（RF/TGIF）には一切影響しない。
+  WEB_MIRROR_ENABLE=False で V2.05jtw と完全に同一の挙動へ戻る。
+
  【V2.05jtw の要点（V2.04jtw からの変更）】
   応答の立ち上がり（カーチャンク受信終了 → 相手に声が届くまで）の短縮と intro
   頭欠けの解消。VV版 V1.98vv が ocv-voicevox（直 TGIF 接続）での実測で決めた値を
@@ -89,8 +101,10 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.05jtw (daemon, VV版 V1.98vv の送出タイミング実測値を反映。
-                          立ち上がり短縮・頭欠け解消。JT系での実波検証は未実施)
+ Document Version: V2.06jtw (daemon, 応答音声を Web モニタ usrp_web.py へミラー送出。
+                          送出ロジック不変。WEB_MIRROR_* 追加と _usrp_sendto 経由化のみ)
+ 　（V2.05jtw: VV版 V1.98vv の送出タイミング実測値を反映。立ち上がり短縮・頭欠け解消。
+                          JT系での実波検証は未実施）
  　（V2.04jtw: 天気の付与先を「時報系」「定時メッセージ系」で個別に指定できるようにした）
  　（V2.03jtw: 定時音声の生成を voice_make.py〔vmp〕へ分離。bot は判定・2分前号令・
                           スロット再生に専念。天気は全定時音声へ一様付与）
@@ -110,7 +124,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.05jtw"
+__version__ = "V2.06jtw"
 
 import os
 import sys
@@ -134,6 +148,22 @@ LOG_DIR = "/var/log/mmdvm"
 LOG_PATTERN = "MMDVM_Bridge-*.log"
 UDP_IP = "127.0.0.1"
 UDP_PORT = 51000
+
+# ============================================================
+# 🔵 V2.06jtw: Web モニタ（usrp_web.py）への応答音声ミラー
+# ============================================================
+# bot が送出する USRP 音声を、本番送出先(UDP_PORT=51000)に加えて Web モニタ用の
+# ミラーポートへも複製送信する。Analog_Bridge の復号RX(51001)には bot 自身の
+# 応答音声が現れない（bot の音は 51000→送信の一方向で、この構成ではループバック
+# しないと実測で確定）ため、Web ダッシュボードで「他局の受信音」と「bot の応答音」を
+# 両方聞けるようにするための複製。ミラーは送出のみで受信・制御は一切しない。
+# usrp_web.py 側は 51002 も listen し、USRP type=0(音声)以外は捨てるため、
+# メタデータ等を混ぜても無害（ヘルパは全パケットを一律ミラーする）。
+# 変更頻度が低くダッシュボードから触る必要のない値のため三位一体対象外。
+# Web モニタを使わないノードでは WEB_MIRROR_ENABLE=False にすれば無効化できる。
+WEB_MIRROR_ENABLE = True
+WEB_MIRROR_IP     = "127.0.0.1"
+WEB_MIRROR_PORT   = 51002
 
 # ============================================================
 # 🔵 V1.94: 自局コールサイン / DMR ID を ini から自動取得
@@ -862,8 +892,20 @@ def _send_usrp_metadata(sock, seq: int) -> int:
     戻り値は次に使う seq。"""
     payload = _usrp_set_info_payload(MY_CALLSIGN, MY_DMR_ID)
     header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 0, 0, (2 << 24), 0, 0)
-    sock.sendto(header + payload, (UDP_IP, UDP_PORT))
+    _usrp_sendto(sock, header + payload)
     return seq + 1
+
+
+def _usrp_sendto(sock, packet):
+    """🔵 V2.06jtw: USRP パケットを本番(UDP_PORT)へ送り、有効なら Web モニタ
+    (WEB_MIRROR_PORT)へも複製する。ミラー送信の失敗は本番送出に影響させない
+    （握りつぶす）。送出専用で、受信・制御は一切しない。"""
+    sock.sendto(packet, (UDP_IP, UDP_PORT))
+    if WEB_MIRROR_ENABLE:
+        try:
+            sock.sendto(packet, (WEB_MIRROR_IP, WEB_MIRROR_PORT))
+        except OSError:
+            pass
 
 
 def send_usrp_wav_with_padding(wav_path):
@@ -895,7 +937,7 @@ def send_usrp_wav_with_padding(wav_path):
                 payload = _lead_block(_i, NOISE_LEAD_PACKETS)
             else:
                 payload = b"\x00" * 320
-            sock.sendto(header + payload, (UDP_IP, UDP_PORT))
+            _usrp_sendto(sock, header + payload)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
@@ -909,7 +951,7 @@ def send_usrp_wav_with_padding(wav_path):
             # 🔵 V1.86: WAV 内の無音は置換しない（ゲート開放後の無音は正常に転送される
             # ことが実測で確認済み。真の無音のままにして耳障りなノイズを排除）
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
-            sock.sendto(header + data, (UDP_IP, UDP_PORT))
+            _usrp_sendto(sock, header + data)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
@@ -918,7 +960,7 @@ def send_usrp_wav_with_padding(wav_path):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
             # 🔵 V1.86: 後パディングはゼロ（真の無音）に戻す。ゲートは既に開いており
             # 無音でも転送されるため、終端側のノイズ音を排除できる。
-            sock.sendto(header + b"\x00" * 320, (UDP_IP, UDP_PORT))
+            _usrp_sendto(sock, header + b"\x00" * 320)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
@@ -937,7 +979,7 @@ def send_usrp_wav_with_padding(wav_path):
             try:
                 for _ in range(max(1, USRP_EOT_REPEAT)):
                     header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 0, 0, 0, 0, 0)
-                    sock.sendto(header + b"\x00" * 320, (UDP_IP, UDP_PORT))
+                    _usrp_sendto(sock, header + b"\x00" * 320)
                     seq += 1
                     time.sleep(PACKET_INTERVAL)
             except OSError:
