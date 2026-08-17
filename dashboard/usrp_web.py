@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.7   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.9   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -91,10 +91,22 @@ r"""
          しつつ約5msのエンベロープで無音へフェード／復帰時フェードインして段差を
          丸める。枯渇後の再プリバッファは 80ms と浅めにして語頭遅延を抑える。
          worklet・ScriptProcessor 両経路に適用（サーバ/bot は無改修）。
+   V0.8  🔵 セッションの立ち上がり（プリバッファ枯渇→受信再開）で出る「bububu」を抑制。
+         V0.7 はフェードイン/アウトが共通5msで、立ち上がりが急すぎて再開時に
+         ガサつきが出ていた。フェードインを 40ms に緩め（アウトは 5ms 据え置きで
+         終端の切れは保持）、再プリバッファを 80→120ms に深くして、立ち上がり直後に
+         浅すぎて即アンダーラン→再立ち上がりを繰り返す bububu を防ぐ。
+         worklet・ScriptProcessor 両経路に適用（サーバ/bot は無改修）。
+   V0.9  🔵 案X。rx↔priority の切り替わりで出ていた bububu を根治。実測ログで
+         rx(他局受信) と priority(bot応答) はほぼ重ならず順次に来ることが判明した
+         ため、V0.4 の「優先ホールドで一方を捨てる」方式を撤去し、両ポートを1本の
+         ストリームとして順に合流させる。切り替わりでバッファがリセット→再立ち上がり
+         する（bububu の原因）が無くなる。ミラー先頭トーンのスキップは維持。
+         再生側の連続化・フェード（V0.5〜V0.8）はそのまま（サーバ/bot は無改修）。
 ================================================================================
 """
 
-__version__ = "V0.7"
+__version__ = "V0.9"
 
 import argparse
 import asyncio
@@ -128,16 +140,15 @@ USRP_TYPE_VOICE = 0
 # 1クライアントあたりの音声キュー上限（超過分は捨ててレイテンシ肥大を防ぐ）
 CLIENT_QUEUE_MAX = 50
 
-# 🔵 V0.4: 案A（ミックスせず優先1本化）。51002(priority=bot応答)を最優先とし、
-# priority 受信中は 51001(RX=他局受信) を捨てて合流させない。これにより
-# 同時受信時に2系統が1本のWSへ倍レートで流れ込み「再生が半速化」する問題を防ぐ。
-PRIORITY_HOLD_SEC    = 0.2   # priority を1発受けたら、この秒数 RX を抑制（20ms間隔に対し十分な保持）
-PRIORITY_SESSION_GAP = 0.5   # priority がこの秒数途切れたら「新しいbot応答」とみなす
-# 各 priority セッション先頭のスキップ数。bot は RF 対策で先頭に 100Hz 微小トーン
-# （NOISE_LEAD_PACKETS=5）を入れており、それがミラーでは「ブブッ」という雑音として
-# 鳴る。RF側の対策は残したまま、Webでは先頭数パケットを再生しないことで抑制する。
-# 5(トーン)＋余裕。トーンの後は無音パディングなので多めに捨てても実害はない。
-PRIORITY_LEAD_SKIP   = 8
+# 🔵 V0.9: 案X（rx/priority を区別せず1本のストリームとして順に流す）。
+# 実測ログで rx(他局受信) と priority(bot応答) はほぼ重ならず順次に来ることが
+# 分かったため、V0.4 の「優先ホールドで一方を捨てる」方式をやめて単純合流に戻す。
+# これにより rx↔priority の切り替わりでバッファがリセットされ再立ち上がりする
+# （＝bububu の原因）が無くなる。再生側の連続化・フェード（V0.5〜V0.8）は維持。
+# ただしミラー(51002)先頭の 100Hz 対策トーンだけは引き続きスキップする
+# （bot が RF ゲート対策で入れる音がミラーで「ブブッ」と鳴るのを防ぐ）。
+PRIORITY_SESSION_GAP = 0.5   # priority がこの秒数途切れたら「新しいbot応答」とみなす（先頭スキップ再セット用）
+PRIORITY_LEAD_SKIP   = 8     # ミラー先頭スキップ数（100Hzトーン5＋余裕。後続は無音パディング）
 
 # --verbose 時のコンソール出力
 VERBOSE = False
@@ -156,8 +167,7 @@ class AudioHub:
         self.clients = set()
         self.pkt_count = 0
         self.last_keyup = 0
-        # 🔵 V0.4: 優先(priority=51002)制御の状態
-        self.priority_hold_until = 0.0   # この時刻まで RX を抑制する
+        # 🔵 V0.9: ミラー(priority)先頭トーンのスキップ用の状態のみ保持
         self.priority_last_ts = 0.0      # 直近に priority を受けた時刻（セッション判定用）
         self.priority_skip_remaining = 0 # 現セッションで残りスキップするパケット数
 
@@ -170,29 +180,21 @@ class AudioHub:
         self.clients.discard(q)
 
     def feed(self, role: str, audio: bytes, keyup: int):
-        """role='priority'(51002/bot応答) と role='rx'(51001/他局受信) を
-        ミックスせず1本化する（案A）。priority を最優先し、priority 受信中は
-        ホールド期間 rx を捨てる。priority セッション先頭はトーン抑制でスキップ。
+        """🔵 V0.9 案X: rx(51001) と priority(51002) を区別せず1本のストリームとして
+        順に流す（優先ホールドで一方を捨てない＝切り替わりリセットによる bububu を
+        回避）。ただしミラー(priority)先頭の 100Hz 対策トーン区間だけはスキップする。
         戻り値: 実際にブラウザへ流したら True（verbose ログ判定用）。"""
-        now = time.monotonic()
         if role == "priority":
-            # 新しい bot 応答の立ち上がり検出 → 先頭スキップをセット
+            now = time.monotonic()
+            # 新しい bot 応答の立ち上がり検出 → 先頭スキップを再セット
             if now - self.priority_last_ts > PRIORITY_SESSION_GAP:
                 self.priority_skip_remaining = PRIORITY_LEAD_SKIP
             self.priority_last_ts = now
-            self.priority_hold_until = now + PRIORITY_HOLD_SEC
-            # 先頭トーン区間はブラウザへ流さない（ホールドは上で確定済み）
             if self.priority_skip_remaining > 0:
                 self.priority_skip_remaining -= 1
-                return False
-            self._broadcast(audio, keyup)
-            return True
-        else:  # rx
-            # bot 応答中（ホールド中）は他局受信を捨てて合流させない
-            if now < self.priority_hold_until:
-                return False
-            self._broadcast(audio, keyup)
-            return True
+                return False  # 先頭トーンは流さない
+        self._broadcast(audio, keyup)
+        return True
 
     def _broadcast(self, audio: bytes, keyup: int):
         self.last_keyup = keyup
@@ -381,7 +383,7 @@ class USRPPlayer extends AudioWorkletProcessor {
     const o = (options && options.processorOptions) || {};
     this.SR = o.sr || 8000;
     this.prebuf   = (o.prebufSec   || 0.24) * this.SR;  // 初回プリバッファ
-    this.reprebuf = (o.reprebufSec || 0.08) * this.SR;  // 枯渇後の再プリバッファ（語頭遅延を抑えるため浅め）
+    this.reprebuf = (o.reprebufSec || 0.12) * this.SR;  // 枯渇後の再プリバッファ（立ち上がりの bububu を抑えるため 0.12）
     this.cap = this.SR * 8;
     this.ring = new Float32Array(this.cap);
     this.writeCount = 0;
@@ -390,7 +392,10 @@ class USRPPlayer extends AudioWorkletProcessor {
     this.everPrimed = false;
     this.env = 0;          // 出力エンベロープ 0..1（段差を丸めるフェード）
     this.lastRaw = 0;      // 直前の補間サンプル（アンダーラン中の保持値）
-    this.rampInc = 1 / (0.005 * sampleRate);   // 約5msでフェードイン/アウト
+    // フェードインは緩やか(40ms)＝立ち上がりの bububu を抑制、
+    // フェードアウトは速め(5ms)＝終端の切れを保つ。
+    this.fadeInInc  = 1 / (0.040 * sampleRate);
+    this.fadeOutInc = 1 / (0.005 * sampleRate);
     this.step = this.SR / sampleRate;          // sampleRate は worklet グローバル
     this.port.onmessage = (e)=>{
       const i16 = new Int16Array(e.data);
@@ -408,7 +413,6 @@ class USRPPlayer extends AudioWorkletProcessor {
       if((this.writeCount - this.readPos) >= need){ this.primed = true; this.everPrimed = true; }
       else { out.fill(0); return true; }
     }
-    const inc = this.rampInc;
     for(let i=0;i<out.length;i++){
       const avail = this.writeCount - this.readPos;
       let raw;
@@ -420,11 +424,11 @@ class USRPPlayer extends AudioWorkletProcessor {
         raw = s0 + (s1 - s0) * frac;
         this.lastRaw = raw;
         this.readPos += this.step;
-        if(this.env < 1){ this.env = Math.min(1, this.env + inc); }   // フェードイン
+        if(this.env < 1){ this.env = Math.min(1, this.env + this.fadeInInc); }   // 緩やかフェードイン
       } else {
         // アンダーラン: 読み位置は据え置き（位置ジャンプによる不連続を作らない）。
         // 直前サンプルを保持しつつエンベロープを 0 へフェードして段差を丸める。
-        if(this.env > 0){ this.env = Math.max(0, this.env - inc); }   // フェードアウト
+        if(this.env > 0){ this.env = Math.max(0, this.env - this.fadeOutInc); }   // 速めフェードアウト
         raw = this.lastRaw;
         if(this.env <= 0){ this.primed = false; }   // 完全に無音化したら再プリバッファへ（無音中なのでクリックは出ない）
       }
@@ -466,9 +470,10 @@ async function connect(){
     let everPrimed=false, env=0, lastRaw=0;
     node = ac.createScriptProcessor(2048, 0, 1);
     const step = SR / ac.sampleRate;
-    const inc = 1 / (0.005 * ac.sampleRate);
+    const fadeInInc  = 1 / (0.040 * ac.sampleRate);
+    const fadeOutInc = 1 / (0.005 * ac.sampleRate);
     const prebufSamples   = PREBUFFER_SEC * SR;
-    const reprebufSamples = 0.08 * SR;
+    const reprebufSamples = 0.12 * SR;
     node.onaudioprocess = (e)=>{
       const out = e.outputBuffer.getChannelData(0);
       if(!primed){
@@ -487,9 +492,9 @@ async function connect(){
           raw = s0 + (s1 - s0) * frac;
           lastRaw = raw;
           readPos += step;
-          if(env < 1){ env = Math.min(1, env + inc); }
+          if(env < 1){ env = Math.min(1, env + fadeInInc); }
         } else {
-          if(env > 0){ env = Math.max(0, env - inc); }
+          if(env > 0){ env = Math.max(0, env - fadeOutInc); }
           raw = lastRaw;
           if(env <= 0){ primed = false; }
         }
