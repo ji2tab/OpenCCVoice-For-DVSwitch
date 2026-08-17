@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.11  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.12  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -114,10 +114,18 @@ r"""
          パケットの中身（長さ/type/keyup/振幅peak/先頭サンプル）を可視化して、
          壊れフレーム・巨大段差・長さ乱れのいずれかを数値で特定できるようにする。
          --diag 指定時は各セッション先頭 DIAG_LEAD 個の素性を [diag:role] 行で出力。
+   V0.12 🔴 bububu/バリバリの根治。--diag の実測により、壊れたセッションでは
+         Analog_Bridge が「同一の大振幅フレーム」（例 head=[554,-27129,-13090,...]
+         peak=27129）を延々リピート送出していることが判明した（正常音声は毎フレーム
+         波形が異なり peak も小さい）。この壊れリピートがブラウザで bububu/バリバリ/
+         ブーンとして鳴っていた。対策: 直前フレームとバイト完全一致するフレームを
+         壊れリピートとして破棄する（連続重複フレーム除去）。完全ゼロ(無音)は正常な
+         無音送出があり得るため例外として通す。正常音声が完全一致することは実質なく
+         誤検出しない。破棄数は [dup:role] 行で確認できる（bot は無改修）。
 ================================================================================
 """
 
-__version__ = "V0.11"
+__version__ = "V0.12"
 
 import argparse
 import array
@@ -166,6 +174,9 @@ CLIENT_QUEUE_MAX = 50
 SESSION_GAP_SEC = 0.5        # この秒数途切れたら「新しいセッション」とみなし先頭スキップを再セット
 LEAD_SKIP = {"rx": 3, "priority": 8}   # role ごとの先頭スキップ数（パケット, 1個=20ms）
 
+# 🔵 V0.12: 完全無音フレーム（連続重複除去の例外判定に使用。正常な無音送出は通す）
+_SILENCE_320 = b"\x00" * 320
+
 # --verbose 時のコンソール出力
 VERBOSE = False
 # 🔵 V0.11: --diag。各セッション先頭の数パケットの中身（長さ/type/keyup/振幅/先頭サンプル）を
@@ -190,6 +201,10 @@ class AudioHub:
         # 🔵 V0.10: role ごとの先頭スキップ状態（rx / priority 個別）
         self._last_ts = {"rx": 0.0, "priority": 0.0}   # role ごとの直近受信時刻
         self._skip = {"rx": 0, "priority": 0}          # role ごとの残りスキップ数
+        # 🔵 V0.12: 連続重複フレーム除去（Analog_Bridge が同一フレームを詰まって
+        # リピート送出する壊れセッション対策）の状態
+        self._last_audio = {"rx": None, "priority": None}  # role ごとの直前フレーム
+        self._dup_count = {"rx": 0, "priority": 0}         # 連続重複の観測数（ログ用）
 
     def register(self):
         q = asyncio.Queue(maxsize=CLIENT_QUEUE_MAX)
@@ -203,12 +218,31 @@ class AudioHub:
         """🔵 V0.10 案X: rx(51001)/priority(51002) を1本のストリームとして順に流す。
         各 role の新セッション先頭を LEAD_SKIP[role] 個だけスキップして、受信開始の
         ガサつき（rx）と 100Hz 対策トーン（priority）を抑える。頭欠けを避けるため
-        rx のスキップは控えめ。戻り値: 実際にブラウザへ流したら True。"""
+        rx のスキップは控えめ。戻り値: 実際にブラウザへ流したら True。
+
+        🔵 V0.12: 連続重複フレーム除去。--diag の実測で、Analog_Bridge が壊れた
+        セッションでは「同一の大振幅フレーム」を延々リピート送出することが判明
+        （bububu/バリバリの正体）。正常音声は毎フレーム波形が異なるため、直前と
+        バイト完全一致するフレームは壊れリピートとして破棄する。完全ゼロ(無音)は
+        正常な無音送出があり得るため除外して通す。"""
         now = time.monotonic()
-        # 新しいセッションの立ち上がり検出 → 先頭スキップを再セット
+        # 新しいセッションの立ち上がり検出 → 先頭スキップと重複状態を再セット
         if now - self._last_ts.get(role, 0.0) > SESSION_GAP_SEC:
             self._skip[role] = LEAD_SKIP.get(role, 0)
+            if self._dup_count.get(role, 0) > 0:
+                vlog(f"[dup:{role}] previous session dropped {self._dup_count[role]} duplicated frames")
+            self._last_audio[role] = None
+            self._dup_count[role] = 0
         self._last_ts[role] = now
+
+        # 🔵 V0.12: 直前フレームとの完全一致 → 壊れリピートとして破棄（無音は除く）
+        if audio == self._last_audio.get(role) and audio != _SILENCE_320:
+            self._dup_count[role] = self._dup_count.get(role, 0) + 1
+            if self._dup_count[role] in (1, 50, 250, 1000):   # 抑制ぎみにログ
+                vlog(f"[dup:{role}] duplicated frame dropped (x{self._dup_count[role]})")
+            return False
+        self._last_audio[role] = audio
+
         if self._skip.get(role, 0) > 0:
             self._skip[role] -= 1
             return False  # 先頭の数パケットは流さない
