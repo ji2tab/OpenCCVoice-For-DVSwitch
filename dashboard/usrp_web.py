@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.4   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.5   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -73,10 +73,16 @@ r"""
          セッション先頭の PRIORITY_LEAD_SKIP パケットを再生スキップし、bot が
          RF 対策で入れる先頭 100Hz 微小トーンがミラーで「ブブッ」と鳴るのを抑制
          （RF側の対策は無改修のまま／bot・ブラウザ側も無改修、本ファイルのみで完結）。
+   V0.5  🔵 常時「プツプツ」を解消（再生側のみ・サーバ/bot 無改修）。V0.4 までは
+         20ms ごとの 8kHz 小バッファを個別に AudioBuffer 化して並べていたため、
+         ブラウザが各バッファを独立に出力レートへリサンプルし、境界で波形が不連続に
+         なってクリック（プツプツ）が出ていた。届いた PCM をリングバッファに貯め、
+         1本の連続再生ノードから線形補間で「連続」リサンプルして読み出す方式へ変更。
+         境界クリックが消え、プリバッファも 120→240ms に深くして到着ジッタを吸収する。
 ================================================================================
 """
 
-__version__ = "V0.4"
+__version__ = "V0.5"
 
 import argparse
 import asyncio
@@ -314,15 +320,28 @@ INDEX_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="stat" id="stat">
-    受信パケット: 0 ／ ジッタバッファ: 120ms<br>
+    受信パケット: 0 ／ ジッタバッファ: 240ms<br>
     <span style="color:#999;">※ 初回は「接続」ボタン押下（ブラウザの自動再生制限のため）</span>
   </div>
 </div>
 
 <script>
+// ============================================================
+// 🔵 V0.5: リングバッファ + 連続再生（継ぎ目クリック除去）
+// ------------------------------------------------------------
+// V0.4 までは 20ms ごとの 8kHz 小バッファを個別に AudioBuffer 化して
+// 並べていた。ブラウザは各バッファを独立に出力レート(48kHz等)へリサンプル
+// するため、バッファ境界で波形が不連続になり「常時プツプツ」が出ていた。
+// V0.5 では届いた PCM をリングバッファに貯め、1本の連続再生ノードから
+// 途切れなく読み出して「連続」リサンプル（線形補間）する。境界クリックが
+// 消え、深めのプリバッファ(240ms)で到着ジッタも吸収する。
+// ============================================================
 const SR = 8000;                 // USRP 音声は 8kHz モノラル
-const TARGET_LATENCY = 0.12;     // ジッタバッファ 120ms
-let ac=null, ws=null, gain=null, nextTime=0, running=false, pkts=0;
+const PREBUFFER_SEC = 0.24;      // ジッタバッファ 240ms（貯めてから再生開始）
+const RING_CAP = SR * 8;         // リング容量 8 秒ぶん
+
+let ac=null, ws=null, gain=null, node=null, running=false, pkts=0;
+let ring=null, writeCount=0, readPos=0, primed=false;
 
 const btn   = document.getElementById('btn');
 const state = document.getElementById('state');
@@ -347,7 +366,42 @@ async function connect(){
   gain = ac.createGain();
   gain.gain.value = vol.value/100;
   gain.connect(ac.destination);
-  nextTime = 0;
+
+  // リング初期化
+  ring = new Float32Array(RING_CAP);
+  writeCount = 0; readPos = 0; primed = false;
+
+  // 連続再生ノード（出力レートで onaudioprocess が回り、8kHz リングから
+  // 線形補間で読み出す。境界をまたいで連続に補間するためクリックが出ない）
+  const bufSize = 2048;
+  node = ac.createScriptProcessor(bufSize, 0, 1);
+  const step = SR / ac.sampleRate;   // 例 8000/48000 = 0.1667（1出力サンプルあたりの読み進み）
+  node.onaudioprocess = (e)=>{
+    const out = e.outputBuffer.getChannelData(0);
+    const prebufSamples = PREBUFFER_SEC * SR;
+    // プリバッファが溜まるまで（または枯れて再プライム中は）無音
+    if(!primed){
+      if((writeCount - readPos) >= prebufSamples){ primed = true; }
+      else { out.fill(0); return; }
+    }
+    for(let i=0;i<out.length;i++){
+      const avail = writeCount - readPos;
+      if(avail < 2){
+        // アンダーラン: 無音を出し、読み位置を書き込み位置へ合わせて再プライムへ
+        out[i] = 0;
+        readPos = writeCount;
+        primed = false;
+        continue;
+      }
+      const idx = Math.floor(readPos);
+      const frac = readPos - idx;
+      const s0 = ring[idx % RING_CAP];
+      const s1 = ring[(idx+1) % RING_CAP];
+      out[i] = s0 + (s1 - s0) * frac;
+      readPos += step;
+    }
+  };
+  node.connect(gain);
 
   const proto = location.protocol==='https:' ? 'wss' : 'ws';
   ws = new WebSocket(proto+'://'+location.host+'/ws');
@@ -355,35 +409,30 @@ async function connect(){
   ws.onopen  = ()=>{ running=true; btn.textContent='切断'; btn.className=''; setState('接続中','live'); };
   ws.onclose = ()=>{ if(running){ setState('切断','busy'); } };
   ws.onerror = ()=>{ setState('エラー','busy'); };
-  ws.onmessage = ev=>{ pkts++; playChunk(ev.data); updateStat(); };
+  ws.onmessage = ev=>{ pkts++; enqueue(ev.data); updateStat(); };
 }
 
 function disconnect(){
   running=false;
   if(ws){ ws.close(); ws=null; }
+  if(node){ try{ node.disconnect(); }catch(e){} node=null; }
   if(ac){ ac.close(); ac=null; }
+  ring=null; primed=false;
   btn.textContent='接続'; btn.className='off';
   setState('未接続','');
 }
 
-function playChunk(arrbuf){
+// 届いた 16bit PCM をリングへ書き込む（Float32 に正規化）
+function enqueue(arrbuf){
   const i16 = new Int16Array(arrbuf);
-  const f32 = new Float32Array(i16.length);
-  for(let i=0;i<i16.length;i++){ f32[i]=i16[i]/32768; }
-  const buf = ac.createBuffer(1, f32.length, SR);   // 8kHz で作成→出力レートへ自動リサンプル
-  buf.copyToChannel(f32, 0);
-  const src = ac.createBufferSource();
-  src.buffer = buf;
-  src.connect(gain);
-  const now = ac.currentTime;
-  // アンダーラン時はバッファを積み直す
-  if(nextTime < now + 0.02){ nextTime = now + TARGET_LATENCY; }
-  src.start(nextTime);
-  nextTime += buf.duration;
+  for(let i=0;i<i16.length;i++){
+    ring[writeCount % RING_CAP] = i16[i] / 32768;
+    writeCount++;
+  }
 }
 
 function updateStat(){
-  stat.innerHTML = '受信パケット: '+pkts+' ／ ジッタバッファ: 120ms';
+  stat.innerHTML = '受信パケット: '+pkts+' ／ ジッタバッファ: 240ms';
 }
 </script>
 </body>
