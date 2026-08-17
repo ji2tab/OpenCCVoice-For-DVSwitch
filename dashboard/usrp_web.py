@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.13  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.14  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -129,10 +129,17 @@ r"""
          変更し、末尾が揺れる壊れフレームも全て破棄する。正常音声は毎フレーム
          波形が異なり先頭8サンプルまで連続一致しないため誤検出しない。
          先頭が無音(全ゼロ)のフレームは正常として除外（bot は無改修）。
+   V0.14 🔴 V0.13 の取りこぼし修正（実測第2弾）。壊れフレームの固定部は先頭
+         4サンプル [554,-27129,-13090,140] のみで、5サンプル目以降は既に揺れて
+         おり、16B=8サンプル一致では大半が素通りしていた（12連発中 x1 のみ破棄）。
+         比較長を 8B=4サンプルへ短縮し、あわせて誤検出防止のため「先頭に大振幅
+         サンプル(>DUP_MIN_PEAK=5000)を含む」を AND 条件に追加。壊れフレーム
+         (peak≈27000)は確実に落ち、正常音声の静音部は偶然一致しても通る。
+         （bot は無改修）
 ================================================================================
 """
 
-__version__ = "V0.13"
+__version__ = "V0.14"
 
 import argparse
 import array
@@ -181,11 +188,15 @@ CLIENT_QUEUE_MAX = 50
 SESSION_GAP_SEC = 0.5        # この秒数途切れたら「新しいセッション」とみなし先頭スキップを再セット
 LEAD_SKIP = {"rx": 3, "priority": 8}   # role ごとの先頭スキップ数（パケット, 1個=20ms）
 
-# 🔵 V0.12/V0.13: 壊れリピート除去の判定用定数。
-# DUP_HEAD_BYTES: フレーム先頭の比較長（16バイト=8サンプル）。実測の壊れフレームは
-# 先頭の大振幅パターン [554,-27129,-13090,140,...] が毎回同一で末尾だけ揺れるため、
-# 先頭一致で判定する。正常音声が先頭8サンプルまで連続一致することは実質ない。
-DUP_HEAD_BYTES = 16
+# 🔵 V0.12〜V0.14: 壊れリピート除去の判定用定数。
+# 実測の壊れフレームは先頭4サンプル [554,-27129,-13090,140] が固定で、5サンプル目
+# 以降はすでに揺れている（V0.13 の 16B=8サンプル一致では取りこぼした）。
+# 判定は「先頭 DUP_HEAD_BYTES(8B=4サンプル) が直前フレームと一致」かつ
+# 「フレームの先頭に大振幅サンプル(絶対値 > DUP_MIN_PEAK)を含む」の AND とする。
+# 大振幅条件により、正常音声の静音部で先頭が偶然一致しても誤破棄しない
+# （壊れフレームは peak≈27000 と巨大なので確実に引っかかる）。
+DUP_HEAD_BYTES = 8
+DUP_MIN_PEAK   = 5000
 _SILENCE_HEAD = b"\x00" * DUP_HEAD_BYTES   # 先頭が無音のフレームは正常として通す
 
 # --verbose 時のコンソール出力
@@ -246,18 +257,20 @@ class AudioHub:
             self._dup_count[role] = 0
         self._last_ts[role] = now
 
-        # 🔵 V0.13: 壊れリピート判定を「先頭 DUP_HEAD_BYTES の一致」に変更。
-        # V0.12 のバイト完全一致では、実測で「先頭の大振幅パターンは同一だが
-        # 末尾数サンプルだけ揺れる」壊れフレームを取りこぼした（x1 しか落ちない）。
-        # 先頭16バイト(8サンプル)が直前フレームと一致したら壊れリピートとして破棄。
-        # 正常音声は毎フレーム波形が異なり先頭8サンプルまで連続一致しない。
-        # 先頭が無音(全ゼロ)のフレームは正常な無音送出があり得るため除外して通す。
+        # 🔵 V0.14: 壊れリピート判定＝「先頭 DUP_HEAD_BYTES 一致」かつ「先頭に
+        # 大振幅サンプルを含む」。先頭4サンプルの固定壊れパターンを狙い撃ちしつつ、
+        # 大振幅条件で正常音声の静音部での偶然一致を除外する。
         head = audio[:DUP_HEAD_BYTES]
         if head == self._last_audio.get(role) and head != _SILENCE_HEAD:
-            self._dup_count[role] = self._dup_count.get(role, 0) + 1
-            if self._dup_count[role] in (1, 50, 250, 1000):   # 抑制ぎみにログ
-                vlog(f"[dup:{role}] duplicated frame dropped (x{self._dup_count[role]})")
-            return False
+            hs = array.array("h")
+            hs.frombytes(head)
+            if sys.byteorder == "big":
+                hs.byteswap()
+            if hs and max(abs(x) for x in hs) > DUP_MIN_PEAK:
+                self._dup_count[role] = self._dup_count.get(role, 0) + 1
+                if self._dup_count[role] in (1, 50, 250, 1000):   # 抑制ぎみにログ
+                    vlog(f"[dup:{role}] duplicated frame dropped (x{self._dup_count[role]})")
+                return False
         self._last_audio[role] = head
 
         if self._skip.get(role, 0) > 0:
