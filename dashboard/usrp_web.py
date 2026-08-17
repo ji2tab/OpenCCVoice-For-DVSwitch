@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.2   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.3   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -58,10 +58,16 @@ r"""
          Recv-Q には溜まるがアプリの packets が 0 のまま）。UDP 生成を aiohttp の
          on_startup（＝実際にサービスを回すループ）へ移動して解消。
          あわせて --verbose を追加（WS 接続/切断と受信パケットをコンソールに出力）。
+   V0.3  🔵 応答音声ミラー対応。Analog_Bridge の復号RX(51001)には bot 自身の
+         応答音声が現れない（bot の音は 51000→送信の一方向で、この構成では
+         ループバックしない実測結果）。そこで bot 側(dvswitch_bot.py V2.06jtw〜)が
+         応答 USRP パケットを複製送信するミラーポート(既定 51002)を追加受信できる
+         ように、--mirror-port を新設。51001 と 51002 の両方を listen し、同一ハブへ
+         流して同じブラウザで混ぜて鳴らす。--mirror-port 0（既定）でミラー無効。
 ================================================================================
 """
 
-__version__ = "V0.2"
+__version__ = "V0.3"
 
 import argparse
 import asyncio
@@ -347,18 +353,20 @@ def build_ssl(cert, key):
 async def _on_startup(app: web.Application):
     # 🔴 V0.2: web.run_app() が回すループ上で UDP を生成する。
     # ここで作らないと datagram_received が発火しない（別ループ取り残し）。
+    # 🔵 V0.3: RX(51001) に加え、ミラーポート(51002 等)も同じハブへ受ける。
     loop = asyncio.get_event_loop()
-    transport, _ = await loop.create_datagram_endpoint(
-        lambda: USRPReceiver(app["hub"]),
-        local_addr=(app["usrp_addr"], app["usrp_port"]),
-    )
-    app["udp_transport"] = transport
-    vlog(f"[udp] endpoint ready on {app['usrp_addr']}:{app['usrp_port']}")
+    app["udp_transports"] = []
+    for label, port in app["listen_ports"]:
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: USRPReceiver(app["hub"]),
+            local_addr=(app["usrp_addr"], port),
+        )
+        app["udp_transports"].append(transport)
+        vlog(f"[udp] endpoint ready on {app['usrp_addr']}:{port} ({label})")
 
 
 async def _on_cleanup(app: web.Application):
-    t = app.get("udp_transport")
-    if t is not None:
+    for t in app.get("udp_transports", []):
         t.close()
 
 
@@ -368,6 +376,8 @@ def main():
     ap = argparse.ArgumentParser(description="OpenCCVoice USRP Web (phase1 RX)")
     ap.add_argument("--usrp-addr", default=USRP_RX_ADDR)
     ap.add_argument("--usrp-port", type=int, default=USRP_RX_PORT)
+    ap.add_argument("--mirror-port", type=int, default=0,
+                    help="bot 応答音声のミラー受信ポート（既定0=無効。例 51002）")
     ap.add_argument("--web-host", default=WEB_HOST)
     ap.add_argument("--web-port", type=int, default=WEB_PORT)
     ap.add_argument("--cert", required=True, help="TLS 証明書 (PEM)")
@@ -380,21 +390,29 @@ def main():
     WEB_HOST, WEB_PORT = args.web_host, args.web_port
     VERBOSE = args.verbose
 
+    # listen するポート群（RX 本流＋任意でミラー）
+    listen_ports = [("RX", USRP_RX_PORT)]
+    if args.mirror_port and args.mirror_port != USRP_RX_PORT:
+        listen_ports.append(("mirror", args.mirror_port))
+
     hub = AudioHub()
 
     app = web.Application()
     app["hub"] = hub
     app["usrp_addr"] = USRP_RX_ADDR
     app["usrp_port"] = USRP_RX_PORT
+    app["listen_ports"] = listen_ports
     app.router.add_get("/", index_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/status", status_handler)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
 
+    mirror_disp = str(args.mirror_port) if (args.mirror_port and args.mirror_port != USRP_RX_PORT) else "OFF"
     sys.stderr.write(
         f"usrp_web.py {__version__}\n"
         f"  USRP RX listen : {USRP_RX_ADDR}:{USRP_RX_PORT} (Analog_Bridge txPort)\n"
+        f"  mirror listen  : {mirror_disp} (bot 応答音声)\n"
         f"  Web HTTPS      : https://{WEB_HOST}:{WEB_PORT}/\n"
         f"  verbose        : {'ON' if VERBOSE else 'OFF'}\n"
     )
