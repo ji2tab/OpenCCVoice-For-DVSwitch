@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.1   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.2   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -52,10 +52,16 @@ r"""
 
  変更履歴:
    V0.1  初版（フェーズ1: RX モニタのみ / HTTPS / WebSocket ブロードキャスト）
+   V0.2  🔴 受信ゼロ不具合を修正。web.run_app() が自前の新規イベントループを回す
+         ため、main() 内で run_until_complete により先に生成した UDP エンドポイントが
+         別ループに取り残され datagram_received が発火しなかった（カーネル側の
+         Recv-Q には溜まるがアプリの packets が 0 のまま）。UDP 生成を aiohttp の
+         on_startup（＝実際にサービスを回すループ）へ移動して解消。
+         あわせて --verbose を追加（WS 接続/切断と受信パケットをコンソールに出力）。
 ================================================================================
 """
 
-__version__ = "V0.1"
+__version__ = "V0.2"
 
 import argparse
 import asyncio
@@ -87,6 +93,14 @@ USRP_HDR_LEN   = 32
 USRP_TYPE_VOICE = 0
 # 1クライアントあたりの音声キュー上限（超過分は捨ててレイテンシ肥大を防ぐ）
 CLIENT_QUEUE_MAX = 50
+
+# --verbose 時のコンソール出力
+VERBOSE = False
+
+def vlog(msg: str):
+    if VERBOSE:
+        sys.stderr.write(msg + "\n")
+        sys.stderr.flush()
 
 # ----------------------------------------------------------------------------
 # 受信音声を全 WebSocket クライアントへ配るハブ
@@ -139,7 +153,12 @@ class USRPReceiver(asyncio.DatagramProtocol):
         audio = data[USRP_HDR_LEN:]
         if not audio:
             return
+        if self.hub.pkt_count == 0:
+            vlog(f"[rx] first voice packet from {addr[0]}:{addr[1]} "
+                 f"({len(audio)} bytes, keyup={keyup})")
         self.hub.pkt_count += 1
+        if VERBOSE and self.hub.pkt_count % 50 == 0:
+            vlog(f"[rx] packets={self.hub.pkt_count} keyup={keyup} clients={len(self.hub.clients)}")
         self.hub.last_keyup = keyup
         self.hub.broadcast(audio)
 
@@ -155,6 +174,7 @@ async def ws_handler(request: web.Request):
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
     q = hub.register()
+    vlog(f"[ws] client connected  (clients={len(hub.clients)})")
     try:
         async def pump():
             while True:
@@ -171,6 +191,7 @@ async def ws_handler(request: web.Request):
         pump_task.cancel()
     finally:
         hub.unregister(q)
+        vlog(f"[ws] client disconnected (clients={len(hub.clients)})")
     return ws
 
 
@@ -323,17 +344,26 @@ def build_ssl(cert, key):
     return ctx
 
 
-async def start_udp(hub: AudioHub, addr, port):
+async def _on_startup(app: web.Application):
+    # 🔴 V0.2: web.run_app() が回すループ上で UDP を生成する。
+    # ここで作らないと datagram_received が発火しない（別ループ取り残し）。
     loop = asyncio.get_event_loop()
     transport, _ = await loop.create_datagram_endpoint(
-        lambda: USRPReceiver(hub),
-        local_addr=(addr, port),
+        lambda: USRPReceiver(app["hub"]),
+        local_addr=(app["usrp_addr"], app["usrp_port"]),
     )
-    return transport
+    app["udp_transport"] = transport
+    vlog(f"[udp] endpoint ready on {app['usrp_addr']}:{app['usrp_port']}")
+
+
+async def _on_cleanup(app: web.Application):
+    t = app.get("udp_transport")
+    if t is not None:
+        t.close()
 
 
 def main():
-    global USRP_RX_ADDR, USRP_RX_PORT, WEB_HOST, WEB_PORT
+    global USRP_RX_ADDR, USRP_RX_PORT, WEB_HOST, WEB_PORT, VERBOSE
 
     ap = argparse.ArgumentParser(description="OpenCCVoice USRP Web (phase1 RX)")
     ap.add_argument("--usrp-addr", default=USRP_RX_ADDR)
@@ -342,32 +372,35 @@ def main():
     ap.add_argument("--web-port", type=int, default=WEB_PORT)
     ap.add_argument("--cert", required=True, help="TLS 証明書 (PEM)")
     ap.add_argument("--key", required=True, help="TLS 秘密鍵 (PEM)")
+    ap.add_argument("--verbose", action="store_true",
+                    help="WS 接続/切断と受信パケットをコンソールに出力")
     args = ap.parse_args()
 
     USRP_RX_ADDR, USRP_RX_PORT = args.usrp_addr, args.usrp_port
     WEB_HOST, WEB_PORT = args.web_host, args.web_port
+    VERBOSE = args.verbose
 
     hub = AudioHub()
 
     app = web.Application()
     app["hub"] = hub
+    app["usrp_addr"] = USRP_RX_ADDR
+    app["usrp_port"] = USRP_RX_PORT
     app.router.add_get("/", index_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/status", status_handler)
+    app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
 
-    loop = asyncio.get_event_loop()
-    udp_transport = loop.run_until_complete(start_udp(hub, USRP_RX_ADDR, USRP_RX_PORT))
     sys.stderr.write(
         f"usrp_web.py {__version__}\n"
         f"  USRP RX listen : {USRP_RX_ADDR}:{USRP_RX_PORT} (Analog_Bridge txPort)\n"
         f"  Web HTTPS      : https://{WEB_HOST}:{WEB_PORT}/\n"
+        f"  verbose        : {'ON' if VERBOSE else 'OFF'}\n"
     )
 
     ssl_ctx = build_ssl(args.cert, args.key)
-    try:
-        web.run_app(app, host=WEB_HOST, port=WEB_PORT, ssl_context=ssl_ctx, print=None)
-    finally:
-        udp_transport.close()
+    web.run_app(app, host=WEB_HOST, port=WEB_PORT, ssl_context=ssl_ctx, print=None)
 
 
 if __name__ == "__main__":
