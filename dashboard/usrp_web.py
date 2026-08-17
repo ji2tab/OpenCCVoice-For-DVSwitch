@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.9   （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.10  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -103,10 +103,16 @@ r"""
          ストリームとして順に合流させる。切り替わりでバッファがリセット→再立ち上がり
          する（bububu の原因）が無くなる。ミラー先頭トーンのスキップは維持。
          再生側の連続化・フェード（V0.5〜V0.8）はそのまま（サーバ/bot は無改修）。
+   V0.10 🔵 受信開始（rx=51001 の新セッション先頭）で Web でのみ出る bububu を抑制。
+         無線機では出ず Web だけで出ることから、送信立ち上がり（PTTオン→同期→音声が
+         乗るまで）のガサつきが再生の初回立ち上がりと重なって耳につくと判断。先頭
+         スキップを role ごとに一般化し、rx に 3（=60ms）を追加（priority は従来 8）。
+         DMR 実音声の頭は残るため頭欠けしにくく、フェードイン(40ms)と併用で丸める。
+         スキップ数は LEAD_SKIP で調整可（サーバ受信ロジックのみ／bot は無改修）。
 ================================================================================
 """
 
-__version__ = "V0.9"
+__version__ = "V0.10"
 
 import argparse
 import asyncio
@@ -145,10 +151,14 @@ CLIENT_QUEUE_MAX = 50
 # 分かったため、V0.4 の「優先ホールドで一方を捨てる」方式をやめて単純合流に戻す。
 # これにより rx↔priority の切り替わりでバッファがリセットされ再立ち上がりする
 # （＝bububu の原因）が無くなる。再生側の連続化・フェード（V0.5〜V0.8）は維持。
-# ただしミラー(51002)先頭の 100Hz 対策トーンだけは引き続きスキップする
-# （bot が RF ゲート対策で入れる音がミラーで「ブブッ」と鳴るのを防ぐ）。
-PRIORITY_SESSION_GAP = 0.5   # priority がこの秒数途切れたら「新しいbot応答」とみなす（先頭スキップ再セット用）
-PRIORITY_LEAD_SKIP   = 8     # ミラー先頭スキップ数（100Hzトーン5＋余裕。後続は無音パディング）
+#
+# 🔵 V0.10: 受信開始（新セッション先頭）の数パケットを role ごとにスキップする。
+# priority(51002/bot応答): 先頭 100Hz 対策トーンを消すため 8（=トーン5＋余裕）。
+# rx(51001/他局受信): 送信立ち上がり（PTTオン→同期→音声が乗るまで）のガサつき
+#   （Web 再生でのみ耳につく bububu）を抑えるため 3（=60ms）と控えめに。DMR の
+#   実音声の頭は残るためこの程度なら頭欠けしにくい。フェードイン(40ms)と併用する。
+SESSION_GAP_SEC = 0.5        # この秒数途切れたら「新しいセッション」とみなし先頭スキップを再セット
+LEAD_SKIP = {"rx": 3, "priority": 8}   # role ごとの先頭スキップ数（パケット, 1個=20ms）
 
 # --verbose 時のコンソール出力
 VERBOSE = False
@@ -167,9 +177,9 @@ class AudioHub:
         self.clients = set()
         self.pkt_count = 0
         self.last_keyup = 0
-        # 🔵 V0.9: ミラー(priority)先頭トーンのスキップ用の状態のみ保持
-        self.priority_last_ts = 0.0      # 直近に priority を受けた時刻（セッション判定用）
-        self.priority_skip_remaining = 0 # 現セッションで残りスキップするパケット数
+        # 🔵 V0.10: role ごとの先頭スキップ状態（rx / priority 個別）
+        self._last_ts = {"rx": 0.0, "priority": 0.0}   # role ごとの直近受信時刻
+        self._skip = {"rx": 0, "priority": 0}          # role ごとの残りスキップ数
 
     def register(self):
         q = asyncio.Queue(maxsize=CLIENT_QUEUE_MAX)
@@ -180,19 +190,18 @@ class AudioHub:
         self.clients.discard(q)
 
     def feed(self, role: str, audio: bytes, keyup: int):
-        """🔵 V0.9 案X: rx(51001) と priority(51002) を区別せず1本のストリームとして
-        順に流す（優先ホールドで一方を捨てない＝切り替わりリセットによる bububu を
-        回避）。ただしミラー(priority)先頭の 100Hz 対策トーン区間だけはスキップする。
-        戻り値: 実際にブラウザへ流したら True（verbose ログ判定用）。"""
-        if role == "priority":
-            now = time.monotonic()
-            # 新しい bot 応答の立ち上がり検出 → 先頭スキップを再セット
-            if now - self.priority_last_ts > PRIORITY_SESSION_GAP:
-                self.priority_skip_remaining = PRIORITY_LEAD_SKIP
-            self.priority_last_ts = now
-            if self.priority_skip_remaining > 0:
-                self.priority_skip_remaining -= 1
-                return False  # 先頭トーンは流さない
+        """🔵 V0.10 案X: rx(51001)/priority(51002) を1本のストリームとして順に流す。
+        各 role の新セッション先頭を LEAD_SKIP[role] 個だけスキップして、受信開始の
+        ガサつき（rx）と 100Hz 対策トーン（priority）を抑える。頭欠けを避けるため
+        rx のスキップは控えめ。戻り値: 実際にブラウザへ流したら True。"""
+        now = time.monotonic()
+        # 新しいセッションの立ち上がり検出 → 先頭スキップを再セット
+        if now - self._last_ts.get(role, 0.0) > SESSION_GAP_SEC:
+            self._skip[role] = LEAD_SKIP.get(role, 0)
+        self._last_ts[role] = now
+        if self._skip.get(role, 0) > 0:
+            self._skip[role] -= 1
+            return False  # 先頭の数パケットは流さない
         self._broadcast(audio, keyup)
         return True
 
