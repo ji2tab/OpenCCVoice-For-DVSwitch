@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.10  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.11  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -109,12 +109,18 @@ r"""
          スキップを role ごとに一般化し、rx に 3（=60ms）を追加（priority は従来 8）。
          DMR 実音声の頭は残るため頭欠けしにくく、フェードイン(40ms)と併用で丸める。
          スキップ数は LEAD_SKIP で調整可（サーバ受信ロジックのみ／bot は無改修）。
+   V0.11 🔵 診断モード --diag を追加（既定動作は不変）。bot応答(51002)は正常なのに
+         他局受信(51001)だけ受信開始で bububu が残るため、51001 に実際に届く先頭
+         パケットの中身（長さ/type/keyup/振幅peak/先頭サンプル）を可視化して、
+         壊れフレーム・巨大段差・長さ乱れのいずれかを数値で特定できるようにする。
+         --diag 指定時は各セッション先頭 DIAG_LEAD 個の素性を [diag:role] 行で出力。
 ================================================================================
 """
 
-__version__ = "V0.10"
+__version__ = "V0.11"
 
 import argparse
+import array
 import asyncio
 import ssl
 import struct
@@ -162,6 +168,10 @@ LEAD_SKIP = {"rx": 3, "priority": 8}   # role ごとの先頭スキップ数（�
 
 # --verbose 時のコンソール出力
 VERBOSE = False
+# 🔵 V0.11: --diag。各セッション先頭の数パケットの中身（長さ/type/keyup/振幅/先頭サンプル）を
+# 出して、51001(rx) の受信開始で出る bububu の正体（壊れフレーム/巨大段差/長さ乱れ）を特定する。
+DIAG = False
+DIAG_LEAD = 12   # 各セッション先頭で診断出力するパケット数
 
 def vlog(msg: str):
     if VERBOSE:
@@ -226,10 +236,26 @@ class AudioHub:
 class USRPReceiver(asyncio.DatagramProtocol):
     def __init__(self, hub: AudioHub, role: str = "rx"):
         self.hub = hub
-        self.role = role            # 🔵 V0.4: "rx"(51001) / "priority"(51002)
+        self.role = role            # "rx"(51001) / "priority"(51002)
         self._first_logged = False
+        self._diag_last_ts = 0.0    # 🔵 V0.11: 診断用セッション判定
+        self._diag_remaining = 0
+        self._diag_seq = 0
 
     def datagram_received(self, data: bytes, addr):
+        # 🔵 V0.11: 診断は type フィルタより前に全パケットを見る（非音声も可視化）
+        if DIAG:
+            now = time.monotonic()
+            if now - self._diag_last_ts > SESSION_GAP_SEC:
+                self._diag_remaining = DIAG_LEAD
+                self._diag_seq = 0
+                vlog(f"[diag:{self.role}] --- new session ---")
+            self._diag_last_ts = now
+            if self._diag_remaining > 0:
+                self._diag_remaining -= 1
+                self._diag_seq += 1
+                self._diag_dump(data, addr, self._diag_seq)
+
         if len(data) < USRP_HDR_LEN + 2:
             return
         if data[:4] != USRP_MAGIC:
@@ -250,6 +276,29 @@ class USRPReceiver(asyncio.DatagramProtocol):
         if VERBOSE and self.hub.pkt_count % 50 == 0:
             vlog(f"[rx:{self.role}] packets={self.hub.pkt_count} keyup={keyup} "
                  f"played={played} clients={len(self.hub.clients)}")
+
+    def _diag_dump(self, data: bytes, addr, k: int):
+        """1パケットの素性を数値化して出す（先頭数個のみ）。"""
+        n = len(data)
+        magic = data[:4] == USRP_MAGIC
+        ptype = keyup = -1
+        if n >= USRP_HDR_LEN:
+            ptype = struct.unpack(">I", data[20:24])[0]
+            keyup = struct.unpack(">I", data[12:16])[0]
+        audio = data[USRP_HDR_LEN:] if n >= USRP_HDR_LEN else b""
+        alen = len(audio)
+        peak = 0
+        head = []
+        if alen >= 2:
+            samp = array.array("h")
+            samp.frombytes(audio[:(alen // 2) * 2])
+            if sys.byteorder == "big":
+                samp.byteswap()  # USRP 音声は 16bit LE
+            if samp:
+                peak = max(abs(x) for x in samp)
+                head = list(samp[:6])
+        vlog(f"[diag:{self.role}] #{k:2d} src={addr[1]} len={n} audio={alen} "
+             f"magic={int(magic)} type={ptype} keyup={keyup} peak={peak} head={head}")
 
     def error_received(self, exc):
         sys.stderr.write(f"[usrp] UDP error: {exc}\n")
@@ -592,7 +641,7 @@ async def _on_cleanup(app: web.Application):
 
 
 def main():
-    global USRP_RX_ADDR, USRP_RX_PORT, WEB_HOST, WEB_PORT, VERBOSE
+    global USRP_RX_ADDR, USRP_RX_PORT, WEB_HOST, WEB_PORT, VERBOSE, DIAG
 
     ap = argparse.ArgumentParser(description="OpenCCVoice USRP Web (phase1 RX)")
     ap.add_argument("--usrp-addr", default=USRP_RX_ADDR)
@@ -605,11 +654,16 @@ def main():
     ap.add_argument("--key", required=True, help="TLS 秘密鍵 (PEM)")
     ap.add_argument("--verbose", action="store_true",
                     help="WS 接続/切断と受信パケットをコンソールに出力")
+    ap.add_argument("--diag", action="store_true",
+                    help="各セッション先頭パケットの中身(長さ/type/keyup/振幅/先頭サンプル)を出力")
     args = ap.parse_args()
 
     USRP_RX_ADDR, USRP_RX_PORT = args.usrp_addr, args.usrp_port
     WEB_HOST, WEB_PORT = args.web_host, args.web_port
     VERBOSE = args.verbose
+    DIAG = args.diag
+    if DIAG:
+        VERBOSE = True   # 診断出力は vlog を使うため verbose を自動で有効化
 
     # listen するポート群（RX 本流＋任意でミラー）
     listen_ports = [("RX", USRP_RX_PORT)]
