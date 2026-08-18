@@ -17,6 +17,7 @@ DVSwitch 自動音声応答システムの **VVW版**（VOICEVOX + Weather）で
 ## 主なファイル
 
 - `dvswitch_bot.py` — VVW版 常駐 bot（V2.02vvw〜）
+- `bot_config.json` — 設定サンプル。**VVW版は WEATHER 4キー入り**（既定 `WEATHER_ENABLED: false`。座標例は尾張旭。自局の緯度経度に書き換えて有効化）
 - `vv_say.py` / `create_wav.sh` / `bot_setup.py` / `dvs_config.sh` / `test_send.py` / `wav_source.json` — **VV版（`ocv_dvs_vv/`）と共通（同一内容）**
 - Web ダッシュボードは JT/VV/VVW 共用: リポジトリ直下の `dashboard/app.py`
 
