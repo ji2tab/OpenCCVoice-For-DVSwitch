@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.06jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.07jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -13,6 +13,26 @@
  バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
  
+ 【V2.07jtw の要点（V2.06jtw からの変更）】
+  送信の「切れ際」で受信側無線機に稀に出る「ブブ／バリバリ」への対策（終端強化）。
+  背景: Web モニタ開発（usrp_web.py V0.12〜V0.15）の --diag 実測で、Analog_Bridge が
+  復号（AMBE→PCM）出力に「固定パターン先頭＋大振幅の壊れフレーム」を連発する事象を
+  確認した。同じ AB のエンコード（PCM→AMBE）段でも、ストリームを閉じる瞬間に同種の
+  バッファ残骸が最終フレームへ混入し得る、という仮説に基づく送出側の防御である。
+  変更は次の2点のみ（どちらも定数で V2.06jtw と同一挙動へ戻せる）:
+    1. USRP_EOT_REPEAT: 1 → 3。終端 keyup=0 を 20ms 間隔で3発送り、AB に確実に
+       ストリームを閉じさせる（V1.82 で予告しながら未有効だった多重化を有効化）。
+       1 に戻せば従来どおり。
+    2. NOISE_TAIL_PACKETS（新設・既定5）: 後パディングの末尾 5 パケット（0.1s）を
+       完全ゼロではなく 100Hz 微小トーンのフェードイン（振幅 12→30→52→82→112,
+       最大 −49dBFS 相当）にして、長いデジタル完全無音のまま閉じさせない。
+       先頭無音対策（V1.84〜V1.89 のリード音）の終端側の鏡像。0 で無効（V2.06jtw
+       と同一のゼロ後パディング）。
+  【未検証】切れ際バリバリが AB エンコード終端由来という因果は数値では未確定。
+  受信側ノードに usrp_web.py --diag を置き、本ノードの応答のセッション末尾に
+  例の固定パターン（[554,-27129,...]）が出るかで確定できる。効果が無ければ
+  NOISE_TAIL_PACKETS=0 / USRP_EOT_REPEAT=1 で完全に巻き戻すこと。
+
  【V2.06jtw の要点（V2.05jtw からの変更）】
   Web モニタ（usrp_web.py）で bot の応答音声も聞けるようにするための最小改修。
   送出ロジック・タイミング定数は一切変更していない。追加は次の3点のみ:
@@ -101,8 +121,10 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.06jtw (daemon, 応答音声を Web モニタ usrp_web.py へミラー送出。
-                          送出ロジック不変。WEB_MIRROR_* 追加と _usrp_sendto 経由化のみ)
+ Document Version: V2.07jtw (daemon, 送信切れ際のブブ/バリバリ対策。EOT 3発化＋
+                          後パディング末尾の微小トーン化〔終端リード音〕。定数で巻き戻し可)
+ 　（V2.06jtw: 応答音声を Web モニタ usrp_web.py へミラー送出。
+                          送出ロジック不変。WEB_MIRROR_* 追加と _usrp_sendto 経由化のみ）
  　（V2.05jtw: VV版 V1.98vv の送出タイミング実測値を反映。立ち上がり短縮・頭欠け解消。
                           JT系での実波検証は未実施）
  　（V2.04jtw: 天気の付与先を「時報系」「定時メッセージ系」で個別に指定できるようにした）
@@ -124,7 +146,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.06jtw"
+__version__ = "V2.07jtw"
 
 import os
 import sys
@@ -283,7 +305,10 @@ PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
 # なり得た（受信側無線機が受信状態のままスタックする一因）。
 # 🔵 V2.05jtw: コメント修正。V1.82 は「複数回送って確実化」と書いていたが、既定値は
 # 1（＝従来と同じ1発）のままで、多重送出は実際には有効になっていない。
-USRP_EOT_REPEAT = 1
+# 🔴 V2.07jtw: 1 → 3。切れ際の「ブブ／バリバリ」対策として多重化を有効にする。
+# 終端 keyup=0 は 20ms 間隔で送られ、AB は最初の1発で閉じ、残りは無害（V1.82 の
+# 設計どおり）。取りこぼし・遅延による終端フレーム不整を潰す。1 に戻せば従来動作。
+USRP_EOT_REPEAT = 3
 # 🔴 V1.84: 無音のノイズ充填（TGIF 先頭無音スキップ対策）。
 # パケットキャプチャ解析により、TGIF は先頭のデジタル完全無音（全ゼロ PCM →
 # AMBE 無音固定パターン）を転送せず、音が始まった所から配送を開始することが
@@ -320,6 +345,17 @@ NOISE_FILL_AMP = 150   # トーン振幅（150/32768 ≈ -47dBFS。AMBE 非無�
 # いない。これは理屈ではなく実測で決めた値である。5 未満は未検証。
 # ※ JT 系ノードでの実波検証は未実施。頭シャー/頭欠けが出る場合は 65 に戻す。
 NOISE_LEAD_PACKETS = 5    # 5×20ms=0.1s（_FADE_STEPS と同数のため全てフェード）
+# 🔴 V2.07jtw: 終端リード音（後パディング末尾の微小トーン）。
+# 先頭無音対策（NOISE_LEAD_PACKETS）の鏡像。後パディング（V1.86 以来 完全ゼロ）の
+# 末尾 NOISE_TAIL_PACKETS 個だけを 100Hz 微小トーンのフェードイン
+# （振幅 12→30→52→82→112 ≈ 最大 −49dBFS）にして、AB エンコーダに
+# 「長いデジタル完全無音の直後にストリームを閉じる」状況を作らせない。
+# 狙い: AB は復号側で無音/閉鎖の縁にバッファ残骸を混ぜる事象が実測されており
+# （usrp_web.py V0.12 の --diag で確定）、エンコード側の閉じ際にも同種の残骸が
+# 最終 AMBE フレームへ混入して「切れ際のブブ／バリバリ」になるという仮説への防御。
+# 位相連続な周期信号のため耳にはほぼ聞こえない（先頭リード音と同じ性質）。
+# 0 で無効（V2.06jtw と同一のゼロ後パディング）。NOISE_FILL_ENABLED=False でも無効。
+NOISE_TAIL_PACKETS = 5    # 5×20ms=0.1s（0で無効）
 # 🔴 V1.85: ゲート開放バースト。実測（V1.84: -47dBFS ノイズでスキップが
 # 3.06s→1.32s に短縮）から、TGIF のゲートはエネルギー積算型と判断。
 # 音量が大きいほど早く開く。そこでストリーム先頭の短時間だけ強めのノイズを
@@ -849,6 +885,22 @@ def _lead_block(i: int, lead_total: int) -> bytes:
         return _TONE_FADES[min(i - fade_start, len(_TONE_FADES) - 1)]
     return _TONE_BLOCK
 
+
+def _tail_block(i: int, tail_total: int) -> bytes:
+    """🔴 V2.07jtw: 終端リード音。後パディング末尾領域の i 番目（0 起点）のブロック。
+    _lead_block の鏡像で、先頭 len(_FADE_STEPS) 個はフェードイン（小→大）、
+    それ以降（tail_total > 5 のとき）は定常トーン。tail_total=5（既定）では
+    全ブロックがフェードインになり、定常トーン（振幅 150）は1ブロックも出ない
+    ——NOISE_LEAD_PACKETS=5 と同じ性質。100Hz は 20ms ブロックに2周期なので
+    無音→フェードの連結でも位相は連続する。"""
+    if not _TONE_BLOCK:
+        _init_noise_blocks()
+    ramp = len(_FADE_STEPS)
+    if i < ramp:
+        # _TONE_FADES は減衰順（0.75→0.08）なので逆から使い、小→大の立ち上がりにする
+        return _TONE_FADES[ramp - 1 - i]
+    return _TONE_BLOCK
+
 def _noise_block() -> bytes:
     """互換用: リード音の基本ブロックを返す。無効時はゼロ。"""
     if not NOISE_FILL_ENABLED:
@@ -956,11 +1008,20 @@ def send_usrp_wav_with_padding(wav_path):
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
 
-        for _ in range(PRE_POST_PADDING_PACKETS):
+        # 🔵 V1.86: 後パディングはゼロ（真の無音）。ゲートは既に開いており
+        # 無音でも転送されるため、終端側のノイズ音を排除できる。
+        # 🔴 V2.07jtw: ただし末尾 NOISE_TAIL_PACKETS 個だけは 100Hz 微小トーンの
+        # フェードイン（終端リード音）にして、完全無音のまま閉じさせない。
+        # 切れ際の「ブブ／バリバリ」（AB エンコード終端の残骸混入仮説）への防御。
+        # NOISE_TAIL_PACKETS=0 で V2.06jtw と同一（全ゼロ）に戻る。
+        _tail_start = PRE_POST_PADDING_PACKETS - min(NOISE_TAIL_PACKETS, PRE_POST_PADDING_PACKETS)
+        for _i in range(PRE_POST_PADDING_PACKETS):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
-            # 🔵 V1.86: 後パディングはゼロ（真の無音）に戻す。ゲートは既に開いており
-            # 無音でも転送されるため、終端側のノイズ音を排除できる。
-            _usrp_sendto(sock, header + b"\x00" * 320)
+            if NOISE_FILL_ENABLED and NOISE_TAIL_PACKETS > 0 and _i >= _tail_start:
+                payload = _tail_block(_i - _tail_start, NOISE_TAIL_PACKETS)
+            else:
+                payload = b"\x00" * 320
+            _usrp_sendto(sock, header + payload)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
