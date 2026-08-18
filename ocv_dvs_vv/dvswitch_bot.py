@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.0vv —
+ — JJ2YYK デジピーター自動応答システム  V2.01vv —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -12,6 +12,15 @@
 
  バージョンごとの詳細な変更履歴（V1.60〜）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
+
+ 【V2.01vv の要点（V2.0vv からの変更）】
+  1. 起動アナウンスの頭切れ対策（「こちらはJ」まで欠落する実測への対処）。
+     STARTUP_ANNOUNCE_DELAY_SEC 5→15 秒（TGIF ストリームの温まり待ち）＋
+     起動アナウンスのみ前パディングを STARTUP_PRE_PADDING_PACKETS=150
+     （3.0 秒）へ延長（send_usrp_wav_with_padding に pre_packets 引数を追加。
+     他の送出経路は従来どおり）。
+  2. 夜間アナウンスの「ただいまより」を「只今より」へ（VOICEVOX の
+     イントネーション安定化）。
 
  【V2.0vv の要点（V1.99vv からの変更）】
   1. 時報に続く「当地の天気」読み上げを追加（Open-Meteo API・キー不要）。
@@ -135,7 +144,7 @@
      ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
        systemd 常駐化時も ExecStart を venv の python3 にする。
 
- Document Version: V2.0vv (daemon, V1.99vv + 時報への当地天気読み上げ〔Open-Meteo〕)
+ Document Version: V2.01vv (daemon, V2.0vv + 起動アナウンス頭切れ対策 + 只今より表記)
  　（V1.98vv: V1.97vv + 立ち上がり短縮・頭欠け解消の実測値反映）
  　（V1.97vv: V1.96vv + 自局コールサイン/DMR ID の ini 自動取得）
  　（V1.96vv: V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化）
@@ -151,7 +160,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.0vv"
+__version__ = "V2.01vv"
 
 import os
 import sys
@@ -367,6 +376,11 @@ PACKET_INTERVAL = 0.02
 # 増やす分だけ intro 開始が遅れる（＝立ち上がりが鈍る）ので、床の 1.5〜1.7s の
 # 間を詰める余地はあるが未検証。減らす場合は必ず実機で頭欠けを確認すること。
 PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
+# 🔵 V2.01vv: 起動アナウンス専用の前パディング。起動後初回TXはストリーム頭の
+# 欠落が通常より大きいため、前パディングをこの値に延長する（150×20ms=3.0s）。
+# 微小トーンのリード（NOISE_LEAD_PACKETS）は共通。頭切れが残る場合はまず
+# この値を 200（4.0s）へ、改善しなければ STARTUP_ANNOUNCE_DELAY_SEC を延ばす。
+STARTUP_PRE_PADDING_PACKETS = 150
 # 🔴 V1.82: 送信終端（USRP keyup=0）の送出回数。従来は1発のみで、取りこぼすと
 # Analog_Bridge がストリームを閉じられず、DMR 終端フレームの生成が遅延・不整に
 # なり得た（受信側無線機が受信状態のままスタックする一因）。
@@ -438,7 +452,10 @@ ROTATION_CHECK_INTERVAL = 5.0
 GAP_AFTER_INTRO_SEC = 0.5
 
 # 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
-STARTUP_ANNOUNCE_DELAY_SEC = 5.0
+STARTUP_ANNOUNCE_DELAY_SEC = 15.0
+# 🔵 V2.01vv: 5.0 → 15.0 に延長。起動直後は TGIF ログイン／ストリーム確立が
+# 温まりきらず、初回TXの頭が通常より大きく欠ける（「こちらはJ」まで欠落する
+# 実測）。ブリッジ群が落ち着く時間を確保する。
 
 # ============================================================
 # 🔵 V1.75: コールサイン応答音声のキャッシュ設定（即応答化）
@@ -1027,10 +1044,15 @@ def _send_usrp_metadata(sock, seq: int) -> int:
     return seq + 1
 
 
-def send_usrp_wav_with_padding(wav_path):
+def send_usrp_wav_with_padding(wav_path, pre_packets=None):
     """WAV を USRP プロトコルで送信（前後パディング付き、絶対時刻同期）。
     🔵 V1.98vv: docstring 修正。パディングは 1.5 秒固定ではなく
-    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。"""
+    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。
+    🔵 V2.01vv: pre_packets で前パディングのみ呼び出し別に延長できる
+    （既定 None = PRE_POST_PADDING_PACKETS。起動アナウンスが
+    STARTUP_PRE_PADDING_PACKETS を渡す。後パディングは常に共通値）。"""
+    if pre_packets is None:
+        pre_packets = PRE_POST_PADDING_PACKETS
     sock = None
     wf = None
     seq = 0
@@ -1048,7 +1070,7 @@ def send_usrp_wav_with_padding(wav_path):
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
 
-        for _i in range(PRE_POST_PADDING_PACKETS):
+        for _i in range(pre_packets):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
             # 🔴 V1.88/V1.89: 前パディングの先頭 NOISE_LEAD_PACKETS 個のみ
             # 100Hz 微小トーン（末尾フェード付き）。残りはゼロ。
@@ -1393,8 +1415,9 @@ def _send_startup_announcement():
         logger.info(_fmt("TX", "Generate", "startup", "startup_announce"))
         _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
         if _generate_hybrid(_intro, middle_text, None):
-            logger.info(_fmt("TX", "Sending", "startup", "startup_announce"))
-            send_usrp_wav_with_padding(TEMP_FINAL)
+            logger.info(_fmt("TX", "Sending", "startup",
+                             f"startup_announce (pre={STARTUP_PRE_PADDING_PACKETS}pkt)"))
+            send_usrp_wav_with_padding(TEMP_FINAL, pre_packets=STARTUP_PRE_PADDING_PACKETS)
             elapsed = time.monotonic() - started_at
             logger.info(_fmt("TX", "Startup", "startup", f"{elapsed:.1f}s"))
         else:
@@ -1410,7 +1433,9 @@ NIGHT_ANN_GAP_SEC = 1.0
 def _send_night_mode_announcement():
     started_at = time.monotonic()
     resume_hour = (NIGHT_END_HOUR + 1) % 24
-    middle_text = f"ただいまより、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
+    # 🔵 V2.01vv: 「ただいまより」は VOICEVOX のイントネーションが不自然なため
+    # 漢字表記「只今より」に変更（読みが安定する）。
+    middle_text = f"只今より、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
     label = f"N1={NIGHT_START_HOUR:02d}"
 
     time.sleep(NIGHT_ANN_GAP_SEC)
