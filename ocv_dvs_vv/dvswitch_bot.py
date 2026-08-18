@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.02vv —
+ — JJ2YYK デジピーター自動応答システム  V1.99vv —
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -12,34 +12,6 @@
 
  バージョンごとの詳細な変更履歴（V1.60〜）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
-
- 【V2.02vv の要点（V2.01vv からの変更）】
-  実測（2026-08-18、ずんだもん話者・ocv-voicevox）による定数確定のみ。
-  1. REPLY_TX_LEAD_DELAY_SEC : 0.5 → 1.5
-     V1.98vv の 0.5（No.7 話者で実測）はずんだもん環境でカーチャンク応答の
-     頭欠けが再現。1.5 で解消を確認。話者・経路変更時は要再実測。
-  2. STARTUP_ANNOUNCE_DELAY_SEC : 15.0 → 10.0
-     10 秒＋STARTUP_PRE_PADDING_PACKETS=150（3.0s）で起動アナウンスの
-     頭欠けなしを確認したため短縮。
-
- 【V2.01vv の要点（V2.0vv からの変更）】
-  1. 起動アナウンスの頭切れ対策（「こちらはJ」まで欠落する実測への対処）。
-     STARTUP_ANNOUNCE_DELAY_SEC 5→15 秒（TGIF ストリームの温まり待ち）＋
-     起動アナウンスのみ前パディングを STARTUP_PRE_PADDING_PACKETS=150
-     （3.0 秒）へ延長（send_usrp_wav_with_padding に pre_packets 引数を追加。
-     他の送出経路は従来どおり）。
-  2. 夜間アナウンスの「ただいまより」を「只今より」へ（VOICEVOX の
-     イントネーション安定化）。
-
- 【V2.0vv の要点（V1.99vv からの変更）】
-  1. 時報に続く「当地の天気」読み上げを追加（Open-Meteo API・キー不要）。
-     bot_config.json の任意キー WEATHER_ENABLED / WEATHER_LATITUDE /
-     WEATHER_LONGITUDE / WEATHER_HOURS で制御（未設定なら従来動作）。
-     対象正時の約2分前に取得し、続けてイントロ＋時報＋天気の完成WAVを
-     1本ものとして事前生成（正時は再生するだけ＝遅延ゼロ）。取得・生成に
-     失敗したときはその場合成→天気省略の順にフォールバックし、時報は
-     必ず定刻どおり流す。追加依存なし（urllib）。
-     三位一体（bot_setup/app.py）の UI 対応は実波検証後に別途。
 
  【V1.99vv の要点（V1.98vv からの変更）】
   CACHE_DIR（/dev/shm 上の応答キャッシュディレクトリ）が稼働中に外部要因で
@@ -153,7 +125,7 @@
      ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
        systemd 常駐化時も ExecStart を venv の python3 にする。
 
- Document Version: V2.02vv (daemon, V2.01vv + 実測定数確定〔REPLY_TX_LEAD 1.5s / 起動遅延 10s〕)
+ Document Version: V1.99vv (daemon, V1.98vv + CACHE_DIR 消失時の自己修復)
  　（V1.98vv: V1.97vv + 立ち上がり短縮・頭欠け解消の実測値反映）
  　（V1.97vv: V1.96vv + 自局コールサイン/DMR ID の ini 自動取得）
  　（V1.96vv: V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化）
@@ -169,7 +141,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.02vv"
+__version__ = "V1.99vv"
 
 import os
 import sys
@@ -184,8 +156,6 @@ import signal
 import logging
 import threading
 import subprocess
-import urllib.request
-import urllib.error
 
 # ============================================================
 # 🔵 V1.96: VOICEVOX CORE 統合（話者は wav_source.json から読む）
@@ -365,8 +335,6 @@ REQUIRED_KEYS = [
 # 一時ファイル(/dev/shm = RAM ディスクで SD カード保護)
 _PID = os.getpid()
 TEMP_FINAL = f"/dev/shm/reply_final_{_PID}.wav"
-# 🔵 V2.0vv: 天気付き時報の事前生成WAV（正時2分前に1本ものとして作り置く）
-WEATHER_PREBUILT_WAV = f"/dev/shm/weather_signal_{_PID}.wav"
 TEMP_48K   = f"/dev/shm/tmp_48k_{_PID}.wav"
 TEMP_8K    = f"/dev/shm/tmp_8k_{_PID}.wav"
 TEMP_INTRO_PADDED = f"/dev/shm/tmp_intro_padded_{_PID}.wav"
@@ -385,11 +353,6 @@ PACKET_INTERVAL = 0.02
 # 増やす分だけ intro 開始が遅れる（＝立ち上がりが鈍る）ので、床の 1.5〜1.7s の
 # 間を詰める余地はあるが未検証。減らす場合は必ず実機で頭欠けを確認すること。
 PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
-# 🔵 V2.01vv: 起動アナウンス専用の前パディング。起動後初回TXはストリーム頭の
-# 欠落が通常より大きいため、前パディングをこの値に延長する（150×20ms=3.0s）。
-# 微小トーンのリード（NOISE_LEAD_PACKETS）は共通。頭切れが残る場合はまず
-# この値を 200（4.0s）へ、改善しなければ STARTUP_ANNOUNCE_DELAY_SEC を延ばす。
-STARTUP_PRE_PADDING_PACKETS = 150
 # 🔴 V1.82: 送信終端（USRP keyup=0）の送出回数。従来は1発のみで、取りこぼすと
 # Analog_Bridge がストリームを閉じられず、DMR 終端フレームの生成が遅延・不整に
 # なり得た（受信側無線機が受信状態のままスタックする一因）。
@@ -461,12 +424,7 @@ ROTATION_CHECK_INTERVAL = 5.0
 GAP_AFTER_INTRO_SEC = 0.5
 
 # 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
-STARTUP_ANNOUNCE_DELAY_SEC = 10.0
-# 🔵 V2.02vv: 15.0 → 10.0（実測 2026-08-18: 10 秒＋専用前パディング 3.0s で
-# 頭欠けなしを確認）。
-# 🔵 V2.01vv: 5.0 → 15.0 に延長。起動直後は TGIF ログイン／ストリーム確立が
-# 温まりきらず、初回TXの頭が通常より大きく欠ける（「こちらはJ」まで欠落する
-# 実測）。ブリッジ群が落ち着く時間を確保する。
+STARTUP_ANNOUNCE_DELAY_SEC = 5.0
 
 # ============================================================
 # 🔵 V1.75: コールサイン応答音声のキャッシュ設定（即応答化）
@@ -502,10 +460,7 @@ CACHE_SCHEMA = "v2"            # 読み/結合仕様の版。V1.95a: 署名項�
 # 時間（当時 ≒ 2.4s）に揃えた」代理値だった。V1.96 で合成が高速化し（実測 0.9s、
 # bot 自身の Precache ready ログから確認）、この前提は成り立たなくなった。
 # 0.1〜0.5 の間にさらに床がある可能性はあるが未検証。0 で無効。
-REPLY_TX_LEAD_DELAY_SEC = 1.5
-# 🔵 V2.02vv: 0.5 → 1.5（実測 2026-08-18、ずんだもん話者）。V1.98vv の 0.5 は
-# No.7 話者・当時環境での実測値で、ずんだもん環境では頭欠けが再現した。
-# 話者や経路を変えたら必ず実機で頭欠けを再確認すること（V1.98vv の警告どおり）。
+REPLY_TX_LEAD_DELAY_SEC = 0.5
 
 # ============================================================
 # ============================================================
@@ -599,154 +554,6 @@ RX_DURATION_MIN_SEC = None
 RX_DURATION_MAX_SEC = None
 ANNOUNCE_FREQ = None
 TIME_SIGNAL_MODE = None
-
-# ============================================================
-# 🔵 V2.0vv: 時報に続く「当地の天気」読み上げ（Open-Meteo）
-# ============================================================
-# WEATHER_HOURS に含まれる時刻の毎正時の時報（mode "time_signal"）に限り、
-# 「続いて当地の天気です。晴れ、気温は25度です」を時報テキストへ連結する。
-# 設計原則:
-#   (1) 時報の正確性を最優先する。取得は対象時刻の約2分前に事前実行
-#       （_weather_prefetch_loop）し、時報時はメモリ上のキャッシュを使うだけ。
-#       取得失敗・鮮度切れ（>WEATHER_FRESH_SEC）のときは天気だけ黙って省略し、
-#       時報は定刻どおり流す。時報経路でネットワークを待つことは決してない。
-#   (2) 追加依存なし。requests ではなく標準ライブラリ urllib を使用
-#       （JT版展開時に Pi Zero W へも追加インストール不要）。タイムアウト5秒。
-#   (3) 設定は bot_config.json の任意キー（未設定なら機能OFF＝従来動作）:
-#       WEATHER_ENABLED(bool) / WEATHER_LATITUDE / WEATHER_LONGITUDE(float)
-#       / WEATHER_HOURS(int配列, 0-23)。三位一体（bot_setup/app.py）の UI 対応は
-#       実波検証後に実施予定（キーを手書きすれば本版単体で動作する）。
-# API: https://api.open-meteo.com/v1/forecast （キー不要・無料）
-WEATHER_ENABLED = False
-WEATHER_LATITUDE = None
-WEATHER_LONGITUDE = None
-WEATHER_HOURS = []
-WEATHER_FRESH_SEC = 600        # キャッシュ有効期間（10分）
-WEATHER_FETCH_TIMEOUT_SEC = 5  # API タイムアウト
-WEATHER_PREFETCH_LEAD_SEC = 120  # 対象正時のこの秒数前から取得を試みる
-
-# WMO weather interpretation codes → 日本語（読み上げ用）。
-# 未知コードは None（天気語を省略し気温のみ読む）。捏造した既定語は使わない。
-_WMO_JA = {
-    0: "快晴", 1: "晴れ", 2: "くもり時々晴れ", 3: "くもり",
-    45: "霧", 48: "霧",
-    51: "霧雨", 53: "霧雨", 55: "霧雨", 56: "霧雨", 57: "霧雨",
-    61: "雨", 63: "雨", 65: "強い雨", 66: "雨", 67: "雨",
-    71: "雪", 73: "雪", 75: "大雪", 77: "雪",
-    80: "にわか雨", 81: "にわか雨", 82: "激しいにわか雨",
-    85: "にわか雪", 86: "にわか雪",
-    95: "雷雨", 96: "雷雨", 99: "雷雨",
-}
-
-# キャッシュ: {"text": 読み上げ文 or None, "at": monotonic秒, "target": "HH"}
-_weather_cache = {"text": None, "at": 0.0, "target": None,
-                  "wav_hour": None, "wav_at": 0.0}
-_weather_lock = threading.Lock()
-
-
-def _weather_fetch_text():
-    """Open-Meteo から現在の天気・気温を取得し、読み上げ文を返す。
-    失敗時は None（呼び出し側は黙って省略）。この関数は事前取得スレッド
-    専用であり、時報の送出経路からは決して呼ばない。"""
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={WEATHER_LATITUDE}&longitude={WEATHER_LONGITUDE}"
-        "&current=temperature_2m,weather_code&timezone=Asia%2FTokyo"
-    )
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "OpenCCVoice-bot"})
-        with urllib.request.urlopen(req, timeout=WEATHER_FETCH_TIMEOUT_SEC) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        cur = data["current"]
-        temp = round(float(cur["temperature_2m"]))
-        code = int(cur["weather_code"])
-    except Exception as e:
-        logger.warning(_fmt("!!", "Weather", "fetch", f"取得失敗（天気は省略）: {e}"))
-        return None
-    # 気温の読み: 負値は「氷点下N度」（「マイナス」より放送調で聞き取りやすい）
-    temp_text = f"氷点下{abs(temp)}度" if temp < 0 else f"{temp}度"
-    wx = _WMO_JA.get(code)
-    if wx:
-        return f"続いて当地の天気は、{wx}、気温は{temp_text}です"
-    logger.warning(_fmt("..", "Weather", "code", f"未知のWMOコード {code}（天気語を省略）"))
-    return f"続いて当地の気温は{temp_text}です"
-
-
-def _weather_take_prebuilt(hour):
-    """時報側から呼ぶ。この正時用に事前生成した完成WAVがあればパスを返す。
-    無い・古い(>15分)・ファイル消失なら None（呼び出し側は従来合成へ）。"""
-    if not WEATHER_ENABLED or hour not in WEATHER_HOURS:
-        return None
-    with _weather_lock:
-        okh = (_weather_cache["wav_hour"] == hour)
-        fresh = (time.monotonic() - _weather_cache["wav_at"]) <= 900
-    if okh and fresh and os.path.exists(WEATHER_PREBUILT_WAV):
-        return WEATHER_PREBUILT_WAV
-    return None
-
-
-def _weather_take_if_fresh(hour):
-    """時報側から呼ぶ。対象時のキャッシュが鮮度内なら文を返し、無ければ None。
-    ネットワークには一切触れない（メモリ参照のみ）。"""
-    if not WEATHER_ENABLED or hour not in WEATHER_HOURS:
-        return None
-    with _weather_lock:
-        fresh = (time.monotonic() - _weather_cache["at"]) <= WEATHER_FRESH_SEC
-        if _weather_cache["text"] and fresh:
-            return _weather_cache["text"]
-    logger.warning(_fmt("..", "Weather", f"{hour:02d}:00", "キャッシュ無効のため天気を省略（時報は定刻）"))
-    return None
-
-
-def _weather_prefetch_loop():
-    """対象正時の WEATHER_PREFETCH_LEAD_SEC 前になったら取得してキャッシュする
-    常駐スレッド。同一の対象時刻には成功するまで最大数回だけ再試行する。"""
-    logger.info(_fmt("..", "Weather", "prefetch", f"監視開始 hours={WEATHER_HOURS}"))
-    last_try_target = None
-    tries = 0
-    while True:
-        try:
-            now = datetime.now()
-            # 次に来る対象正時までの残り秒
-            best = None
-            for h in WEATHER_HOURS:
-                target = now.replace(hour=h, minute=0, second=0, microsecond=0)
-                if target <= now:
-                    target += timedelta(days=1)
-                remain = (target - now).total_seconds()
-                if best is None or remain < best[0]:
-                    best = (remain, target)
-            if best and best[0] <= WEATHER_PREFETCH_LEAD_SEC:
-                tkey = best[1].strftime("%d%H")
-                with _weather_lock:
-                    have = (_weather_cache["target"] == tkey and _weather_cache["text"])
-                if not have and (last_try_target != tkey or tries < 3):
-                    if last_try_target != tkey:
-                        last_try_target, tries = tkey, 0
-                    tries += 1
-                    text = _weather_fetch_text()
-                    if text:
-                        with _weather_lock:
-                            _weather_cache.update(text=text, at=time.monotonic(), target=tkey)
-                        logger.info(_fmt("..", "Weather", "prefetch",
-                                         f"取得OK for {best[1].strftime('%H:00')}: {text}"))
-                        # 🔵 V2.0vv: 正時に「再生するだけ」で済むよう、イントロ＋時報＋
-                        # 天気を 1 本の完成WAVとして事前生成しておく（合成は _gen_lock で
-                        # カーチャンク応答と直列化されるため衝突しない）。
-                        _h = best[1].hour
-                        _middle = f"{_h}時です。{text}"
-                        if _generate_hybrid(TIME_INTRO_WAV, _middle, None,
-                                            out_path=WEATHER_PREBUILT_WAV):
-                            with _weather_lock:
-                                _weather_cache.update(wav_hour=_h, wav_at=time.monotonic())
-                            logger.info(_fmt("..", "Weather", "prebuilt",
-                                             f"{_h:02d}:00 用の音声を事前生成OK"))
-                        else:
-                            logger.warning(_fmt("!!", "Weather", "prebuilt",
-                                                "事前生成失敗（正時はテキスト連結で合成にフォールバック）"))
-        except Exception as e:
-            logger.warning(_fmt("!!", "Weather", "prefetch", f"想定外エラー: {e}"))
-        time.sleep(20)
 TX_GAIN = None
 NIGHT_MODE_ENABLED = None
 NIGHT_START_HOUR = None
@@ -808,7 +615,6 @@ def _load_config():
     global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ, TIME_SIGNAL_MODE
     global TX_GAIN, NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
     global USE_CSTM_INTRO, USE_CSTM_001, USE_CSTM_002
-    global WEATHER_ENABLED, WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_HOURS
 
     # 1) 存在確認
     if not os.path.exists(CONFIG_PATH):
@@ -842,15 +648,6 @@ def _load_config():
             ts_mode = 1
             logger.info(_fmt("..", "Config", "TIME_SIGNAL_MODE",
                              "未設定のため既定値 1（毎正時の時報）を使用"))
-        # 🔵 V2.0vv: 天気読み上げ（任意キー群。未設定なら機能OFF＝従来動作）
-        w_enabled = bool(cfg.get("WEATHER_ENABLED", False))
-        w_lat = cfg.get("WEATHER_LATITUDE", None)
-        w_lon = cfg.get("WEATHER_LONGITUDE", None)
-        w_hours = cfg.get("WEATHER_HOURS", [12])
-        if w_enabled:
-            w_lat = float(w_lat)
-            w_lon = float(w_lon)
-            w_hours = [int(h) for h in w_hours]
         night_enabled = cfg["NIGHT_MODE_ENABLED"]
         n1 = int(cfg["NIGHT_START_HOUR"])
         n2 = int(cfg["NIGHT_END_HOUR"])
@@ -866,14 +663,6 @@ def _load_config():
         _fatal_config(f"RX_DURATION_MIN_SEC < RX_DURATION_MAX_SEC である必要があります（現在: {rx_min} / {rx_max}）")
     if ts_mode not in (0, 1, 2):
         _fatal_config(f"TIME_SIGNAL_MODE は 0 / 1 / 2 のいずれかです（現在: {ts_mode}）")
-    # 🔵 V2.0vv: 天気設定の検証（有効時のみ厳格に。無効なら検証しない）
-    if w_enabled:
-        if not (-90.0 <= w_lat <= 90.0) or not (-180.0 <= w_lon <= 180.0):
-            _fatal_config(f"WEATHER_LATITUDE/LONGITUDE が不正です（{w_lat}, {w_lon}）")
-        if not w_hours or any(not (0 <= h <= 23) for h in w_hours):
-            _fatal_config(f"WEATHER_HOURS は 0〜23 の整数の配列です（現在: {w_hours}）")
-        if ts_mode == 0:
-            _fatal_config("WEATHER_ENABLED=true には TIME_SIGNAL_MODE 1 か 2 が必要です（時報に連結するため）")
     # ANNOUNCE_FREQ の有効範囲は TIME_SIGNAL_MODE に依存する
     #   mode 0: 0/1/2/3/4   mode 1: 0/1/2/3   mode 2: 0/2
     _valid_freq = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}[ts_mode]
@@ -928,12 +717,6 @@ def _load_config():
     RX_DURATION_MAX_SEC = rx_max
     ANNOUNCE_FREQ = freq
     TIME_SIGNAL_MODE = ts_mode
-    # 🔵 V2.0vv: 天気設定を反映（無効時は既定のOFF状態のまま）
-    WEATHER_ENABLED = w_enabled
-    if w_enabled:
-        WEATHER_LATITUDE = w_lat
-        WEATHER_LONGITUDE = w_lon
-        WEATHER_HOURS = sorted(set(w_hours))
     TX_GAIN = tx_gain
     NIGHT_MODE_ENABLED = night_enabled
     NIGHT_START_HOUR = n1
@@ -1058,15 +841,10 @@ def _send_usrp_metadata(sock, seq: int) -> int:
     return seq + 1
 
 
-def send_usrp_wav_with_padding(wav_path, pre_packets=None):
+def send_usrp_wav_with_padding(wav_path):
     """WAV を USRP プロトコルで送信（前後パディング付き、絶対時刻同期）。
     🔵 V1.98vv: docstring 修正。パディングは 1.5 秒固定ではなく
-    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。
-    🔵 V2.01vv: pre_packets で前パディングのみ呼び出し別に延長できる
-    （既定 None = PRE_POST_PADDING_PACKETS。起動アナウンスが
-    STARTUP_PRE_PADDING_PACKETS を渡す。後パディングは常に共通値）。"""
-    if pre_packets is None:
-        pre_packets = PRE_POST_PADDING_PACKETS
+    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。"""
     sock = None
     wf = None
     seq = 0
@@ -1084,7 +862,7 @@ def send_usrp_wav_with_padding(wav_path, pre_packets=None):
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
 
-        for _i in range(pre_packets):
+        for _i in range(PRE_POST_PADDING_PACKETS):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
             # 🔴 V1.88/V1.89: 前パディングの先頭 NOISE_LEAD_PACKETS 個のみ
             # 100Hz 微小トーン（末尾フェード付き）。残りはゼロ。
@@ -1429,9 +1207,8 @@ def _send_startup_announcement():
         logger.info(_fmt("TX", "Generate", "startup", "startup_announce"))
         _intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
         if _generate_hybrid(_intro, middle_text, None):
-            logger.info(_fmt("TX", "Sending", "startup",
-                             f"startup_announce (pre={STARTUP_PRE_PADDING_PACKETS}pkt)"))
-            send_usrp_wav_with_padding(TEMP_FINAL, pre_packets=STARTUP_PRE_PADDING_PACKETS)
+            logger.info(_fmt("TX", "Sending", "startup", "startup_announce"))
+            send_usrp_wav_with_padding(TEMP_FINAL)
             elapsed = time.monotonic() - started_at
             logger.info(_fmt("TX", "Startup", "startup", f"{elapsed:.1f}s"))
         else:
@@ -1447,9 +1224,7 @@ NIGHT_ANN_GAP_SEC = 1.0
 def _send_night_mode_announcement():
     started_at = time.monotonic()
     resume_hour = (NIGHT_END_HOUR + 1) % 24
-    # 🔵 V2.01vv: 「ただいまより」は VOICEVOX のイントネーションが不自然なため
-    # 漢字表記「只今より」に変更（読みが安定する）。
-    middle_text = f"只今より、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
+    middle_text = f"ただいまより、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
     label = f"N1={NIGHT_START_HOUR:02d}"
 
     time.sleep(NIGHT_ANN_GAP_SEC)
@@ -1630,9 +1405,6 @@ def _prewarm_reply(cs):
             logger.info(_fmt("..", "Precache", cs, "ready"))
 
     threading.Thread(target=_worker, daemon=True).start()
-    # 🔵 V2.0vv: 天気の事前取得スレッド（有効時のみ）
-    if WEATHER_ENABLED:
-        threading.Thread(target=_weather_prefetch_loop, daemon=True).start()
 
 
 def _init_reply_cache():
@@ -1686,27 +1458,8 @@ def _reply_executor(mode, val, extra=None):
                 logger.error(_fmt("!!", "Gen failed", val, "hybrid audio"))
 
         elif mode == "time_signal":
-            target_str = f"{val:02d}:00"
-            # 🔵 V2.0vv: 事前生成済みの「天気付き時報1本もの」があれば合成せず即送出
-            # （正時の遅延ゼロ）。無ければ従来どおりその場合成（テキストの天気連結は
-            # 二段目のフォールバック。どちらも失敗しても時報自体は必ず流す設計）。
-            _pre = _weather_take_prebuilt(val)
-            if _pre:
-                logger.info(_fmt("TX", "Sending", target_str, "time_signal+weather (prebuilt)"))
-                send_usrp_wav_with_padding(_pre)
-                elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "TimeSignal", target_str, f"{elapsed:.1f}s (prebuilt)"))
-                try:
-                    os.remove(WEATHER_PREBUILT_WAV)
-                except OSError:
-                    pass
-                if NIGHT_MODE_ENABLED and val == NIGHT_START_HOUR:
-                    _send_night_mode_announcement()
-                return
             middle = f"{val}時です"
-            _wx = _weather_take_if_fresh(val)
-            if _wx:
-                middle = f"{middle}。{_wx}"
+            target_str = f"{val:02d}:00"
             logger.info(_fmt("TX", "Generate", target_str, "time_signal"))
             if _generate_hybrid(TIME_INTRO_WAV, middle, None):
                 logger.info(_fmt("TX", "Sending", target_str, "time_signal"))
@@ -1897,11 +1650,6 @@ def _log_startup_info():
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
     _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
     logger.info(f"  Time signal mode  : {TIME_SIGNAL_MODE} ({_ts_desc}, lead {TIME_SIGNAL_LEAD_SEC}s)")
-    if WEATHER_ENABLED:
-        logger.info(f"  Weather readout   : ON  hours={WEATHER_HOURS} "
-                    f"({WEATHER_LATITUDE},{WEATHER_LONGITUDE}) via Open-Meteo")
-    else:
-        logger.info(f"  Weather readout   : OFF")
     # 🔴 V1.67: watchdog 擬似終端の状態を表示
     if WATCHDOG_PSEUDO_END_ENABLED:
         logger.info(f"  Watchdog rescue   : ON  (watchdog を擬似終端として拾う / "
