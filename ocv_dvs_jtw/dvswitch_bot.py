@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.07jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.08jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -13,6 +13,23 @@
  バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
  
+ 【V2.08jtw の要点（V2.07jtw からの変更）】
+  送出音声のザラザラ感（8kHz/AMBE 帯域由来のこもり・ジャリつき）を軽減する整音を
+  追加。Web モニタ（usrp_web.py）の受信側 HF_BOOST（1次ハイシェルフ相当・こもり軽減）
+  で効果が確認できたため、同じ発想を「送出前の PCM」へ SoX の treble（ハイシェルフ）で
+  入れる。intro＋合成＋outro を結合した最終段に一律でかける（B案・全体）。
+  変更は _generate_hybrid の結合段のみ。定数で強度・周波数・傾きを調整でき、
+  HF_BOOST_ENABLED=False または HF_BOOST_GAIN_DB=0 で V2.07jtw と完全同一に戻る。
+    既定: treble +4dB @1500Hz slope0.5
+      → 実測応答（SoX v14.4.2, 白色雑音）: 300Hz +0.1 / 500Hz +0.3 / 1kHz +1.1 /
+        1.5kHz +2.0 / 2kHz +2.8 / 2.8kHz +3.6 / 3.5kHz +3.9 dB
+      低域（声の基音）はほぼ不変、明瞭度に効く 1.5kHz 以上だけを緩やかに持ち上げる。
+  【注意】送出前ブーストは AMBE エンコード前にかかるため、強すぎると AMBE が高域の
+  ジャリつきを増幅してザラつきが悪化し得る。まず控えめ（+4dB）で実波確認し、
+  こもりが残るなら GAIN を +6 へ、ザラつくなら +2 へ振る。効果が無ければ 0 に戻す。
+  【キャッシュ】3定数はいずれも _reply_signature に含めたため、値変更で既存キャッシュは
+  自動再生成される（CACHE_SCHEMA を上げる必要はない）。
+
  【V2.07jtw の要点（V2.06jtw からの変更）】
   送信の「切れ際」で受信側無線機に稀に出る「ブブ／バリバリ」への対策（終端強化）。
   背景: Web モニタ開発（usrp_web.py V0.12〜V0.15）の --diag 実測で、Analog_Bridge が
@@ -121,8 +138,10 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.07jtw (daemon, 送信切れ際のブブ/バリバリ対策。EOT 3発化＋
-                          後パディング末尾の微小トーン化〔終端リード音〕。定数で巻き戻し可)
+ Document Version: V2.08jtw (daemon, 送出音のザラザラ感軽減。結合最終段に SoX treble
+                          〔ハイシェルフ〕で高域を緩く持ち上げ。定数で無効化可)
+ 　（V2.07jtw: 送信切れ際のブブ/バリバリ対策。EOT 3発化＋
+                          後パディング末尾の微小トーン化〔終端リード音〕。定数で巻き戻し可）
  　（V2.06jtw: 応答音声を Web モニタ usrp_web.py へミラー送出。
                           送出ロジック不変。WEB_MIRROR_* 追加と _usrp_sendto 経由化のみ）
  　（V2.05jtw: VV版 V1.98vv の送出タイミング実測値を反映。立ち上がり短縮・頭欠け解消。
@@ -146,7 +165,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.07jtw"
+__version__ = "V2.08jtw"
 
 import os
 import sys
@@ -375,6 +394,24 @@ GATE_BURST_PACKETS = 0    # 【未使用】先頭のバーストパケット数�
 GATE_BURST_AMP = 2500     # 【未使用】バースト振幅（2500/32768 ≈ -22dBFS）
 ROTATION_CHECK_INTERVAL = 5.0
 GAP_AFTER_INTRO_SEC = 0.5
+
+# ============================================================
+# 🔵 V2.08jtw: 送出音の整音（こもり/ザラつき軽減の高域ブースト）
+# ============================================================
+# 8kHz/AMBE 帯域で削れる高域を、送出前に SoX の treble（ハイシェルフ）で緩く
+# 持ち上げて明瞭度を上げる。usrp_web.py 受信側の HF_BOOST（1次ハイシェルフ相当）と
+# 同じ狙いを、今度は「送出前の PCM」へ適用する。_generate_hybrid の結合最終段に
+# 一律でかかる（intro＋合成＋outro 全体）。
+# 実測応答（SoX v14.4.2・白色雑音, +4dB/1500Hz/0.5s）:
+#   300Hz +0.1 / 500Hz +0.3 / 1kHz +1.1 / 1.5kHz +2.0 / 2kHz +2.8 / 3.5kHz +3.9 dB
+#   → 声の基音域はほぼ不変、明瞭度に効く 1.5kHz 以上だけを緩やかに持ち上げる。
+# 【調整の指針】こもりが残る→GAIN を +6 へ / ザラつきが増える→+2 へ / 無効化→0。
+# 送出前ブーストのため強すぎると AMBE が高域を強調してザラつきが悪化し得る点に注意。
+# 3定数とも _reply_signature に含めるため、変更で既存キャッシュは自動再生成される。
+HF_BOOST_ENABLED = True
+HF_BOOST_GAIN_DB = 4.0     # ハイシェルフのゲイン(dB)。0 で無効（=V2.07jtw と同一）
+HF_BOOST_FREQ_HZ = 1500    # シェルフのカットオフ周波数(Hz)
+HF_BOOST_SLOPE   = 0.5     # シェルフの傾き（SoX treble の slope。0<s<=1）
 
 # 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
 STARTUP_ANNOUNCE_DELAY_SEC = 5.0
@@ -1454,7 +1491,8 @@ def _mtime(path):
 def _reply_signature():
     """キャッシュ整合性の署名。cs 非依存（intro/outro/ゲイン等のみに依存）。
     解決後 intro の実体（cstm 差し替え含む）・各 WAV の mtime・GAP・TX_GAIN・
-    頭無音・音声モデル・スキーマ版が変われば署名が変わり、再生成が走る。"""
+    頭無音・音声モデル・スキーマ版が変われば署名が変わり、再生成が走る。
+    🔵 V2.08jtw: 整音（HF_BOOST）3定数も含める。値変更で自動再生成。"""
     intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
     return "|".join([
         CACHE_SCHEMA,
@@ -1464,6 +1502,10 @@ def _reply_signature():
         f"{PRE_AUDIO_SILENCE_SEC}",
         f"{TX_GAIN}",
         VOICE_PATH,
+        f"{HF_BOOST_ENABLED}",
+        f"{HF_BOOST_GAIN_DB}",
+        f"{HF_BOOST_FREQ_HZ}",
+        f"{HF_BOOST_SLOPE}",
     ])
 
 
@@ -1729,8 +1771,17 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
             if outro is not None:
                 concat_cmd.append(outro)
             concat_cmd.append(out_path)
+            # 🔵 V2.08jtw: 送出音の整音（高域ブースト）。結合後の全体（intro＋合成＋
+            # outro）に SoX の treble（ハイシェルフ）を一律でかけ、8kHz/AMBE のこもりを
+            # 軽減する。エフェクトは出力ファイル指定の後に置く（SoX はこの順で解釈）。
+            # HF_BOOST_ENABLED=False または GAIN=0 なら付けない（V2.07jtw と同一）。
+            if HF_BOOST_ENABLED and HF_BOOST_GAIN_DB != 0:
+                concat_cmd += ["treble", f"{HF_BOOST_GAIN_DB}",
+                               f"{HF_BOOST_FREQ_HZ}", f"{HF_BOOST_SLOPE}s"]
             # 🔴 V1.68: 送出音量ゲイン。1.0(等倍)以外のときだけ vol 効果を付与する。
             # 結合後の出力全体（intro + 合成音 + outro）に一律で効く。
+            # 🔵 V2.08jtw: treble の後に置く（高域ブーストで上がったピークも含めて
+            # 最終音量を調整できるようにする）。
             if TX_GAIN is not None and TX_GAIN != 1.0:
                 concat_cmd += ["vol", f"{TX_GAIN}"]
             subprocess.run(concat_cmd, check=True)
@@ -1782,6 +1833,12 @@ def _log_startup_info():
     else:
         _g_dir = "減衰" if TX_GAIN < 1.0 else "増幅(クリップ注意)"
         logger.info(f"  TX gain           : {TX_GAIN} ({_g_dir} / vol 効果を全送出に付与)")
+    # 🔵 V2.08jtw: 送出整音（高域ブースト）の状態
+    if HF_BOOST_ENABLED and HF_BOOST_GAIN_DB != 0:
+        logger.info(f"  HF boost          : ON  (+{HF_BOOST_GAIN_DB}dB @{HF_BOOST_FREQ_HZ}Hz "
+                    f"slope{HF_BOOST_SLOPE} / 結合後全体に treble)")
+    else:
+        logger.info(f"  HF boost          : OFF (整音なし / V2.07jtw と同一)")
     logger.info(f"  Startup announce  : {STARTUP_ANNOUNCE_DELAY_SEC}s 後に「起動しました。」を送出")
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
     _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
