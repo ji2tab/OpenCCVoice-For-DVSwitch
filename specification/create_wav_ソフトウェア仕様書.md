@@ -1,9 +1,9 @@
-# create_wav.sh ソフトウェア仕様書（JT版 V1.2 / VV版 V1.31vv）
+# create_wav.sh ソフトウェア仕様書（JT版 V1.21 / VV版 V1.32vv）
 **対象ファイル:** `/opt/dvswitch_bot/bin/create_wav.sh`
-**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.2** ／ VV版（`ocv_dvs_vv/`）**V1.31vv**
+**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.21** ／ VV版（`ocv_dvs_vv/`）**V1.32vv**
 **役割:** コールサイン・地名・定時メッセージを対話入力し、bot が使う固定 WAV を
 一括生成する。入力内容を `wav_source.json` に記録して次回のプリフィルと非対話再生成（`--regen`）に使い、上書き前に自動バックアップし、復元（`-r`）・削除（`-d`）にも対応する。
-**本文の扱い:** 本文は **JT版・VV版で共通の仕様**（音声合成エンジンを除く）を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.31vv）』章にまとめる。
+**本文の扱い:** 本文は **JT版・VV版で共通の仕様**（音声合成エンジンを除く）を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.32vv）』章にまとめる。
 **版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 
 この文書は**スクリプト本体の内部仕様**を記述する技術文書です。日常の操作方法や
@@ -26,7 +26,7 @@
 11. [既知の注意点](#11-既知の注意点)
 12. [改修時の注意点](#12-改修時の注意点)
 13. [入力記録とプリフィル・非対話再生成（wav_source.json / --regen）](#13-入力記録とプリフィル非対話再生成wav_sourcejson----regen)
-14. [VV版差分（V1.31vv）](#14-vv版差分v131vv)
+14. [VV版差分（V1.32vv）](#14-vv版差分v132vv)
 
 ---
 
@@ -121,7 +121,8 @@ fixed_intro.wav  fixed_outro.wav  time_intro.wav  001.wav  002.wav  time_outro.w
 | 関数 | 役割 | 戻り値・副作用 |
 |---|---|---|
 | `show_help` | 使い方を表示 | ヒアドキュメント出力 |
-| `backup_wavs` | 既存 WAV を `BAK_ROOT/<日付>/` へ退避＋chown | 対象ゼロならスキップ |
+| `backup_wavs` | 既存 WAV を `BAK_ROOT/<日付>/` へ退避＋`chown_owner` | 対象ゼロならスキップ |
+| `chown_owner([opts,]path...)` | 生成物の所有者を実ユーザーへ戻す（V1.1 で新設・V1.21/V1.32vv で引数順を修正） | `$SUDO_USER` → UID 1000 の順で解決。失敗時は WARN のみ |
 | `do_restore` | 日付フォルダを選んで WAV を戻す（`-r`） | 復元後 `exit 0` |
 | `do_delete` | WAV バックアップを全削除（`-d`） | 削除後 `exit 0` |
 | `callsign_to_kana(s)` | 英数字をカナへ（数字は英語読み） | echo で返す |
@@ -269,7 +270,7 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 | 対象 | `WAV_FILES`（6ファイル）のうち、存在するものだけ |
 | 事前チェック | 対象が1つも無ければ「初回作成」としてスキップ（`return 0`） |
 | コピー方式 | `cp -p`（属性保持） |
-| 所有者 | コピー後に `chown -R ocv:ocv /opt/dvswitch_bot/bak` |
+| 所有者 | コピー後に `chown_owner -R /opt/dvswitch_bot/bak`。V1.1 で `ocv:ocv` 決め打ちを廃止し、`$SUDO_USER` → UID 1000 の順で実ユーザーを解決してその既定グループへ揃える |
 | 呼ばれる契機 | 生成の直前 / 復元の直前（保険） |
 
 ### 復元（do_restore, -r）
@@ -314,7 +315,7 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 | **2つのカナ関数** | コールサイン＝英語読み、メッセージ＝日本語読み。統合すると読みが崩れる |
 | **無音トリムのイディオム** | `silence ... reverse silence ... reverse` は前後トリムの定型。崩さない |
 | **BAK_ROOT の整合** | `/opt/dvswitch_bot/bak/wav`。dvs_config.sh の `ini` と合わせて bak 配下に集約 |
-| **chown のユーザ名** | `ocv:ocv` 固定。別ユーザ運用なら要変更 |
+| **chown の引数順** | `chown_owner` は `chown "${OWNER_USER}:" "$@"` の順で呼ぶこと。対象を先に書くと chown がそれをユーザ名と解釈して `invalid user` で失敗する。🔴 V1.1〜V1.2（JT版）／V1.1〜V1.31vv（VV版）はこの順序が逆で、かつ `2>/dev/null || true` がエラーを握りつぶしていたため、所有者変更が一度も効いていなかった（生成物が root 所有のまま）。JT版 V1.21 ／ VV版 V1.32vv で修正。エラーを握りつぶさないこと |
 | **メイン処理は非関数** | 対話生成はトップレベル記述。関数化されていない点に注意して改修する |
 | **完成文を一気に合成** | イントロ＋本文を1テキストで open_jtalk に渡す。継ぎ目ノイズ回避のため分割しない |
 
@@ -342,9 +343,9 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 
 ---
 
-## 14. VV版差分（V1.31vv）
+## 14. VV版差分（V1.32vv）
 
-本章は **VV版（`ocv_dvs_vv/create_wav.sh` V1.31vv）** に固有の差分のみを記述する。第1〜13章の共通仕様のうち、音声合成エンジンと話者選択に関わる部分が VV版では次のとおり異なる。
+本章は **VV版（`ocv_dvs_vv/create_wav.sh` V1.32vv）** に固有の差分のみを記述する。第1〜13章の共通仕様のうち、音声合成エンジンと話者選択に関わる部分が VV版では次のとおり異なる。
 
 > 版番号の `vv` サフィックスは VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。
 
@@ -366,6 +367,6 @@ BASE_INTRO_TEXT = "こちらは、<コールサイン読み>、<地名> ディ�
 
 ---
 
-*create_wav.sh ソフトウェア仕様書（JT版 V1.2 / VV版 V1.31vv）*
-*対象: /opt/dvswitch_bot/bin/create_wav.sh（JT版 ocv_dvs_jt/ V1.2 ／ VV版 ocv_dvs_vv/ V1.31vv、バックアップ先 /opt/dvswitch_bot/bak/wav）*
+*create_wav.sh ソフトウェア仕様書（JT版 V1.21 / VV版 V1.32vv）*
+*対象: /opt/dvswitch_bot/bin/create_wav.sh（JT版 ocv_dvs_jt/ V1.21 ／ VV版 ocv_dvs_vv/ V1.32vv、バックアップ先 /opt/dvswitch_bot/bak/wav）*
 *Contributors: JA2CCV / JI2TAB / JJ2YYK / OpenCCVoice Contributors*
