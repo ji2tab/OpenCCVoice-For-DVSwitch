@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.16  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS / 版情報パネル）
+ usrp_web.py  V0.17  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS / 版情報パネル / 輻輳catch-up）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -153,7 +153,7 @@ r"""
 ================================================================================
 """
 
-__version__ = "V0.16"
+__version__ = "V0.17"
 
 import argparse
 import array
@@ -570,6 +570,13 @@ class USRPPlayer extends AudioWorkletProcessor {
     this.SR = o.sr || 8000;
     this.prebuf = (o.prebufSec || 0.24) * this.SR;  // 初回接続時のみのプリバッファ
     this.cap = this.SR * 8;
+    // 🔵 V0.17: 輻輳時の遅延累積対策（catch-up）。到着が束で遅れるとリングに
+    // 音が溜まり、律儀に全部再生して遅延が最大8秒まで積み上がっていた（受信音が
+    // ゆっくり/数秒遅れて聞こえる症状）。滞留が maxLag を超えたら読み位置を
+    // 最新-targetLag へ飛ばし、実時間に追いつく。モニタは実時間追従が正義。
+    this.maxLagSamp    = (o.maxLagSec    || 0.6) * this.SR;
+    this.targetLagSamp = (o.targetLagSec || 0.24) * this.SR;
+    this.catchupCount = 0;
     this.ring = new Float32Array(this.cap);
     this.writeCount = 0;
     this.readPos = 0;
@@ -591,6 +598,8 @@ class USRPPlayer extends AudioWorkletProcessor {
     this.lpA = Math.exp(-2 * Math.PI * fc / sampleRate);
     this.lpState = 0;
     this.port.onmessage = (e)=>{
+      // 🔵 V0.17: {cmd:'flush'} で位置同期リセット（ストリーム終了時の残渣破棄）。
+      if(e.data && e.data.cmd === 'flush'){ this.readPos = this.writeCount; this.primed = false; return; }
       const i16 = new Int16Array(e.data);
       let w = this.writeCount;
       for(let i=0;i<i16.length;i++){ this.ring[w % this.cap] = i16[i] / 32768; w++; }
@@ -607,6 +616,10 @@ class USRPPlayer extends AudioWorkletProcessor {
     if(!this.primed){
       if((this.writeCount - this.readPos) >= this.prebuf){ this.primed = true; }
       else { out.fill(0); return true; }
+    }
+    {
+      const lag = this.writeCount - this.readPos;
+      if(lag > this.maxLagSamp){ this.readPos = this.writeCount - this.targetLagSamp; this.catchupCount++; }
     }
     for(let i=0;i<out.length;i++){
       const avail = this.writeCount - this.readPos;
@@ -655,7 +668,7 @@ async function connect(){
       URL.revokeObjectURL(url);
       node = new AudioWorkletNode(ac, 'usrp-player', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
-        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST }
+        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST, maxLagSec: 0.6, targetLagSec: 0.24 }
       });
       node.connect(gain);
     }catch(err){
@@ -673,6 +686,7 @@ async function connect(){
     const fadeOutInc = 1 / (0.005 * ac.sampleRate);
     const prebufSamples = PREBUFFER_SEC * SR;
     const HF_BOOST = 0.8;
+    const maxLagSamp = 0.6 * SR, targetLagSamp = 0.24 * SR;  // 🔵 V0.17: catch-up
     const lpA = Math.exp(-2 * Math.PI * 1200 / ac.sampleRate);
     node.onaudioprocess = (e)=>{
       const out = e.outputBuffer.getChannelData(0);
@@ -680,6 +694,7 @@ async function connect(){
         if((writeCount - readPos) >= prebufSamples){ primed = true; }
         else { out.fill(0); return; }
       }
+      if((writeCount - readPos) > maxLagSamp){ readPos = writeCount - targetLagSamp; }  // 🔵 V0.17
       for(let i=0;i<out.length;i++){
         const avail = writeCount - readPos;
         let raw;
