@@ -84,7 +84,7 @@ bash -n "$BIN/create_wav.sh" && bash -n "$BIN/dvs_config.sh" && echo "sh        
 # --- 5) 版の確認 ---
 echo "bot:        $(grep -m1 '^__version__' $BIN/dvswitch_bot.py)"
 echo "create_wav: $(grep -m1 '^SCRIPT_VERSION=' $BIN/create_wav.sh)"
-echo "app:        $(grep -m1 'app.py  V' $WEB/app.py)"
+echo "app:        $(grep -m1 '^__version__' $WEB/app.py)"
 
 # --- 6) サービス再起動（bot と dashboard のみ。ブリッジ群には触れない）---
 sudo systemctl restart dvswitch-bot && sudo systemctl restart dvswitch-web && sleep 2 && \
@@ -102,7 +102,7 @@ rpi-ro
 ## 2. 成功の見え方
 
 - 各ファイルに `fetched`、構文チェックに `syntax OK` が並ぶ
-- 版表示が最新（**2026-07-15 時点の目安:** bot `V1.94` / create_wav `V1.2` / app `V3.11`。
+- 版表示が最新（**2026-08-19 時点の目安:** bot `V1.95` / create_wav `V1.21` / dvs_config `V1.1` / app `V3.21`。
   版に `vv` が付いて表示されたら**取得パスを間違えて VV版を入れています** — §5 で戻して確認）
 - 最後に `active` が2行（dvswitch-bot / dvswitch-web）
 - ブラウザで `http://<IP>:8081/` を開き、tagline の版が新しくなっている
