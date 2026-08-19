@@ -1,6 +1,7 @@
 # dvs_config.sh ソフトウェア仕様書
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvs_config.sh`
+**対象バージョン:** **V1.1**（JT版 / JTW版 / VV版 / VVW版で同一内容）
 **役割:** TGIF 接続を前提に、DVSwitch の3つの ini ファイルの可変項目を対話入力で更新する
 設定ツール。編集前に自動バックアップし、復元（`-r`）・削除（`-d`）にも対応する。
 
@@ -49,7 +50,7 @@
 | インタプリタ | `/bin/bash`（`set -u` で未定義変数をエラー化） |
 | 権限 | root 必須。非 root 時は `exec sudo "$0" "$@"` で自己昇格 |
 | 依存コマンド | `grep` / `sed` / `awk` / `cp` / `find` / `systemctl` / `chown`（すべて標準） |
-| 対象ホスト | DVSwitch-Server 導入済みの Raspberry Pi（ocv ユーザ運用） |
+| 対象ホスト | DVSwitch-Server 導入済みの Raspberry Pi / x86_64 Linux（実ユーザ名は不問。V1.1 で `ocv` 固定を廃止） |
 
 `set -u` により、未定義変数を参照するとスクリプトが即停止する（バグの早期発見）。
 
@@ -136,7 +137,8 @@
 |---|---|---|
 | `restart_services` | analog_bridge / mmdvm_bridge を y/N 確認のうえ再起動 | 編集・復元の最後に呼ぶ |
 | `show_help` | 使い方を表示 | ヒアドキュメント |
-| `do_backup` | 3つの ini を `BAK_ROOT/<日付>/` へ退避＋chown | 編集・復元の前に呼ぶ |
+| `do_backup` | 3つの ini を `BAK_ROOT/<日付>/` へ退避＋`chown_owner` | 編集・復元の前に呼ぶ |
+| `chown_owner([opts,]path...)` | 生成物の所有者を実ユーザーへ戻す（V1.1 で新設） | `$SUDO_USER` → UID 1000 の順で解決。失敗時は WARN のみ |
 | `set_ini(file,key,val)` | セクション無関係に「最初に一致するキー行」を置換 | sed 使用 |
 | `set_section_key(file,sec,key,val)` | 指定セクション内のキー行のみ置換 | awk 使用 |
 | `is_ndigits(val,n)` | val が n 桁数字かを判定 | 戻り値で真偽 |
@@ -234,7 +236,7 @@ awk で「指定セクション `[XXX]` に入ってから、最初に一致し�
 | 保存先 | `/opt/dvswitch_bot/bak/ini/<YYMMDDHHMMSS>/` |
 | 対象 | `TARGET_FILES`（3つの ini）。存在するものだけコピー |
 | コピー方式 | `cp -p`（タイムスタンプ・属性を保持） |
-| 所有者 | コピー後に `chown -R ocv:ocv /opt/dvswitch_bot/bak`（sudo 実行で root 所有化するのを防ぐ） |
+| 所有者 | コピー後に `chown_owner -R /opt/dvswitch_bot/bak`（sudo 実行で root 所有化するのを防ぐ）。V1.1 で `ocv:ocv` 決め打ちを廃止し、`$SUDO_USER` → UID 1000 の順で実ユーザーを解決してその既定グループへ揃える |
 | 呼ばれる契機 | 編集の書き込み直前 / 復元の直前（保険） |
 
 ### フォルダ命名
@@ -275,7 +277,7 @@ Analog の `gatewayDmrId` をフォールバックに使う。
 | セクション限定置換 | `Enable` / `Address` / USRP 系はセクションを限定して置換する |
 | 行末コメント非保持 | `キー=値` のみ書き換えるため、その行に付いていた行末コメントは保持されない |
 | DVSwitch.ini は不変更 | バックアップ対象だが、本ツールでは値を変更しない |
-| ユーザ名固定 | `chown` 先が `ocv:ocv` 固定。別ユーザ運用ならこの行の調整が必要 |
+| 実ユーザは1人前提 | `chown` 先は `$SUDO_USER` → UID 1000 の順で決まる（V1.1）。root 以外の実ユーザが複数いる構成は想定外。どちらも取れない場合は所有者変更をスキップし WARN を出す |
 
 ---
 
@@ -287,7 +289,7 @@ Analog の `gatewayDmrId` をフォールバックに使う。
 | **set_ini と set_section_key の使い分け** | 一意キーは `set_ini`、複数セクションに同名があるキーは `set_section_key`。間違えると別セクションを壊す |
 | **${BAK_ROOT:?} を外さない** | `do_delete` の `rm -rf "${BAK_ROOT:?}/"*` の `:?` は空変数暴発防止。絶対に外さない |
 | **バックアップ先の整合** | `BAK_ROOT` は `/opt/dvswitch_bot/bak/ini`。create_wav.sh の `wav` と合わせて `/opt/dvswitch_bot/bak/` 配下に集約している |
-| **chown のユーザ名** | `ocv:ocv` 固定。運用ユーザが違う場合は要変更 |
+| **chown の引数順** | `chown_owner` は `chown "${OWNER_USER}:" "$@"` の順で呼ぶこと。対象を先に書くと chown がそれをユーザ名と解釈して `invalid user` で失敗する（create_wav.sh V1.1〜V1.2/V1.31vv に実在したバグ）。エラーを `2>/dev/null` で握りつぶさないこと |
 | **新規キー追加はしない設計** | キーが無いと `[WARN]` で素通り。ini にキーが存在することが前提（DVSwitch 標準 ini を想定） |
 
 ---
