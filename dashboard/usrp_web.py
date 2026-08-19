@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.15  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS）
+ usrp_web.py  V0.16  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS / 版情報パネル）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -146,15 +146,20 @@ r"""
          (2) こもり軽減: 1次ハイシェルフ相当の高域ブースト（差分加算, HF_BOOST=0.8,
          カットオフ約1.2kHz）を追加。8kHz 音源の帯域は増やせないが、体感の明瞭度を
          改善する。HF_BOOST=0 で原音に戻せる。worklet/フォールバック両対応。
+ V0.16: 版情報パネルを追加。ページ冒頭に本モニタ・bot・voice_make・dashboard の
+         現在版を表示する（/status の "versions" と、ページ読込時の1回取得で描画）。
+         版はノード上の実ファイル（bin/dvswitch_bot.py 等）から起動時＋60秒TTLで
+         読み直すため、bot を更新すればリロードで新版が映る。音声経路は不変更。
 ================================================================================
 """
 
-__version__ = "V0.15"
+__version__ = "V0.16"
 
 import argparse
 import array
 import asyncio
 import ssl
+import re
 import struct
 import sys
 import time
@@ -176,6 +181,44 @@ USRP_RX_ADDR = "0.0.0.0"     # bind するローカルアドレス（通常こ�
 USRP_RX_PORT = 34001         # ★実機の Analog_Bridge.ini [USRP] txPort に合わせる
 WEB_HOST     = "0.0.0.0"     # ダッシュボードを LAN 全体へ出す
 WEB_PORT     = 8443          # HTTPS ポート（app.py の 8081 とは別）
+
+# 🔵 V0.16: 版情報パネル用 — ノード上の関連ファイルから版を読む
+BOT_PY = "/opt/dvswitch_bot/bin/dvswitch_bot.py"
+VMP_PY = "/opt/dvswitch_bot/bin/voice_make.py"
+APP_PY = "/opt/dvswitch_bot/web/app.py"
+_VERS_TTL_SEC = 60.0
+_vers_cache = {"at": 0.0, "data": {}}
+
+
+def _read_version_line(path, patterns):
+    """path の先頭 20KB から patterns（正規表現リスト）の最初の一致を返す。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = f.read(20000)
+        for pat in patterns:
+            m = re.search(pat, head, re.M)
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return "—"
+
+
+def _collect_versions():
+    """monitor / bot / voice_make / dashboard の版を dict で返す（60秒キャッシュ）。"""
+    now = time.monotonic()
+    if now - _vers_cache["at"] < _VERS_TTL_SEC and _vers_cache["data"]:
+        return _vers_cache["data"]
+    data = {
+        "monitor": __version__,
+        "bot": _read_version_line(BOT_PY, [r'^__version__ = "(V[^"]+)"']),
+        "voice_make": _read_version_line(VMP_PY, [r'^__version__ = "(V[^"]+)"']),
+        "dashboard": _read_version_line(APP_PY, [r'app\.py\s+(V[\d.]+[a-z]*)',
+                                                 r'^__version__ = "(V[^"]+)"']),
+    }
+    _vers_cache.update(at=now, data=data)
+    return data
+
 
 # USRP 音声パケット定数
 USRP_MAGIC     = b"USRP"
@@ -411,6 +454,7 @@ async def status_handler(request: web.Request):
     hub: AudioHub = request.app["hub"]
     return web.json_response({
         "version": __version__,
+        "versions": _collect_versions(),
         "clients": len(hub.clients),
         "packets": hub.pkt_count,
         "last_keyup": hub.last_keyup,
@@ -453,6 +497,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <div class="card">
   <h1>USRP Web — 受信モニタ</h1>
   <p class="sub">Analog_Bridge の復号RX音声をブラウザで再生（フェーズ1: 受信のみ）</p>
+  <p class="sub" id="vers" style="color:#888;">versions: 取得中…</p>
 
   <div class="row">
     <button id="btn" class="off">接続</button>
@@ -494,6 +539,12 @@ let ac=null, ws=null, gain=null, node=null, running=false, pkts=0;
 let ring=null, writeCount=0, readPos=0, primed=false;
 
 const btn   = document.getElementById('btn');
+// 🔵 V0.16: 版情報パネル（読込時に1回取得。失敗しても音声機能に影響なし）
+fetch('/status').then(r=>r.json()).then(s=>{
+  const v = s.versions || {};
+  document.getElementById('vers').textContent =
+    `monitor ${v.monitor||'—'} ／ bot ${v.bot||'—'} ／ voice_make ${v.voice_make||'—'} ／ dashboard ${v.dashboard||'—'}`;
+}).catch(()=>{ document.getElementById('vers').textContent = 'versions: 取得失敗'; });
 const state = document.getElementById('state');
 const stat  = document.getElementById('stat');
 const vol   = document.getElementById('vol');
