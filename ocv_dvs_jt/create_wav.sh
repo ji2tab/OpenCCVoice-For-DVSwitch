@@ -2,7 +2,9 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
-#   Version: V1.2 （--regen 非対話再生成を追加。V1.1 の chown 汎用化・V1.0 の記録/プリフィルを含む）
+#   Version: V1.21 （🔴 chown_owner の引数順バグ修正。V1.1 の「chown 汎用化」は
+#            引数順が逆で chown が常に失敗しており、生成物が root 所有のまま
+#            だった。V1.2 の --regen・V1.0 の記録/プリフィルを含む）
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
 #   出力: /opt/dvswitch_bot/ 直下（fixed_intro/outro, time_intro, 001, 002 ほか）
 #
@@ -19,6 +21,14 @@
 #           対話モードとファイル単位で厳密に同一。texts は不変とし generated_at
 #           のみ更新する（VV版 create_wav.sh V1.3 の do_regen と同方針。jtalk は
 #           話者が1つのため voice は扱わない点だけが差）。
+#     V1.21 🔴 chown_owner の引数順バグ修正（機能追加なし）。
+#           V1.1 で導入した chown_owner は `chown "$@" "${OWNER_USER}:"` と
+#           対象パスを先に渡していたため、chown がそれをユーザー名と解釈して
+#           常に `invalid user` で失敗していた。`2>/dev/null || true` が
+#           エラーを完全に握りつぶすため、V1.1 以降ずっと「汎用化したつもりで
+#           実際には一度も所有者が変わっていない」状態だった（生成した WAV と
+#           wav_source.json は root 所有のまま）。引数順を正し、失敗時は
+#           WARN を出すようにした。dvs_config.sh V1.1 と同一方式。
 #
 #   使い方:
 #     sudo ./create_wav.sh        対話で固定WAVを作成（上書き前に自動バックアップ）
@@ -55,7 +65,7 @@
 # ==============================================================================
 
 # 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
-SCRIPT_VERSION="V1.2"
+SCRIPT_VERSION="V1.21"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -93,9 +103,15 @@ fi
 # グループは "ユーザー名:" とコロン止めで「そのユーザーの既定グループ」に任せる
 # （ocv:ocv のようにグループ名まで決め打ちすると、グループ名が異なる環境で外す）。
 # OWNER_USER が空のときは何もしない。
+#
+# 🔴 引数順に注意: chown は「所有者 → 対象」の順で渡す。V1.1〜V1.2 は
+#    `chown "$@" "${OWNER_USER}:"` と対象を先に書いていたため、chown が対象パスを
+#    ユーザー名と解釈して常に `invalid user` で失敗していた（2>/dev/null || true が
+#    エラーを握りつぶすため気づけなかった）。結果、生成物は root 所有のままだった。
+#    失敗を黙らせず WARN として出す（スクリプト自体は止めない）。
 chown_owner() {
   [ -n "$OWNER_USER" ] || return 0
-  chown "$@" "${OWNER_USER}:" 2>/dev/null || true
+  chown "${OWNER_USER}:" "$@" || echo "   [WARN] 所有者を ${OWNER_USER} に変更できませんでした: $*" >&2
 }
 
 # 管理対象の WAV（バックアップ／復元の対象。time_outro は未使用だが拾う）
