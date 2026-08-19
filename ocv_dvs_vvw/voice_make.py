@@ -54,7 +54,9 @@
   bot と vmp で取り決めた固定パス（/dev/shm 上）。原子的差し替え（.building →
   os.replace）で書くため、書きかけを bot が再生することはない。
 
- Document Version: V1.01vvm（VVW版・JTW版 vmp V1.01vmp を土台に合成を VOICEVOX 化）
+ Document Version: V1.02vvm（VVW版・JTW版 vmp V1.01vmp を土台に合成を VOICEVOX 化）
+ 　（V1.02vvm: スロット先頭に LEAD_BEFORE_INTRO_SEC=0.5s の無音を追加し
+ 　 時報/定時の頭欠けを解消。実測 2026-08-19・両ノード）
  　本ファイルは VVW版（VOICEVOX + 天気）。JTW版 voice_make.py（open_jtalk 合成）
  　との違いは合成部（_synth_middle）のみ: open_jtalk → vv_say.py（VOICEVOX）。
  　話者は vv_say.py が wav_source.json の voice を読むため、bot/create_wav と一致する。
@@ -63,7 +65,7 @@
 ================================================================================
 """
 
-__version__ = "V1.01vvm"
+__version__ = "V1.02vvm"
 
 import os
 import sys
@@ -88,6 +90,12 @@ WAV_SOURCE_JSON = f"{BOT_DIR}/wav_source.json"
 
 # intro と合成音の間の無音（bot の GAP_AFTER_INTRO_SEC と揃える）
 GAP_AFTER_INTRO_SEC = 0.5
+# 🔵 実測(2026-08-19): スロット再生の頭欠け対策。時報/定時スロットは
+# time_intro.wav の生の先頭から始まるため、TGIF のストリーム確立中に語頭
+# （「こちらは」の「こ」）が食われて半文字〜1/4文字欠ける症状があった。
+# カーチャンク応答が平気なのは先頭の無音マージンが大きいため。スロット先頭に
+# この無音リードを足して語頭を保護する（両ノード実測で 0.5 秒に確定）。
+LEAD_BEFORE_INTRO_SEC = 0.5
 # 🔵 V1.01vmp: 本体（時報/001 等）と天気の間に置くワンテンポの無音（秒）。
 # 「12時です」→（間）→「尾張旭の天気は…」のように、本体と天気の切れ目に
 # 一拍おいて聞きやすくする。intro↔本文の間隔とは目的が別なので独立定数にする。
@@ -254,7 +262,7 @@ def _build_slot(base_kind, base_text, base_wav, weather_text, slot_path):
             if not _sox([tmp48, "-r", "8000", "-c", "1", "-b", "16", tmp8]):
                 return False
             # time_intro を先頭に（末尾に GAP の無音）
-            if not _sox([TIME_INTRO_WAV, tmp_intro, "pad", "0", f"{GAP_AFTER_INTRO_SEC}"]):
+            if not _sox([TIME_INTRO_WAV, tmp_intro, "pad", f"{LEAD_BEFORE_INTRO_SEC}", f"{GAP_AFTER_INTRO_SEC}"]):
                 return False
             parts.append(tmp_intro)
             parts.append(tmp8)
