@@ -368,7 +368,7 @@ sudo cp /opt/dvswitch_bot/bin/dvswitch_bot.py \
 ### 8-2. 最新版を取得して上書き
 ```bash
 cd /opt/dvswitch_bot/bin
-BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main
+BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_jt
 curl -fsSL "$BASE/dvswitch_bot.py" -o dvswitch_bot.py
 chmod +x dvswitch_bot.py
 ```
