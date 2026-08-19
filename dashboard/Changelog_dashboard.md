@@ -1,9 +1,41 @@
-# Changelog — Web ダッシュボード（app.py）
+# Changelog — Web ダッシュボード（`app.py` / `usrp_web.py`）
 
 > app.py V3.0 から、ダッシュボードの変更履歴を本ファイルへ分離した
 > （dvswitch_bot.py V1.92 の Changelog.md 分離と同じ整理方針）。
 > リポジトリの Changelog.md にセクションとして統合しても、独立ファイルの
 > ままでもよい。新しい版が上に来る降順で記載する。
+> `dashboard/` にはもう1本、受信音声の Web モニタ `usrp_web.py`（app.py とは
+> 別プロセス・別ポート）がある。その版履歴は下の専用節にまとめる。
+
+---
+
+## usrp_web.py 版履歴（受信音声 Web モニタ / 別プロセス）
+
+> `usrp_web.py` は Analog_Bridge の復号 RX（USRP 音声）と bot 応答のミラーを受け、
+> HTTPS + WebSocket でブラウザへ流す独立サービス。`app.py`（Flask・8081）とは
+> 別プロセス・別ポート（既定 8443 / aiohttp）で動く。新しい版が上の降順。
+> V0.1〜V0.15 の詳細は `usrp_web.py` 冒頭 docstring の「変更履歴」を参照。
+
+### usrp_web.py V0.16 (2026-08-19)
+
+🔵 版情報パネルを追加。音声経路（受信・混合・再生）には一切手を入れていない。
+
+1. ページ冒頭に **monitor（本モニタ）/ bot / voice_make / dashboard の現在版**を表示する
+   パネルを新設。ページ読込時に `/status` を1回取得して描画する（取得に失敗しても
+   音声機能には影響しない設計）。
+2. `/status` のレスポンスに `versions` を追加（`monitor` / `bot` / `voice_make` /
+   `dashboard`）。版はノード上の実ファイル先頭 20KB を正規表現で読む:
+   `/opt/dvswitch_bot/bin/dvswitch_bot.py`、`/opt/dvswitch_bot/bin/voice_make.py`（ともに
+   機械可読の `__version__` 行）、`/opt/dvswitch_bot/web/app.py`（docstring の `app.py V…`
+   表記を先に、無ければ `__version__` 行）。ファイルが無い / 読めない場合は `—` を返す
+   （voice_make.py を持たない JT版・VV版ノードでは `—` になる）。`monitor` は本ファイルの
+   `__version__` をそのまま返す。
+3. 版は起動時＋**60秒 TTL** のキャッシュで読み直すため、bot や dashboard を更新すれば
+   ブラウザのリロードで新しい版が映る。
+
+---
+
+## app.py 版履歴（Flask ダッシュボード本体）
 
 ---
 

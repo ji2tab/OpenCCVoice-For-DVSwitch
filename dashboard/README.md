@@ -41,12 +41,15 @@ dashboard/
 ├── uninstall.sh               # アンインストールスクリプト
 ├── how to install uninstall.md # 導入・削除の手順メモ
 ├── 操作マニュアル.md            # 画面ごとの操作説明
-├── Changelog_dashboard.md     # 版ごとの変更履歴
-├── usrp_web.py                # 【試験中・未配置】受信音声の Web モニタ（フェーズ1: RX のみ）
+├── Changelog_dashboard.md     # 版ごとの変更履歴（app.py / usrp_web.py）
+├── usrp_web.py                # 受信音声の Web モニタ V0.16（別プロセス・別ポート／手動導入）
+├── dvswitch-usrpweb.service   # usrp_web.py 用 systemd ユニットのテンプレート
 └── README.md                  # このファイル
 ```
 
-> `usrp_web.py` は開発中の別プログラムです。`install.sh` では配置されず、`app.py` からも参照されません。
+> `usrp_web.py` は **app.py とは独立した別プログラム**です（Flask ではなく aiohttp、
+> ポートも 8081 ではなく 8443/HTTPS）。`install.sh` では配置されず、`app.py` からも参照されません。
+> 導入は下の「受信音声 Web モニタ（usrp_web.py）」の手順で手動で行います。
 
 ## 前提条件
 
@@ -117,6 +120,103 @@ sudo rm /etc/systemd/system/dvswitch-web.service
 sudo rm -rf /opt/dvswitch_bot/web
 sudo systemctl daemon-reload
 ```
+
+## 受信音声 Web モニタ（usrp_web.py）
+
+**V0.16 ／ 手動導入（systemd ユニットのテンプレートあり）**
+
+Analog_Bridge が復号した受信音声（USRP 音声パケット）と、bot の応答音声ミラーを受け取り、
+HTTPS + WebSocket でブラウザへ流して PC のスピーカーで鳴らす受信モニタです。
+現状はフェーズ1で **受信（RX）専用**、送信は行いません。`app.py`（Flask・8081）とは
+**別プロセス・別ポート**（aiohttp・8443/HTTPS）で動き、`dvswitch_bot.py` には触れません。
+
+| 項目 | 値 |
+|---|---|
+| 版 | `usrp_web.py` **V0.16**（版情報パネル: monitor / bot / voice_make / dashboard の版を表示） |
+| 待受 | `https://<node-ip>:8443/` |
+| 受信ポート | `--usrp-port`（Analog_Bridge の復号 RX。`Analog_Bridge.ini` `[USRP]` の `txPort`） |
+| ミラーポート | `--mirror-port`（bot 応答のミラー。`dvswitch_bot.py` V2.06jtw 以降の `WEB_MIRROR_*`。0 で無効） |
+| 依存 | `aiohttp`（`app.py` の Flask とは別。bot を動かす python から見える場所へ入れる） |
+| 配置先 | `/opt/dvswitch_bot/web/usrp_web.py` ／ 証明書 `/opt/dvswitch_bot/web/certs/` |
+
+### 1. 依存パッケージ
+
+```bash
+# VOICEVOX 系ノード（venv 運用。dvswitch-usrpweb.service の既定もこちら）
+sudo /opt/dvswitch_bot/venv/bin/pip3 install aiohttp
+
+# JT系ノード（Raspberry Pi / システム python）
+sudo pip3 install aiohttp
+```
+
+### 2. ファイル配置
+
+```bash
+sudo cp usrp_web.py /opt/dvswitch_bot/web/usrp_web.py
+```
+
+### 3. 自己署名証明書（SAN に IP を入れる）
+
+ブラウザは CN だけの証明書を受け付けないため、**`subjectAltName` に接続先 IP** を入れます。
+
+```bash
+NODE_IP=192.168.1.50            # ← 実機の IP に置き換える
+sudo mkdir -p /opt/dvswitch_bot/web/certs
+sudo openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+  -keyout /opt/dvswitch_bot/web/certs/usrp_web.key \
+  -out    /opt/dvswitch_bot/web/certs/usrp_web.crt \
+  -subj   "/CN=${NODE_IP}" \
+  -addext "subjectAltName=IP:${NODE_IP}"
+sudo chmod 600 /opt/dvswitch_bot/web/certs/usrp_web.key
+```
+
+> 自己署名のため、初回アクセス時はブラウザの警告を承認する必要があります。
+
+### 4. systemd ユニットの登録
+
+本ディレクトリの [`dvswitch-usrpweb.service`](dvswitch-usrpweb.service) をテンプレートとして使います。
+ポート番号・証明書パスは実機に合わせて編集してください。
+**JT系ノードでは `ExecStart` の python を `/usr/bin/python3` に読み替えます**（ユニット内にも注記あり）。
+
+```bash
+sudo cp dvswitch-usrpweb.service /etc/systemd/system/dvswitch-usrpweb.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now dvswitch-usrpweb
+systemctl status dvswitch-usrpweb
+journalctl -u dvswitch-usrpweb -n 50
+```
+
+### 5. アクセス
+
+```
+https://<node-ip>:8443/
+```
+
+ページ冒頭の版情報パネルに monitor / bot / voice_make / dashboard の版が出れば正常です
+（`voice_make.py` を持たない JT版・VV版ノードでは voice_make は `—` 表示）。
+
+> **⚠️ セキュリティ上の注意**
+> `app.py` と同様に認証はありません。HTTPS ですが、信頼できる LAN / VPN 内でのみ使用してください。
+
+### 手動起動（サービス化せず試す場合）
+
+```bash
+sudo /opt/dvswitch_bot/venv/bin/python3 /opt/dvswitch_bot/web/usrp_web.py \
+  --usrp-port 51001 --mirror-port 51002 \
+  --cert /opt/dvswitch_bot/web/certs/usrp_web.crt \
+  --key  /opt/dvswitch_bot/web/certs/usrp_web.key --verbose
+```
+
+### アンインストール
+
+```bash
+sudo systemctl disable --now dvswitch-usrpweb
+sudo rm /etc/systemd/system/dvswitch-usrpweb.service
+sudo systemctl daemon-reload
+sudo rm -f /opt/dvswitch_bot/web/usrp_web.py
+```
+
+---
 
 ## 変更履歴
 

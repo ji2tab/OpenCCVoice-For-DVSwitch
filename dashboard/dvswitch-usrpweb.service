@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenCCVoice USRP Web Monitor (usrp_web.py)
+After=network.target analog_bridge.service dvswitch-bot.service
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=5
+# JT系ノード（Raspberry Pi / Open JTalk）では venv を使わないため、
+# 下の ExecStart 冒頭の python は /usr/bin/python3 に読み替えること。
+ExecStart=/opt/dvswitch_bot/venv/bin/python3 /opt/dvswitch_bot/web/usrp_web.py --usrp-port 51001 --mirror-port 51002 --cert /opt/dvswitch_bot/web/certs/usrp_web.crt --key /opt/dvswitch_bot/web/certs/usrp_web.key
+
+[Install]
+WantedBy=multi-user.target
