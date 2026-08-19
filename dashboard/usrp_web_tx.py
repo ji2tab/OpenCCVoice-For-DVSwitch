@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web_tx.py  V0.1tx  （実験版: RX モニタ + TX 送信 / HTTPS / 版情報パネル）
+ usrp_web_tx.py  V0.3tx  （実験版: RX + TX〔AudioWorklet送信/PTT状態機械/WD〕/ HTTPS / catch-up）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -153,7 +153,7 @@ r"""
 ================================================================================
 """
 
-__version__ = "V0.1tx"
+__version__ = "V0.3tx"
 
 import argparse
 import array
@@ -233,6 +233,7 @@ USRP_TYPE_VOICE = 0
 TX_DEST_ADDR = "127.0.0.1"
 TX_DEST_PORT = 51000          # ★Analog_Bridge.ini [USRP] rxPort（送信の宛先）
 TX_SAMPLES   = 160            # 20ms @ 8kHz（受信と同じ粒度）
+TX_WATCHDOG_SEC = 2.0         # この秒数マイク音声が途絶えたら自動終端（送信しっぱなし防止）
 
 
 class UsrpTx:
@@ -244,6 +245,7 @@ class UsrpTx:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.seq = 0
         self.active = False
+        self._last_audio = 0.0
 
     def _packet(self, pcm160: bytes, keyup: int) -> bytes:
         # ヘッダ: 'USRP' + seq + memory(0) + keyup + talkgroup(0) + type + mpxid(0) + reserved(0)
@@ -251,7 +253,17 @@ class UsrpTx:
         self.seq = (self.seq + 1) & 0xFFFFFFFF
         return hdr + pcm160
 
+    def _watchdog_check(self):
+        """最後の音声から TX_WATCHDOG_SEC 以上途絶えたら自動で終端（送信しっぱなし防止）。"""
+        import time as _t
+        if self.active and (_t.monotonic() - self._last_audio) > TX_WATCHDOG_SEC:
+            self.end_tx()
+            return True
+        return False
+
     def send_audio(self, pcm160: bytes):
+        import time as _t
+        self._last_audio = _t.monotonic()
         # 160サンプル(320バイト)に満たない/超える場合はパディング/切り詰め
         if len(pcm160) < TX_SAMPLES * 2:
             pcm160 = pcm160 + b"\x00" * (TX_SAMPLES * 2 - len(pcm160))
@@ -479,6 +491,17 @@ async def ws_handler(request: web.Request):
                 await ws.send_bytes(audio)
 
         pump_task = asyncio.ensure_future(pump())
+
+        async def tx_watchdog():
+            # 🔵 V0.3tx: 200ms 毎に「音声が途絶えたのに送信中」を検出して自動終端。
+            _tx = request.app.get("tx")
+            if _tx is None:
+                return
+            while True:
+                await asyncio.sleep(0.2)
+                if _tx._watchdog_check():
+                    vlog("[tx] ウォッチドッグ: 音声途絶により自動終端")
+        wd_task = asyncio.ensure_future(tx_watchdog())
         # クライアントからのメッセージ: バイナリ=マイクPCM(TX)、テキスト=PTT制御
         tx: UsrpTx = request.app.get("tx")
         async for msg in ws:
@@ -495,7 +518,12 @@ async def ws_handler(request: web.Request):
                     vlog("[tx] PTT on")
             elif msg.type in (WSMsgType.CLOSE, WSMsgType.ERROR):
                 break
+        # 🔵 V0.3tx: WS が閉じたら送信中でも必ず終端を出す（送信しっぱなし防止）
+        if tx is not None and tx.active:
+            tx.end_tx()
+            vlog("[tx] WS 切断により強制終端")
         pump_task.cancel()
+        wd_task.cancel()
     finally:
         hub.unregister(q)
         vlog(f"[ws] client disconnected (clients={len(hub.clients)})")
@@ -602,60 +630,103 @@ let ring=null, writeCount=0, readPos=0, primed=false;
 
 const btn   = document.getElementById('btn');
 // ===== 🔵 V0.1tx: 送信(TX) =====
-let txStream=null, txCtx=null, txNode=null, txSending=false;
+// ===== 🔵 V0.3tx: 送信(TX) 全面刷新 =====
+// 設計: AudioContext とマイクは「初回に1回だけ」確保して使い回す。PTT は
+// 送信フラグ txSending を切り替えるだけ（context を毎回 close しない＝再ONで
+// 失敗しない）。マイク PCM の取り出しは AudioWorklet（音声専用スレッド）で
+// 確実に行い、8kHz へ間引いて 160 サンプル単位で WS 送信する。
+let txCtx=null, txStream=null, txWorklet=null, txReady=false, txSending=false;
 const TX_SR = 8000;
 function setTxState(t){ const e=document.getElementById('txstate'); if(e) e.textContent=t; }
-// tx 有効なら PTT パネルを出す
+
+// tx 有効ならパネル表示
 fetch('/status').then(r=>r.json()).then(s=>{
   if(s.tx_enabled){ const p=document.getElementById('txpanel'); if(p) p.style.display='block'; }
 });
-async function txStart(){
-  if(txSending) return;
-  if(!ws || ws.readyState!==1){ setTxState('先に「接続」を'); return; }
-  try{
-    txStream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
-  }catch(e){ setTxState('マイク不可'); return; }
-  txCtx = new (window.AudioContext||window.webkitAudioContext)();
-  const src = txCtx.createMediaStreamSource(txStream);
-  // ScriptProcessor でマイクPCMを取り出し、8kHzへ間引きして送る
-  txNode = txCtx.createScriptProcessor(2048,1,1);
-  const ratio = txCtx.sampleRate / TX_SR;  // 例 48000/8000=6
-  let acc=0, buf=[];
-  txNode.onaudioprocess = (ev)=>{
-    if(!txSending) return;
-    const inp = ev.inputBuffer.getChannelData(0);
-    for(let i=0;i<inp.length;i++){
-      acc++;
-      if(acc>=ratio){ acc-=ratio;
-        let v=Math.max(-1,Math.min(1,inp[i]));
-        buf.push(v<0 ? v*32768 : v*32767);
+
+// マイク送信用 AudioWorklet（マイク入力→8k間引き→160サンプルを main へ postMessage）
+const TX_WORKLET_SRC = `
+class TxCapture extends AudioWorkletProcessor {
+  constructor(){
+    super();
+    this.sending = false;
+    this.acc = 0;
+    this.ratio = sampleRate / ${TX_SR};   // 例 48000/8000 = 6
+    this.buf = [];
+    this.port.onmessage = (e)=>{ if(e.data && 'sending' in e.data){ this.sending = e.data.sending; if(!this.sending) this.buf.length=0; } };
+  }
+  process(inputs){
+    const ch = inputs[0][0];
+    if(this.sending && ch){
+      for(let i=0;i<ch.length;i++){
+        this.acc++;
+        if(this.acc >= this.ratio){ this.acc -= this.ratio;
+          let v = Math.max(-1, Math.min(1, ch[i]));
+          this.buf.push(v < 0 ? v*32768 : v*32767);
+        }
+      }
+      while(this.buf.length >= 160){
+        const chunk = this.buf.splice(0,160);
+        const pcm = new Int16Array(chunk);
+        this.port.postMessage(pcm.buffer, [pcm.buffer]);
       }
     }
-    // 160サンプル(20ms)たまるごとに送る
-    while(buf.length>=160){
-      const chunk=buf.splice(0,160);
-      const pcm=new Int16Array(chunk);
-      if(ws && ws.readyState===1) ws.send(pcm.buffer);
-    }
-  };
-  src.connect(txNode); txNode.connect(txCtx.destination);
-  txSending=true;
-  if(ws && ws.readyState===1) ws.send('ptt:on');
-  setTxState('🔴 送信中'); document.getElementById('pttBtn').className='';
-  // 送信中は受信再生をミュート（回り込み防止）
-  if(typeof ac!=='undefined' && ac && ac.destination){ try{ gain.gain.value=0; }catch(e){} }
+    return true;
+  }
 }
+registerProcessor('tx-capture', TxCapture);
+`;
+
+// 初回だけ: マイク許可 → AudioContext → Worklet を用意（以後使い回す）
+async function txEnsureReady(){
+  if(txReady) return true;
+  if(!ws || ws.readyState!==1){ setTxState('先に「接続」を'); return false; }
+  try{
+    txStream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+  }catch(e){ setTxState('マイク不可（許可/証明書を確認）'); return false; }
+  try{
+    txCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(txCtx.state==='suspended'){ await txCtx.resume(); }
+    const blob = new Blob([TX_WORKLET_SRC], {type:'application/javascript'});
+    const url = URL.createObjectURL(blob);
+    await txCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    const srcNode = txCtx.createMediaStreamSource(txStream);
+    txWorklet = new AudioWorkletNode(txCtx, 'tx-capture', {numberOfInputs:1, numberOfOutputs:0});
+    txWorklet.port.onmessage = (ev)=>{ if(txSending && ws && ws.readyState===1) ws.send(ev.data); };
+    srcNode.connect(txWorklet);   // 出力には繋がない（サイドトーン無し）
+    txReady = true;
+    return true;
+  }catch(err){
+    setTxState('初期化失敗: '+err.message);
+    return false;
+  }
+}
+
+async function txStart(){
+  if(txSending) return;
+  if(!(await txEnsureReady())) return;
+  if(txCtx.state==='suspended'){ try{ await txCtx.resume(); }catch(e){} }
+  txSending = true;
+  txWorklet.port.postMessage({sending:true});
+  if(ws && ws.readyState===1) ws.send('ptt:on');
+  setTxState('🔴 送信中');
+  const b=document.getElementById('pttBtn'); if(b) b.className='';
+  // 送信中は受信再生をミュート（回り込み防止）
+  if(typeof gain!=='undefined' && gain){ try{ gain.gain.value=0; }catch(e){} }
+}
+
 function txStop(){
   if(!txSending) return;
-  txSending=false;
+  txSending = false;
+  if(txWorklet){ try{ txWorklet.port.postMessage({sending:false}); }catch(e){} }
   if(ws && ws.readyState===1) ws.send('ptt:off');
-  try{ txNode && txNode.disconnect(); }catch(e){}
-  try{ txStream && txStream.getTracks().forEach(t=>t.stop()); }catch(e){}
-  try{ txCtx && txCtx.close(); }catch(e){}
-  txNode=txStream=txCtx=null;
-  setTxState('送信待機'); document.getElementById('pttBtn').className='off';
+  setTxState('送信待機');
+  const b=document.getElementById('pttBtn'); if(b) b.className='off';
+  // 受信ミュート解除（マイク・context は閉じない＝再ONで即使える）
   if(typeof gain!=='undefined' && gain){ try{ gain.gain.value=(document.getElementById('vol')?document.getElementById('vol').value/100:1); }catch(e){} }
 }
+
 window.addEventListener('DOMContentLoaded',()=>{
   const pttBtn=document.getElementById('pttBtn');
   const pttToggle=document.getElementById('pttToggle');
@@ -700,6 +771,14 @@ class USRPPlayer extends AudioWorkletProcessor {
     this.SR = o.sr || 8000;
     this.prebuf = (o.prebufSec || 0.24) * this.SR;  // 初回接続時のみのプリバッファ
     this.cap = this.SR * 8;
+    // 🔵 V0.17: 輻輳時の遅延累積対策（catch-up）。到着が束で遅れるとリングに
+    // 音が溜まり、律儀に全部再生して遅延が最大8秒まで積み上がっていた。
+    // 滞留(avail)が MAX_LAG を超えたら、読み位置を最新から TARGET_LAG の
+    // 位置へジャンプさせて実時間に追いつく（古い音を捨てる）。モニタは
+    // 実時間追従が正義なので、多少の欠けより遅延ゼロを優先する。
+    this.maxLagSamp    = (o.maxLagSec    || 0.6) * this.SR;  // これ超で追いつき発動
+    this.targetLagSamp = (o.targetLagSec || 0.24) * this.SR; // 追いつき後の残し量
+    this.catchupCount = 0;
     this.ring = new Float32Array(this.cap);
     this.writeCount = 0;
     this.readPos = 0;
@@ -721,6 +800,13 @@ class USRPPlayer extends AudioWorkletProcessor {
     this.lpA = Math.exp(-2 * Math.PI * fc / sampleRate);
     this.lpState = 0;
     this.port.onmessage = (e)=>{
+      // 🔵 V0.17: 制御メッセージ（{cmd:'flush'}）で読み書き位置を同期リセット。
+      // 送信終了(keyup=0)時に呼ばれ、次の送信開始までに溜まった残渣を捨てる。
+      if(e.data && e.data.cmd === 'flush'){
+        this.readPos = this.writeCount;   // 追いつき（残さず捨てる）
+        this.primed = false;              // 次の音は再プリバッファから
+        return;
+      }
       const i16 = new Int16Array(e.data);
       let w = this.writeCount;
       for(let i=0;i<i16.length;i++){ this.ring[w % this.cap] = i16[i] / 32768; w++; }
@@ -737,6 +823,16 @@ class USRPPlayer extends AudioWorkletProcessor {
     if(!this.primed){
       if((this.writeCount - this.readPos) >= this.prebuf){ this.primed = true; }
       else { out.fill(0); return true; }
+    }
+    // 🔵 V0.17: このブロックの処理を始める前に滞留を点検し、溜まりすぎていたら
+    // 読み位置を最新-targetLag へ飛ばす（1ブロックに1回で十分）。
+    {
+      const lag = this.writeCount - this.readPos;
+      if(lag > this.maxLagSamp){
+        this.readPos = this.writeCount - this.targetLagSamp;
+        this.catchupCount++;
+        // 飛ばした直後の段差はエンベロープのフェードで吸収される
+      }
     }
     for(let i=0;i<out.length;i++){
       const avail = this.writeCount - this.readPos;
@@ -785,7 +881,7 @@ async function connect(){
       URL.revokeObjectURL(url);
       node = new AudioWorkletNode(ac, 'usrp-player', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
-        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST }
+        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST, maxLagSec: 0.6, targetLagSec: 0.24 }
       });
       node.connect(gain);
     }catch(err){
@@ -803,6 +899,8 @@ async function connect(){
     const fadeOutInc = 1 / (0.005 * ac.sampleRate);
     const prebufSamples = PREBUFFER_SEC * SR;
     const HF_BOOST = 0.8;
+    // 🔵 V0.17: フォールバック側にも追いつき（worklet と同一方針）
+    const maxLagSamp = 0.6 * SR, targetLagSamp = 0.24 * SR;
     const lpA = Math.exp(-2 * Math.PI * 1200 / ac.sampleRate);
     node.onaudioprocess = (e)=>{
       const out = e.outputBuffer.getChannelData(0);
@@ -810,6 +908,8 @@ async function connect(){
         if((writeCount - readPos) >= prebufSamples){ primed = true; }
         else { out.fill(0); return; }
       }
+      // 🔵 V0.17: 滞留しすぎたら読み位置を最新-targetへ飛ばす
+      if((writeCount - readPos) > maxLagSamp){ readPos = writeCount - targetLagSamp; }
       for(let i=0;i<out.length;i++){
         const avail = writeCount - readPos;
         let raw;
