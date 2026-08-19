@@ -2,12 +2,36 @@
 
 本ファイルは `dvswitch_bot.py` の変更履歴です。従来はソースコード先頭の docstring に全履歴を記載していましたが、可読性向上のため本ファイルへ分離しました（V1.92 時点で分離）。
 
+本リポジトリには 4 つのエディションがあり、版番号のサフィックスで系譜を区別します。
+
+| サフィックス | エディション | ディレクトリ |
+|---|---|---|
+| なし | JT版（Open JTalk） | `ocv_dvs_jt/` |
+| `jtw` | JTW版（Open JTalk + 天気） | `ocv_dvs_jtw/` |
+| `vv` | VV版（VOICEVOX） | `ocv_dvs_vv/` |
+| `vvw` | VVW版（VOICEVOX + 天気） | `ocv_dvs_vvw/` |
+
 ---
 
 ## create_wav.sh 版履歴（音声生成スクリプト）
 
 > `dvswitch_bot.py` 本体とは別に、音声生成スクリプト `create_wav.sh` の版履歴を
-> ここに併記する（JT版＝ルート、VV版＝ocv_dvs_vv/）。新しい版が上の降順。
+> ここに併記する（JT版＝`ocv_dvs_jt/`、JTW版＝`ocv_dvs_jtw/`、VV版＝`ocv_dvs_vv/`、
+> VVW版＝`ocv_dvs_vvw/`。JT版とJTW版、VV版とVVW版はそれぞれ同一内容）。新しい版が上の降順。
+
+### VV版 create_wav.sh V1.32vv (2026-08-19)
+
+🔴 `chown_owner` の引数順バグ修正（機能追加なし）。V1.1 で導入した `chown_owner` は
+`chown "$@" "${OWNER_USER}:"` と対象パスを先に渡していたため、chown がそれをユーザー名と
+解釈して常に `invalid user` で失敗していた。`2>/dev/null || true` がエラーを完全に
+握りつぶすため、V1.1 以降ずっと「chown を汎用化したつもりで実際には一度も所有者が
+変わっていない」状態だった（生成した WAV と `wav_source.json` は root 所有のまま）。
+引数順を「所有者 → 対象」に正し、失敗時は WARN を出すようにした。
+
+### JT版 create_wav.sh V1.21 (2026-08-19)
+
+🔴 VV版 V1.32vv と同一の `chown_owner` 引数順バグ修正。JT版も V1.1 以降同じ不具合を
+抱えていた。
 
 ### VV版 create_wav.sh V1.31vv (2026-07-14)
 
@@ -20,6 +44,144 @@
 
 `--regen`（非対話再生成）を追加。ダッシュボードからの読み上げ内容編集
 （テキスト7項目の保存→固定WAV再生成）に対応した。
+
+---
+
+## dvs_config.sh 版履歴（DVSwitch ini 設定ツール）
+
+> 4エディション（`ocv_dvs_jt/` / `ocv_dvs_jtw/` / `ocv_dvs_vv/` / `ocv_dvs_vvw/`）で
+> 同一内容。新しい版が上の降順。
+
+### dvs_config.sh V1.1 (2026-08-19)
+
+バックアップ生成物の `chown` を `ocv:ocv` 決め打ちから汎用化。`$SUDO_USER` → UID 1000 の
+順で実ユーザーを特定し、その既定グループへ揃える（`chown_owner` ヘルパに集約）。
+`create_wav.sh` が V1.1 で行った汎用化と同一方式で、`ocv` 以外のユーザー名（pi-star 等）の
+ノードでも `/opt/dvswitch_bot/bak/` が root 所有のまま残らないようにした。
+あわせて機械可読の `SCRIPT_VERSION` 行を新設し、`-h` でも版を表示する。
+
+### dvs_config.sh V1.0（版表記なし）
+
+初版。バックアップの所有者を `chown -R ocv:ocv` で戻していた。
+
+---
+
+## V2.02vvw (2026-08-19)  ※VVW版（VOICEVOX + 天気）
+
+VVW版の初版。VV版 V1.99vv（天気なし・安定版）から分岐し、VV版で試作した天気読み上げ
+（V2.0vv〜V2.02vv）を `ocv_dvs_vvw/` へ移して独立させた。VV版は V1.99vv で凍結し、
+天気系の改修は以後このVVW系譜で行う。
+
+- **天気読み上げ**（V2.0vv 由来）: `WEATHER_HOURS` に指定した毎正時の時報に続けて当地の
+  天気を読み上げる（Open-Meteo API・キー不要・追加依存なし）。対象正時の約2分前に取得し、
+  イントロ＋時報＋天気の完成WAVを事前生成する（正時は再生のみ＝遅延ゼロ）。取得失敗時は
+  天気を省略して時報は定刻どおり流す。設定は `bot_config.json` の任意キー
+  `WEATHER_ENABLED` / `WEATHER_LATITUDE` / `WEATHER_LONGITUDE` / `WEATHER_HOURS`。
+- **起動アナウンスの頭切れ対策**（V2.01vv 由来）: `STARTUP_PRE_PADDING_PACKETS=150`（3.0s）を
+  新設。夜間アナウンスの「ただいまより」を「只今より」へ（VOICEVOX のイントネーション安定化）。
+- **実測による定数確定**（V2.02vvw 本体, 2026-08-18 ずんだもん話者・ocv-voicevox）:
+  `REPLY_TX_LEAD_DELAY_SEC` 0.5 → 1.5（ずんだもん環境で頭欠け再現のため）、
+  `STARTUP_ANNOUNCE_DELAY_SEC` 15.0 → 10.0。話者・経路変更時は要再実測。
+
+> ⚠️ 三位一体（`bot_setup.py` / `dashboard/app.py`）の UI はまだ VVW版の天気キーに
+> 対応していない。とくに `WEATHER_HOURS` はどちらも未対応で、`bot_setup.py` で保存すると
+> WEATHER キーが失われる（`app.py` は V3.2 の未知キー保護により消えない）。
+
+---
+
+## V2.07jtw (2026-08-18)  ※JTW版（Open JTalk + 天気）
+
+送信の「切れ際」で受信側無線機に稀に出る「ブブ／バリバリ」への対策（終端強化）。定数2つのみで、
+どちらも V2.06jtw と同一挙動へ戻せる。
+
+- `USRP_EOT_REPEAT`: 1 → 3。終端 keyup=0 を 20ms 間隔で3発送り、Analog_Bridge に確実に
+  ストリームを閉じさせる（V1.82 で予告しながら未有効だった多重化を有効化）。
+- `NOISE_TAIL_PACKETS`（新設・既定5）: 後パディング末尾 0.1s を完全ゼロではなく 100Hz の
+  微小トーンのフェードインにして、長いデジタル完全無音のまま閉じさせない。先頭無音対策
+  （V1.84〜V1.89 のリード音）の終端側の鏡像。0 で無効。
+
+【未検証】切れ際バリバリが Analog_Bridge のエンコード終端由来という因果は数値では未確定。
+効果が無ければ `NOISE_TAIL_PACKETS=0` / `USRP_EOT_REPEAT=1` で完全に巻き戻すこと。
+
+> 同日、送出音の高域ブースト（SoX treble）を入れた V2.08jtw を一度コミットしたが、
+> 同日中に V2.07jtw へ巻き戻した（版番号だけでなく内容も完全に巻き戻し済み）。
+
+---
+
+## V2.06jtw (2026-08-17)  ※JTW版
+
+Web モニタ（`dashboard/usrp_web.py`）で bot の応答音声も聞けるようにするための最小改修。
+送出ロジック・タイミング定数は一切変更なし。
+
+- ミラー定数 `WEB_MIRROR_ENABLE` / `WEB_MIRROR_IP` / `WEB_MIRROR_PORT`（=51002）を新設。
+- 送出ヘルパ `_usrp_sendto()` を追加し、本番 51000 へ送りつつ有効時のみ 51002 へ複製する。
+
+背景: Analog_Bridge の復号RX(51001)には bot 自身の応答音声が現れない（この構成では
+ループバックしないと実測で確定）。ミラーは送出のみ・失敗は握りつぶすため本番送出には
+影響しない。`WEB_MIRROR_ENABLE=False` で V2.05jtw と完全に同一の挙動へ戻る。
+
+---
+
+## V2.05jtw (2026-08-13)  ※JTW版
+
+応答の立ち上がり短縮と intro 頭欠けの解消。VV版 V1.98vv が ocv-voicevox（直 TGIF 接続）で
+実測して決めた値を JTW版へ移植。コード（送出ロジック）は無変更で、定数4つとコメント修正のみ。
+
+- `REPLY_TX_LEAD_DELAY_SEC` 1.0 → 0.5
+- `PRE_POST_PADDING_PACKETS` 75 → 85（1.5s → 1.7s）
+- `NOISE_LEAD_PACKETS` 65 → 5（1.3s → 0.1s）
+- `PRE_AUDIO_SILENCE_SEC` 1.5 → 0.0（ストリーム内の焼き込み頭無音を廃止）
+
+⚠️ JT系での実波検証は未実施。巻き戻す場合は4定数すべてを V2.04jtw の値（75 / 65 / 1.0 / 1.5）へ戻す。
+
+同じ 2026-08-13 のコミットで、天気の付与先を系統ごとに個別指定できるようにする改修
+（`WEATHER_ON_TIME_SIGNAL` / `WEATHER_ON_MESSAGE`。docstring 上の "V2.04jtw"）も併せて
+取り込んでいる。`bot_setup.py` は V2.04jtw、`dashboard/app.py` は V3.2 が対応版。
+このとき `WEATHER_HOURS`（時刻絞り）は廃止され、全定時音声への一様付与＋付与先指定へ移行した。
+
+---
+
+## V2.03jtw (2026-08-06)  ※JTW版
+
+定時音声の生成を `voice_make.py`（vmp）へ分離。bot 本体は天気を一切知らず「定時音声を
+再生するだけ」に専念し、発火の約2分前に vmp へ「これを作れ」と号令を出す。vmp は天気を
+取得して「本体音声＋天気」を1本のWAV（スロット）へ焼く（ワンショット起動・常駐しない）。
+
+対象も毎正時の時報だけでなく、すべての定時音声（時報 :00 / 30分案内 :30 / 定時メッセージ
+001・002）へ拡大した。地名は `wav_source.json` の `location` を使うため、イントロと天気で
+必ず一致する。
+
+---
+
+## V2.01jtw / V2.00jtw (2026-08-05)  ※JTW版
+
+JT版 V1.95 を母体に、定時音声への当地天気読み上げ（Open-Meteo）を追加した JTW版の初版
+（V2.00jtw）と、コメント用語の統一（ケロ → カーチャンク）のみの V2.01jtw。JT版は安定版として
+そのまま維持し、天気読み上げの開発・実波検証は `ocv_dvs_jtw/` で行う方針とした。
+
+---
+
+## V1.99vv (2026-07-20)  ※VV版（VOICEVOX）
+
+`CACHE_DIR`（/dev/shm 上の応答キャッシュディレクトリ）が稼働中に外部要因で消失し、以後の
+全カーチャンク応答が SoX rc=2 で失敗し続ける障害への対策。JT版 V1.95 と同一の改修。
+
+---
+
+## V1.95 (2026-07-20)  ※JT版（Open JTalk）
+
+`CACHE_DIR` 消失時の自己修復。2026-07-20 に JT版ノード（ocv-uhf）で実際に発生した障害への対策で、
+原因は systemd-logind の `RemoveIPC=yes`（Debian 既定）。実行ユーザーの最後のログインセッションが
+閉じた時点で `/dev/shm` 配下の当ユーザー所有物が一掃される。systemd サービスはログインセッションに
+数えられないため、bot 稼働中でも保護されない。
+
+- `_ensure_cached()` の入口で毎回 `os.makedirs(CACHE_DIR, exist_ok=True)` を実行（自己修復）。
+  作成できない場合はキャッシュを諦めて非キャッシュ経路へ退避し、応答自体は継続する。
+- `CACHE_DIR` 定義行のコメント修正（「毎起動クリア」は実態と不一致）。
+
+**本質対策はホスト側**: コード側の自己修復は多層防御であり、本質対策は実行ユーザーへの
+`sudo loginctl enable-linger <user>` の適用（永続・要1回）。一般ユーザーで `/dev/shm` を使う
+ノード全てで必要。
 
 ---
 
