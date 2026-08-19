@@ -1,8 +1,9 @@
 # dvswitch_bot.py ソフトウェア仕様書（JT版 V1.95 / VV版 V1.99vv）
 
 **対象ファイル:** `/opt/dvswitch_bot/bin/dvswitch_bot.py`  
-**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.95** ／ VV版（`ocv_dvs_vv/`）**V1.99vv**  
-**対象外:** 天気読み上げを搭載した JTW版（`ocv_dvs_jtw/`）・VVW版（`ocv_dvs_vvw/`）は本書の対象外。各ディレクトリの README と `Changelog.md` を参照。  
+**対象バージョン:** JT版（`ocv_dvs_jt/`）**V1.95** ／ VV版（`ocv_dvs_vv/`）**V1.99vv** ／ VVW版（`ocv_dvs_vvw/`）**V2.07vvw**（音声エンジン部のみ本書と共通）  
+**対象外:** 天気読み上げ（Open-Meteo）と定時音声の事前生成（`voice_make.py`）そのものは本書の対象外。JTW版（`ocv_dvs_jtw/`）・VVW版（`ocv_dvs_vvw/`）のこれらの機能は、各ディレクトリの README と `Changelog.md` を参照。  
+**VVW版 V2.07vvw の位置づけ:** VVW版は JTW版 V2.07jtw と **音声エンジンのみが異なる**（Open JTalk → VOICEVOX。換装点は定数ブロック／`_generate_hybrid()`／`_reply_signature()` の3箇所）。したがって末尾『VV版差分』章の VOICEVOX に関する記述は VVW版にもそのまま当てはまる。  
 **本文の扱い:** 本文（第1〜13章）は **JT版・VV版で共通の仕様** を記述する。VV版（VOICEVOX）固有の差分は末尾の『VV版差分（V1.99vv）』章にまとめる。  
 **JT版 V1.95 の反映範囲:** 無線局運用規則第30条対応・応答音声キャッシュ・watchdog擬似終端・SET_INFO メタデータ・送信直列化・第30条セッションのギャップ判定バグ修正・自局コールサイン/DMR ID の ini 起動時自動取得・`CACHE_DIR` 消失時の自己修復（V1.95 / VV版 V1.99vv）まで。  
 **版番号の "vv" サフィックス:** VOICEVOX 系ノード用ファイルであることを示す命名規約（Open JTalk 系 Pi ノード用の同名ファイルと区別する）。  
