@@ -37,7 +37,7 @@ GitHub の最新版を、稼働中の OpenCCVoice システムに反映する手
 
 ## 1. 既設ノードのアップデート手順（検証済みワンライナー）
 
-稼働中のノードを GitHub `main` の最新版へ最短で更新するコマンドです。ノードの種類（JT版 / VV版）で使い分けてください。いずれも raw URL の3パス（`create_wav.sh` / `ocv_dvs_vv/create_wav.sh` / `dashboard/app.py`）は実在確認済みです。
+稼働中のノードを GitHub `main` の最新版へ最短で更新するコマンドです。ノードの種類（JT版 / VV版）で使い分けてください。いずれも raw URL の3パス（`ocv_dvs_jt/create_wav.sh` / `ocv_dvs_vv/create_wav.sh` / `dashboard/app.py`）は実在確認済みです。リポジトリ直下（`.../main/create_wav.sh` など）は 2026-07 のディレクトリ移設で **404** になります。
 
 ### JT版ノード（Raspberry Pi / Open JTalk）
 
@@ -93,7 +93,7 @@ python3 -c "import ast; ast.parse(open('/opt/dvswitch_bot/web/app.py',encoding='
 
 # --- 4) 版表記の確認 ---
 echo "bot: $(grep -m1 '^__version__' /opt/dvswitch_bot/bin/dvswitch_bot.py)"; \
-echo "app: $(grep -m1 'app.py  V2' /opt/dvswitch_bot/web/app.py)"
+echo "app: $(grep -m1 '^__version__' /opt/dvswitch_bot/web/app.py)"
 
 # --- 5) サービス再起動（bot と dashboard）---
 sudo systemctl restart dvswitch-bot && \
@@ -115,7 +115,7 @@ bot       syntax OK
 bot_setup syntax OK
 app       syntax OK
 bot: __version__ = "V1.xx"
-app:  app.py  V2.xx
+app: __version__ = "V3.xx"
 active
 active
 ```
