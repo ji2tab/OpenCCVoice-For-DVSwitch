@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# install.sh  OpenCCVoice for DVSwitch Web Dashboard V3.11
+# install.sh  OpenCCVoice for DVSwitch Web Dashboard V3.21
 # curl対応版 — GitHubから直接取得してインストール
 #
 # 使い方:
