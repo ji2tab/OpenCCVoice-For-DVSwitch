@@ -66,6 +66,74 @@
 
 ---
 
+## voice_make.py 版履歴（定時音声 事前生成ツール / vmp）
+
+> `dvswitch_bot.py` V2.03jtw 以降が「発火の約2分前」にワンショット起動する事前生成ツール。
+> 天気付きの定時音声（時報 :00 / 30分案内 :30 / 定時メッセージ 001・002）を1本の完成 WAV として
+> スロット（`/dev/shm`）へ焼き、発火時は再生のみ（合成ゼロ＝遅延ゼロ）にする。搭載は天気系の
+> 2エディションのみ（JTW版＝`ocv_dvs_jtw/`、VVW版＝`ocv_dvs_vvw/`）。新しい版が上の降順。
+
+### VVW版 voice_make.py V1.01vvm (2026-08-19)
+
+VVW版の初版。JTW版 V1.01vmp を土台に、**合成部 `_synth_middle()` と合成用の定数だけ**を
+Open JTalk から VOICEVOX へ換装した（`DICT_PATH` / `VOICE_PATH` → `VV_SAY_PATH`
+= `/opt/voicevox/vv_say.py` と `VENV_PY` = `/opt/dvswitch_bot/venv/bin/python3`。
+`open_jtalk` の stdin 流し込みから `subprocess.run` によるタイムアウト付き起動へ変更し、
+失敗理由をログに残すようにした）。それ以外（bot からの呼び出し規約 `--kind/--hour/--base/--slot/--weather`、スロットの
+原子的差し替え、Open-Meteo 取得と失敗時フォールバック、地名の `wav_source.json` 参照、
+`WEATHER_GAP_SEC` のワンテンポ）は JTW版 V1.01vmp と同一。
+
+話者は `vv_say.py` が `wav_source.json` の `voice` を自分で読むため、`dvswitch_bot.py` および
+`create_wav.sh` と必ず同じ話者になる（VVW の一貫性の要）。
+
+### JTW版 voice_make.py V1.01vmp (2026-08-06)
+
+本体音声と天気文の間に `WEATHER_GAP_SEC`（既定 0.5s）のワンテンポを追加。
+
+### JTW版 voice_make.py V1.00vmp (2026-08-06)
+
+初版（JTW版）。`dvswitch_bot.py` V2.03jtw の「定時音声の生成を vmp へ分離」に対応する
+ワンショット生成ツール。スケジュール判定は持たず、bot の号令どおりに音声を作るだけ。
+
+---
+
+## V2.07vvw (2026-08-19)  ※VVW版（VOICEVOX + 天気）
+
+VVW版 bot の作り方そのものを変更した版。**内蔵方式の V2.02vvw を廃し**、JTW版 V2.07jtw を
+土台にして音声エンジンだけを VOICEVOX へ換装する **vmp 方式**（定時音声は `voice_make.py` が
+事前生成）へ移行した。これにより VVW版は「JTW版の最新 ＋ 音声エンジン差し替え」で常に
+追随でき、天気・スロット・スケジュールのロジックを VVW 側で二重持ちしなくなる。
+
+- **系譜の変更**: V2.02vvw は VV版 V1.99vv から分岐し、天気と定時音声生成を bot 内蔵で
+  持っていた。V2.07vvw は JTW版 V2.07jtw をそのまま土台とし、定時音声（時報 / 30分案内 /
+  定時メッセージ＋天気）の生成は `voice_make.py` V1.01vvm に委ねる。bot は判定・2分前号令・
+  スロット再生に専念する（JTW版と同じ役割分担）。したがって V2.07jtw の内容
+  （V2.03jtw の vmp 分離、V2.04jtw の天気付与先の個別指定、V2.05jtw の送出タイミング、
+  V2.06jtw の Web モニタ用ミラー、V2.07jtw の終端強化 = `USRP_EOT_REPEAT=3` /
+  `NOISE_TAIL_PACKETS=5`）はすべて VVW版にも入っている。
+- **音声エンジンの換装点は次の3箇所**（合成に関わる差分はこれで全部）:
+  1. 定数: `DICT_PATH` / `VOICE_PATH`（Open JTalk）→ VOICEVOX ブロック
+     （`VOICEVOX_DIST_DIR` / VVM ロード / `VOICEVOX_STYLE_ID`。話者は `wav_source.json` から取得）
+  2. `_generate_hybrid()`: `open_jtalk` サブプロセス呼び出し → VOICEVOX CORE による
+     同一プロセス内合成（起動時にモデルをロード済み）
+  3. `_reply_signature()`: キャッシュ署名の要素を `VOICE_PATH` →
+     `VOICEVOX_STYLE_ID` + `VOICEVOX_VVM_PATH`（+ mtime）
+- **上記3箇所以外の JTW版との差分**（いずれも VVW ノード実測に基づく調整で、送出ロジック自体は
+  V2.07jtw と同一）: 下記のタイミング定数、起動アナウンス専用の前パディング
+  （`STARTUP_PRE_PADDING_PACKETS` 新設 ＋ `send_usrp_wav_with_padding()` に `pre_packets` 引数を追加し、
+  起動アナウンスのときだけ 150pkt を渡す）、夜間アナウンスの文言。
+- **送出タイミングは VVW 実測値を採用**（V2.02vvw で確定した実測をそのまま継承。
+  2026-08-18 ずんだもん話者・`ocv-voicevox` ノード）:
+  `REPLY_TX_LEAD_DELAY_SEC = 1.5`（JTW版は 0.5）、`STARTUP_ANNOUNCE_DELAY_SEC = 10.0`、
+  `STARTUP_PRE_PADDING_PACKETS = 150`（起動アナウンス専用の前パディング 3.0s）。
+  話者・経路を変えたときは要再実測。
+- **夜間アナウンス文言**: 「ただいまより」→「只今より」（VOICEVOX のイントネーション安定化。
+  JTW版は「ただいまより」のまま）。
+- **実機検証**: `ocv-voicevox` 実機で全機能の実波確認済み。天気付きの定時時報・定時メッセージが
+  `voice_make.py`（vmp）方式で毎回成功することを確認した。
+
+---
+
 ## V2.02vvw (2026-08-19)  ※VVW版（VOICEVOX + 天気）
 
 VVW版の初版。VV版 V1.99vv（天気なし・安定版）から分岐し、VV版で試作した天気読み上げ

@@ -110,15 +110,20 @@ Web ダッシュボードは 4 エディションのいずれでも共用です�
 
 | ファイル | JT版（`ocv_dvs_jt/`） | JTW版（`ocv_dvs_jtw/`） | VV版（`ocv_dvs_vv/`） | VVW版（`ocv_dvs_vvw/`） |
 |---|---|---|---|---|
-| `dvswitch_bot.py` | V1.95 | V2.07jtw | V1.99vv | V2.02vvw |
+| `dvswitch_bot.py` | V1.95 | V2.07jtw | V1.99vv | V2.07vvw |
 | `create_wav.sh` | V1.21 | V1.21 | V1.32vv | V1.32vv |
 | `dvs_config.sh` | V1.1 | V1.1 | V1.1 | V1.1 |
 | `bot_setup.py` | JT版と共通 | V2.04jtw（天気対応） | JT版と共通 | JT版と共通 |
 | `test_send.py` | 4エディションすべて共通（同一内容） | | | |
 | `vv_say.py` | — | — | V2.0vv | V2.0vv |
-| `voice_make.py` | — | V1.01vmp | — | — |
+| `voice_make.py` | — | V1.01vmp | — | V1.01vvm |
 
 `create_wav.sh` / `dvs_config.sh` / `test_send.py` は JT版とJTW版、VV版とVVW版でそれぞれ同一内容です。
+
+VVW版 `dvswitch_bot.py` **V2.07vvw** は JTW版 V2.07jtw を土台に音声エンジンだけを VOICEVOX へ
+換装した版です（換装点は定数ブロック / `_generate_hybrid()` / `_reply_signature()` の3箇所）。
+定時音声は `voice_make.py` **V1.01vvm**（JTW版 V1.01vmp の合成部を `vv_say.py` へ換装したもの）が
+事前生成します。
 
 共用 Web ダッシュボード `dashboard/app.py` は **V3.21**。
 ## パス変更のお知らせ（2026-07）
