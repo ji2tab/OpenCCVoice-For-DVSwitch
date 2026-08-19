@@ -608,7 +608,7 @@ sudo mkdir -p /opt/dvswitch_bot/bin
 sudo chown -R pi-star:pi-star /opt/dvswitch_bot
 cd /opt/dvswitch_bot/bin
 
-BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main
+BASE=https://raw.githubusercontent.com/ji2tab/OpenCCVoice-For-DVSwitch/main/ocv_dvs_jt
 for f in dvs_config.sh create_wav.sh test_send.py dvswitch_bot.py bot_setup.py; do
   curl -fsSL "$BASE/$f" -o "$f"
 done
