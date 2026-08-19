@@ -5,9 +5,9 @@ Raspberry Pi 上の Flask アプリとして動作します。
 
 ## バージョン
 
-**V3.11**
+**V3.21**
 
-JT版（Open JTalk）・VV版（VOICEVOX）両ノードで共用する Web ダッシュボードです。
+JT版 / JTW版（Open JTalk 系）・VV版 / VVW版（VOICEVOX 系）の全ノードで共用する Web ダッシュボードです。
 
 ## 機能
 
@@ -23,6 +23,8 @@ JT版（Open JTalk）・VV版（VOICEVOX）両ノードで共用する Web ダ�
 | 保存して再生成 | 読み上げ内容を保存し固定WAVを再生成（VV版は話者変更込み） |
 | カスタム音声 | 標準音声（intro／001／002）を自前の音声ファイルに差し替え |
 | テスト送信 | ダッシュボードから単発のテスト送信を実行 |
+| 天気読み上げ | JTW版ノードでのみ有効。天気の親スイッチ・付与先（時報系／定時メッセージ系）・取得座標を編集（V3.2〜）。非 JTW ノードではカードをグレーアウト |
+| 未知キー保護 | ダッシュボードが知らない設定キーも保存で失われない（既存ファイルを土台に差分更新。V3.2〜） |
 | 外部リンク | 関連サービス（Dashboard 等）への外部リンクを表示 |
 | 自動バックアップ | DVSwitch設定保存時に `/opt/dvswitch_bot/bak/ini/` へ自動バックアップ |
 | ログ表示 | MMDVM_Bridge ログ末尾5行を表示・30秒自動更新 |
@@ -33,11 +35,18 @@ JT版（Open JTalk）・VV版（VOICEVOX）両ノードで共用する Web ダ�
 
 ```
 dashboard/
-├── app.py                  # Flask アプリ本体
-├── dvswitch-web.service    # systemd サービスファイル
-├── install.sh              # インストールスクリプト
-└── README.md               # このファイル
+├── app.py                     # Flask アプリ本体
+├── dvswitch-web.service       # systemd サービスファイル
+├── install.sh                 # インストールスクリプト
+├── uninstall.sh               # アンインストールスクリプト
+├── how to install uninstall.md # 導入・削除の手順メモ
+├── 操作マニュアル.md            # 画面ごとの操作説明
+├── Changelog_dashboard.md     # 版ごとの変更履歴
+├── usrp_web.py                # 【試験中・未配置】受信音声の Web モニタ（フェーズ1: RX のみ）
+└── README.md                  # このファイル
 ```
+
+> `usrp_web.py` は開発中の別プログラムです。`install.sh` では配置されず、`app.py` からも参照されません。
 
 ## 前提条件
 
@@ -112,6 +121,17 @@ sudo systemctl daemon-reload
 ## 変更履歴
 
 > 詳細な版ごとの履歴は [`Changelog_dashboard.md`](Changelog_dashboard.md) を参照。
+
+### V3.21
+- 天気読み上げカードのレイアウト変更（機能は V3.2 と同一）。左セルの縦積みから全幅カードへ移し、
+  内部を「天気を付ける対象｜取得座標」の2カラム横並びにした。
+
+### V3.2
+- 「天気読み上げ — JTW版」カードを新設（`WEATHER_ENABLED` / `WEATHER_ON_TIME_SIGNAL` /
+  `WEATHER_ON_MESSAGE` / `WEATHER_LATITUDE` / `WEATHER_LONGITUDE`）。非 JTW ノードではグレーアウト。
+- 🔴 未知キー保護を追加（V3.11 以前の欠陥修正）。従来はダッシュボードが知っているキーだけで
+  `bot_config.json` を作り直していたため、JTW ノードで保存すると `WEATHER_*` が黙って消えていた。
+- `bot_config.json` の組み立て・検証を `build_bot_cfg()` / `validate_bot_cfg()` に集約。
 
 ### V3.11
 - 「保存して再生成」ボタンを右寄せに調整。
