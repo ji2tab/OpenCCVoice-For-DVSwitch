@@ -1224,7 +1224,7 @@ NIGHT_ANN_GAP_SEC = 1.0
 def _send_night_mode_announcement():
     started_at = time.monotonic()
     resume_hour = (NIGHT_END_HOUR + 1) % 24
-    middle_text = f"ただいまより、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
+    middle_text = f"只今より、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
     label = f"N1={NIGHT_START_HOUR:02d}"
 
     time.sleep(NIGHT_ANN_GAP_SEC)
