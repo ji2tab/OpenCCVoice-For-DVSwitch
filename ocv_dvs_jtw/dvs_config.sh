@@ -1,6 +1,8 @@
 #!/bin/bash
 # ==============================================================================
 # DVSwitch 設定対話ツール  dvs_config.sh
+#   Version: V1.1 （バックアップの chown を ocv:ocv 決め打ちから汎用化。
+#            create_wav.sh V1.1 と同一方式に揃えた）
 #   TGIF 接続を前提に、ユーザ毎の可変項目を対話入力し、3つの ini を更新する。
 #   編集前に /opt/dvswitch_bot/bak/ini/YYMMDDHHMMSS/ へ 3ファイルをまとめてバックアップする。
 #
@@ -30,9 +32,21 @@
 #     Analog [USRP] rxPort = 51000
 #     Analog [USRP] usrpAudio = AUDIO_USE_GAIN
 #     Analog [USRP] tlvAudio = AUDIO_USE_GAIN
+#
+#   変更履歴:
+#     V1.0  初版（版表記なし）。バックアップの所有者を ocv:ocv 決め打ちで戻していた。
+#     V1.1  バックアップ生成物の chown を ocv:ocv 決め打ちから汎用化。$SUDO_USER →
+#           UID 1000 の順で実ユーザーを特定し、その既定グループへ揃える
+#           （chown_owner ヘルパに集約）。create_wav.sh が V1.1 で行った汎用化と
+#           同一方式で、ocv 以外のユーザー名（pi-star 等）のノードでも
+#           /opt/dvswitch_bot/bak/ が root 所有のまま残らないようにする。
+#           あわせて機械可読の SCRIPT_VERSION 行を新設し、-h でも版を表示する。
 # ==============================================================================
 
 set -u
+
+# 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
+SCRIPT_VERSION="V1.1"
 
 MMDVM_INI="/opt/MMDVM_Bridge/MMDVM_Bridge.ini"
 DVSWITCH_INI="/opt/MMDVM_Bridge/DVSwitch.ini"
@@ -52,6 +66,41 @@ if [ "$EUID" -ne 0 ]; then
   exec sudo "$0" "$@"
 fi
 
+# ------------------------------------------------------------------------------
+# 🔵 V1.1: バックアップ生成物の所有者を汎用的に決定する（ocv 決め打ちを廃止）
+# ------------------------------------------------------------------------------
+# 本スクリプトは sudo（root）で動くため、何もしないとバックアップが root 所有になり、
+# bot やダッシュボード（dvswitch-web）など非 root プロセスから扱えなくなる。
+# そこで所有者を「実ユーザー」に戻す。create_wav.sh V1.1 と同一方式。
+#
+# 前提（システム構成の制約）: root 以外の実ユーザーは1人だけ（raspberry/pi-star/
+# ocv 構成）。www-data 等のサービス用アカウントは UID < 1000 に割り当てられるため、
+# UID 1000（人間が最初に作る一般ユーザー）を見れば実ユーザーを一意に特定できる。
+#
+# 決定順:
+#   1) $SUDO_USER  … sudo した本人（通常はこれで確定。最も自然）
+#   2) UID 1000    … root 直実行などで $SUDO_USER が空のときの保険
+# どちらも取れない場合は空のままとし、所有者変更はスキップする。
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+  OWNER_USER="$SUDO_USER"
+else
+  OWNER_USER="$(id -nu 1000 2>/dev/null)"
+fi
+
+# 所有者を OWNER_USER（の既定グループ）へ揃えるヘルパ。
+# グループは "ユーザー名:" とコロン止めで「そのユーザーの既定グループ」に任せる
+# （ocv:ocv のようにグループ名まで決め打ちすると、グループ名が異なる環境で外す）。
+# OWNER_USER が空のときは何もしない。
+#
+# 🔴 引数順に注意: chown は「所有者 → 対象」の順で渡す。対象を先に書くと
+#    chown はそれを所有者名として解釈して `invalid user` で失敗する。
+#    失敗を握りつぶすと「汎用化したつもりで実は効いていない」状態に気づけないため、
+#    エラーは黙らせず WARN として出す（スクリプト自体は止めない）。
+chown_owner() {
+  [ -n "$OWNER_USER" ] || return 0
+  chown "${OWNER_USER}:" "$@" || echo "   [WARN] 所有者を ${OWNER_USER} に変更できませんでした: $*" >&2
+}
+
 # サービス再起動（y/N 確認つき）。do_edit / do_restore から呼ぶ。
 restart_services() {
   echo ""
@@ -70,6 +119,8 @@ restart_services() {
 }
 
 show_help() {
+  echo "dvs_config.sh ${SCRIPT_VERSION}"
+  echo ""
   cat <<'EOF'
 DVSwitch 設定対話ツール dvs_config.sh （TGIF 接続前提）
 
@@ -114,8 +165,9 @@ do_backup() {
       echo "       ! 見つからないためスキップ: $f"
     fi
   done
-  # 所有者を /opt/dvswitch_bot 配下と揃える（sudo 実行で root 化するのを防ぐ）
-  chown -R ocv:ocv /opt/dvswitch_bot/bak 2>/dev/null || true
+  # 所有者を実ユーザー（の既定グループ）に揃える（sudo 実行で root 化するのを防ぐ）
+  # 🔵 V1.1: ocv:ocv 決め打ちを廃止し chown_owner に集約。
+  chown_owner -R /opt/dvswitch_bot/bak
   echo ""
 }
 
