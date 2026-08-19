@@ -3,124 +3,93 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.02vvw —
+ — JJ2YYK デジピーター自動応答システム  V2.07vvw（VVW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
  応答音声キャッシュ・頭無音・終端多重化・SET_INFO メタデータ送出など、主要な設計は
  すべてこのファイル内で完結している。
-
- バージョンごとの詳細な変更履歴（V1.60〜）は本ファイルには含めず、リポジトリ直下の
+ 
+ バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
-
+ 
  【エディション: VVW版（VOICEVOX + Weather）】
-  本ファイルは VV版（ocv_dvs_vv/, 安定版・天気なし）から分岐した VVW版です。
-  版サフィックス "vvw" は VOICEVOX + 天気読み上げ搭載を示す。
-  系譜: VV版 V1.99vv → (天気搭載 V2.0vv〜V2.02vv) → VVW版 V2.02vvw として独立。
-  VV版はV1.99vv（天気なし）で凍結し、天気系の改修は本系譜（vvw）で行う。
+  本ファイルは JTW版 V2.07jtw を土台に、音声エンジンを Open JTalk から
+  VOICEVOX CORE へ換装した VVW版である。換装点は次の3箇所のみ:
+    (1) 定数: DICT_PATH/VOICE_PATH → VOICEVOX ブロック（話者は wav_source.json）
+    (2) _generate_hybrid: open_jtalk サブプロセス → VOICEVOX 同一プロセス合成
+    (3) _reply_signature: VOICE_PATH → VOICEVOX_STYLE_ID + VVM_PATH(+mtime)
+  定時音声（時報/メッセージ＋天気）は voice_make.py V1.01vvm（vv_say.py 経由の
+  VOICEVOX 合成）が生成する。号令・スロット・付与先指定は JTW と同一。
+  送出タイミングは VVW 実測値を採用（V2.02vvw 実測 2026-08-18, ずんだもん）:
+    REPLY_TX_LEAD_DELAY_SEC=1.5 / STARTUP_ANNOUNCE_DELAY_SEC=10.0 /
+    STARTUP_PRE_PADDING_PACKETS=150（起動アナウンス専用の前パディング 3.0s）。
+  夜間アナウンスは「只今より」表記（VOICEVOX のイントネーション安定化）。
 
- 【V2.02vvw の要点（V2.01vv からの変更）】
-  実測（2026-08-18、ずんだもん話者・ocv-voicevox）による定数確定のみ。
-  1. REPLY_TX_LEAD_DELAY_SEC : 0.5 → 1.5
-     V1.98vv の 0.5（No.7 話者で実測）はずんだもん環境でカーチャンク応答の
-     頭欠けが再現。1.5 で解消を確認。話者・経路変更時は要再実測。
-  2. STARTUP_ANNOUNCE_DELAY_SEC : 15.0 → 10.0
-     10 秒＋STARTUP_PRE_PADDING_PACKETS=150（3.0s）で起動アナウンスの
-     頭欠けなしを確認したため短縮。
+ 【V2.07jtw の要点（V2.06jtw からの変更）】
+  送信の「切れ際」で受信側無線機に稀に出る「ブブ／バリバリ」への対策（終端強化）。
+  背景: Web モニタ開発（usrp_web.py V0.12〜V0.15）の --diag 実測で、Analog_Bridge が
+  復号（AMBE→PCM）出力に「固定パターン先頭＋大振幅の壊れフレーム」を連発する事象を
+  確認した。同じ AB のエンコード（PCM→AMBE）段でも、ストリームを閉じる瞬間に同種の
+  バッファ残骸が最終フレームへ混入し得る、という仮説に基づく送出側の防御である。
+  変更は次の2点のみ（どちらも定数で V2.06jtw と同一挙動へ戻せる）:
+    1. USRP_EOT_REPEAT: 1 → 3。終端 keyup=0 を 20ms 間隔で3発送り、AB に確実に
+       ストリームを閉じさせる（V1.82 で予告しながら未有効だった多重化を有効化）。
+       1 に戻せば従来どおり。
+    2. NOISE_TAIL_PACKETS（新設・既定5）: 後パディングの末尾 5 パケット（0.1s）を
+       完全ゼロではなく 100Hz 微小トーンのフェードイン（振幅 12→30→52→82→112,
+       最大 −49dBFS 相当）にして、長いデジタル完全無音のまま閉じさせない。
+       先頭無音対策（V1.84〜V1.89 のリード音）の終端側の鏡像。0 で無効（V2.06jtw
+       と同一のゼロ後パディング）。
+  【未検証】切れ際バリバリが AB エンコード終端由来という因果は数値では未確定。
+  受信側ノードに usrp_web.py --diag を置き、本ノードの応答のセッション末尾に
+  例の固定パターン（[554,-27129,...]）が出るかで確定できる。効果が無ければ
+  NOISE_TAIL_PACKETS=0 / USRP_EOT_REPEAT=1 で完全に巻き戻すこと。
 
- 【V2.01vv の要点（V2.0vv からの変更）】
-  1. 起動アナウンスの頭切れ対策（「こちらはJ」まで欠落する実測への対処）。
-     STARTUP_ANNOUNCE_DELAY_SEC 5→15 秒（TGIF ストリームの温まり待ち）＋
-     起動アナウンスのみ前パディングを STARTUP_PRE_PADDING_PACKETS=150
-     （3.0 秒）へ延長（send_usrp_wav_with_padding に pre_packets 引数を追加。
-     他の送出経路は従来どおり）。
-  2. 夜間アナウンスの「ただいまより」を「只今より」へ（VOICEVOX の
-     イントネーション安定化）。
+ 【V2.06jtw の要点（V2.05jtw からの変更）】
+  Web モニタ（usrp_web.py）で bot の応答音声も聞けるようにするための最小改修。
+  送出ロジック・タイミング定数は一切変更していない。追加は次の3点のみ:
+    1. ミラー定数 WEB_MIRROR_ENABLE / WEB_MIRROR_IP / WEB_MIRROR_PORT（=51002）
+    2. 送出ヘルパ _usrp_sendto()（本番51000へ送り、有効時のみ51002へ複製）
+    3. send_usrp_wav_with_padding() 内の全 USRP 送出を _usrp_sendto() 経由に変更
+  背景: Analog_Bridge の復号RX(51001)には bot 自身の応答音声が現れない（bot の
+  音は 51000→送信の一方向で、この構成ではループバックしないと実測で確定）。
+  そこで応答 USRP を 51002 へも複製し、usrp_web.py 側で 51001 と混ぜて再生する。
+  ミラーは送出のみ・失敗は握りつぶすため、本番送出（RF/TGIF）には一切影響しない。
+  WEB_MIRROR_ENABLE=False で V2.05jtw と完全に同一の挙動へ戻る。
 
- 【V2.0vv の要点（V1.99vv からの変更）】
-  1. 時報に続く「当地の天気」読み上げを追加（Open-Meteo API・キー不要）。
-     bot_config.json の任意キー WEATHER_ENABLED / WEATHER_LATITUDE /
-     WEATHER_LONGITUDE / WEATHER_HOURS で制御（未設定なら従来動作）。
-     対象正時の約2分前に取得し、続けてイントロ＋時報＋天気の完成WAVを
-     1本ものとして事前生成（正時は再生するだけ＝遅延ゼロ）。取得・生成に
-     失敗したときはその場合成→天気省略の順にフォールバックし、時報は
-     必ず定刻どおり流す。追加依存なし（urllib）。
-     三位一体（bot_setup/app.py）の UI 対応は実波検証後に別途。
-
- 【V1.99vv の要点（V1.98vv からの変更）】
-  CACHE_DIR（/dev/shm 上の応答キャッシュディレクトリ）が稼働中に外部要因で
-  消失し、以後の全カーチャンク応答が SoX rc=2 で失敗し続ける障害への対策。
-  2026-07-20 に JT版ノード（ocv-uhf）で実際に発生した。原因は systemd-logind の
-  RemoveIPC=yes（Debian 既定）: 実行ユーザーの最後のログインセッションが閉じた
-  時点で、/dev/shm 配下の当ユーザー所有物（POSIX 共有メモリ扱い）が一掃される。
-  systemd サービスはログインセッションに数えられないため、bot 稼働中でも
-  保護されない。詳細は docs/incident_20260720_removeipc.md を参照。
-
-  1. _ensure_cached() の入口で毎回 os.makedirs(CACHE_DIR, exist_ok=True) を実行
-     （自己修復）。カーチャンク応答と Precache の両パスがここを通るため1箇所で
-     両方をカバーする。作成できない場合はキャッシュを諦めて非キャッシュ経路
-     （TEMP_FINAL へ毎回生成）に退避し、応答自体は継続する。
-  2. CACHE_DIR 定義行のコメント修正（「毎起動クリア」は実態と不一致。実体は
-     起動時の中身クリア + 本修正による生成直前の自己修復）。
-
-  【本質対策はホスト側】コード側の自己修復は多層防御であり、本質対策は
-  実行ユーザーへの `sudo loginctl enable-linger <user>` の適用（永続・要1回）。
-  一般ユーザーで /dev/shm を使うノード全てで必要（JT版 V1.95 と同時に展開）。
-
- 【V1.98vv の要点（V1.97vv からの変更）】
-  応答の立ち上がり（カーチャンク受信終了 → 相手に声が届くまで）の短縮と、
-  intro 頭欠けの解消。2026-07-16〜17 に ocv-voicevox（直 TGIF 接続）で実測して
-  決めた値を反映する。コード（送出ロジック）は一切変更していない。定数3つと、
+ 【V2.05jtw の要点（V2.04jtw からの変更）】
+  応答の立ち上がり（カーチャンク受信終了 → 相手に声が届くまで）の短縮と intro
+  頭欠けの解消。VV版 V1.98vv が ocv-voicevox（直 TGIF 接続）での実測で決めた値を
+  JTW版へ移植する。コード（送出ロジック）は一切変更していない。定数4つと、
   実態と食い違っていたコメントの修正のみ。
 
-  1. REPLY_TX_LEAD_DELAY_SEC : 2.5 → 0.5
-     V1.95a が 2.5 とした根拠「キャッシュ OFF ≒ 検知から約 2.4s 後の送出で正常」は、
-     V1.96 で合成が高速化（実測 0.9s）したため既に失効していた。実測で床を挟み込み、
-     0 と 0.1 は頭欠けあり / 0.5 は頭欠けなし。V1.77 の当初の理屈（経路が空く前に
-     キーアップすると intro 頭が食われる）自体は正しく、このガードは必須。
+  1. REPLY_TX_LEAD_DELAY_SEC : 1.0 → 0.5
   2. PRE_POST_PADDING_PACKETS : 75 → 85（1.5s → 1.7s）
-     1.5s では頭欠けが再現（3回中2回）、1.7s で消滅。0.7s では確実に欠ける。
   3. NOISE_LEAD_PACKETS : 65 → 5（1.3s → 0.1s）
-     頭欠けを決めているのは前パディング全体の長さであって、トーンの長さでは
-     なかった（V1.88 のコメントは誤り。詳細は当該定数の注記）。トーンを短くした
-     ことで、ゲート開放後に残るトーンの「ブーン」も消えた。
+  4. PRE_AUDIO_SILENCE_SEC : 1.5 → 0.0（ストリーム内の焼き込み頭無音を廃止）
 
-  効果（実測 / No.7 話者・JI2TAB 応答時）:
-     カーチャンク受信終了 → intro 開始 : 4.02s → 2.22s（1.8s 短縮）
-     カーチャンク受信終了 → 送信終了   : 15.26s → 13.9s
-     頭欠け : 出る（当初から発生していた） → 出ない
-     ブーン : 聞こえず → 聞こえず（据え置き）
+  VV版の実測（No.7 話者・キャッシュ命中時）:
+     カーチャンク受信終了 → intro 開始 : 4.02s → 2.22s
+     頭欠け : 出る → 出ない  /  ブーン : 聞こえず（据え置き）
+  JTW版でも各定数の積算は同じ 4.0s → 2.2s になる（1.0+1.5+1.5 → 0.5+1.7+0.0）。
 
-  【未解明】ゲートの挙動モデルは確立していない。V1.85 の「エネルギー積算型」も
-  V1.88 の「床を跨ぐ最小限」も、今回の実測（トーン 0.1s で頭欠けなし、トーン
-  1.3s で頭欠けあり）を説明できない。上記は理屈ではなく実測で決めた値である。
-  値を動かす際は必ず実機で頭欠け・ブーンの有無を確認すること。
+  【重要 / 未検証】上記はすべて VOICEVOX ノードでの実測値であり、JT 系ノード
+  （Open JTalk）では未検証である。特に次の2点で前提が異なる:
+    - 合成時間が違う（VOICEVOX 実測 0.9s / Open JTalk 実測 1.5s）。
+      REPLY_TX_LEAD_DELAY_SEC はキャッシュ命中時のみのガードで、ミス時は合成時間が
+      ガードを兼ねる。ミス時の総リードは JTW の方が長くなる（安全側）。
+    - 経路が違う（直 TGIF 接続か、SFR 中継を挟むか）。
+  配置後は必ず実機で「intro の頭欠け」「頭のブーン」の有無を確認すること。
 
- 【V1.96 の要点（V1.95a からの変更）】
-  1. 話者（VOICEVOX の style_id / vvm）を、コード内固定（30 / 6.vvm）から
-     wav_source.json の "voice" を起動時に読む方式へ変更。create_wav.sh（固定WAV側の
-     vv_say.py）と bot（動的合成）が同一の話者選択を共有するようになった。voice が
-     無い / 壊れている / vvm 実在しない場合は No.7（30 / 6.vvm）へフォールバックする。
-     話者を変えたら bot を再起動すると新話者がロードされる（起動時 1 回ロード）。
-  2. query.output_sampling_rate=48000 のハードコードを撤去（deprecation 対応）。
-     VOICEVOX のネイティブ出力（24kHz）に任せ、8kHz 変換は後段の sox に一本化。
-  3. onnxruntime の .so を .so.1.17.3 固定から glob 解決へ（バージョン差に非依存）。
+  【巻き戻し】頭欠けが出たら PRE_POST_PADDING_PACKETS を 85 → 90 と増やす方向で
+  試す（VV版の実測では頭欠けを決めるのは前パディング全体の長さ）。それでも直らない
+  場合は4定数すべてを V2.04jtw の値（75 / 65 / 1.0 / 1.5）へ戻せば従来動作に復帰する。
+  コードは変えていないため、定数を戻すだけで完全に元へ戻る。
 
- 【V1.95a の要点（V1.92 からの変更）】
-  1. 音声合成を Open JTalk から VOICEVOX CORE（Python バインディング）へ全面移行。
-     話者は VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH（ファイル冒頭）で変更する。
-     実行には venv（/opt/dvswitch_bot/venv）の python3 が必要。
-  2. キャッシュ命中時の送出リード REPLY_TX_LEAD_DELAY_SEC を 1.0 → 2.5 に変更。
-     直 TGIF 接続環境で 1.0s だと受信ストリーム残処理と TX が重なり AMBE 経路で
-     音声が崩れる症状（もごもご/同期ずれ）を確認。生成時間相当（実測正常）に揃えた。
-  3. キャッシュの一時ファイル（.building）にプロセスID+スレッドIDを付与しユニーク化（保険）。
-  4. キャッシュ署名（_reply_signature）に VOICEVOX の話者ID・モデルを追加。
-     話者やモデルを変えると自動でキャッシュ再生成される。
-  5. 第30条セッション判定のギャップ計算を修正。従来は「前回送信終了→今回送信終了」で
-     判定しており、無音が短くても今回の通話が長いとセッションが誤リセットされた。
-     「前回送信終了→今回送信開始（= now - dur）」の純粋な無通信時間で判定するよう修正。
-  6. QSO_SESSION_GAP_SEC を SUPPRESS_DURATION_SEC のエイリアスから独立させ 60 秒に変更
-     （TGIFChanger の自TG復帰判定と運用基準を統一）。
+  【キャッシュ】PRE_AUDIO_SILENCE_SEC はキャッシュ署名（_reply_signature）に
+  含まれるため、値を変えると既存のキャッシュは自動的に無効化される。
+  CACHE_SCHEMA を上げる必要はない。
 
  【設定項目（bot_config.json）】
   RX_DURATION_MIN_SEC : 最小受信時間（秒, 0 < MIN < MAX）
@@ -133,6 +102,14 @@
   USE_CSTM_INTRO      : intro にカスタム音声を使う（true/false, 任意キー。既定 false）
   USE_CSTM_001        : 001 にカスタム音声を使う（true/false, 任意キー。既定 false）
   USE_CSTM_002        : 002 にカスタム音声を使う（true/false, 任意キー。既定 false）
+  WEATHER_ENABLED     : 天気読み上げの親スイッチ（true/false, 任意キー。既定 false）。
+                        取得・合成・地名は voice_make.py が担う
+  WEATHER_ON_TIME_SIGNAL : 時報（:00）・30分案内（:30）に天気を付ける
+                        （true/false, 任意キー。既定 true。V2.04jtw〜）
+  WEATHER_ON_MESSAGE  : 定時メッセージ（001/002）に天気を付ける
+                        （true/false, 任意キー。既定 true。V2.04jtw〜）
+  WEATHER_LATITUDE    : 天気取得の緯度（WEATHER_ENABLED=true のとき必須）
+  WEATHER_LONGITUDE   : 天気取得の経度（WEATHER_ENABLED=true のとき必須）
 
 【機能】
   - 起動アナウンス（起動 N 秒後に「起動しました。」を 1 回送出）
@@ -154,17 +131,24 @@
   （WAV・設定 JSON は /opt/dvswitch_bot/ 直下。BOT_DIR 参照）
 
 【使い方】
-  1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py       # 先に設定ファイルを作成
-  2) /opt/dvswitch_bot/venv/bin/python3 /opt/dvswitch_bot/bin/dvswitch_bot.py
-     ※ V1.95a 以降は voicevox_core を含む venv の python3 で起動すること。
-       systemd 常駐化時も ExecStart を venv の python3 にする。
+  1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
+  2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.02vvw (daemon, VVW版初版 = V2.02vv 相当。実測定数確定〔REPLY_TX_LEAD 1.5s / 起動遅延 10s〕)
- 　（V1.98vv: V1.97vv + 立ち上がり短縮・頭欠け解消の実測値反映）
- 　（V1.97vv: V1.96vv + 自局コールサイン/DMR ID の ini 自動取得）
- 　（V1.96vv: V1.95a + 話者を wav_source.json 化 + 48kHz固定撤去 + .so glob化）
- ※ 版番号の "vv" サフィックスは VOICEVOX 系ノード用ファイルであることを示す
-   （Open JTalk 系 Pi ノード用の同名ファイルと区別する命名規約。2026-07-14 導入）。
+ Document Version: V2.07vvw (daemon, JTW V2.07jtw の VOICEVOX 換装版。 送信切れ際のブブ/バリバリ対策。EOT 3発化＋
+                          後パディング末尾の微小トーン化〔終端リード音〕。定数で巻き戻し可)
+ 　（V2.06jtw: 応答音声を Web モニタ usrp_web.py へミラー送出。
+                          送出ロジック不変。WEB_MIRROR_* 追加と _usrp_sendto 経由化のみ）
+ 　（V2.05jtw: VV版 V1.98vv の送出タイミング実測値を反映。立ち上がり短縮・頭欠け解消。
+                          JT系での実波検証は未実施）
+ 　（V2.04jtw: 天気の付与先を「時報系」「定時メッセージ系」で個別に指定できるようにした）
+ 　（V2.03jtw: 定時音声の生成を voice_make.py〔vmp〕へ分離。bot は判定・2分前号令・
+                          スロット再生に専念。天気は全定時音声へ一様付与）
+ 　（V2.01jtw: V2.00jtw + コメント用語統一〔ケロ→カーチャンク〕）
+ 　（V2.00jtw: V1.95 + 時報への当地天気読み上げ〔Open-Meteo〕/ JTW版）
+ 　（V1.95: V1.94 + CACHE_DIR 消失時の自己修復）
+ 　（V1.94: V1.93 + 自局コールサイン/DMR ID の ini 自動取得）
+ 　（V1.93: V1.92 + 第30条セッションのギャップ判定バグ修正・
+                          QSO_SESSION_GAP_SEC を独立定数化し 60 秒へ変更)
  Last Updated: 2026-07-20
 ================================================================================
 """
@@ -175,7 +159,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.02vvw"
+__version__ = "V2.07vvw"
 
 import os
 import sys
@@ -190,9 +174,94 @@ import signal
 import logging
 import threading
 import subprocess
-import urllib.request
-import urllib.error
+from datetime import datetime, timedelta
 
+# ============================================================
+# 基本設定
+# ============================================================
+LOG_DIR = "/var/log/mmdvm"
+LOG_PATTERN = "MMDVM_Bridge-*.log"
+UDP_IP = "127.0.0.1"
+UDP_PORT = 51000
+
+# ============================================================
+# 🔵 V2.06jtw: Web モニタ（usrp_web.py）への応答音声ミラー
+# ============================================================
+# bot が送出する USRP 音声を、本番送出先(UDP_PORT=51000)に加えて Web モニタ用の
+# ミラーポートへも複製送信する。Analog_Bridge の復号RX(51001)には bot 自身の
+# 応答音声が現れない（bot の音は 51000→送信の一方向で、この構成ではループバック
+# しないと実測で確定）ため、Web ダッシュボードで「他局の受信音」と「bot の応答音」を
+# 両方聞けるようにするための複製。ミラーは送出のみで受信・制御は一切しない。
+# usrp_web.py 側は 51002 も listen し、USRP type=0(音声)以外は捨てるため、
+# メタデータ等を混ぜても無害（ヘルパは全パケットを一律ミラーする）。
+# 変更頻度が低くダッシュボードから触る必要のない値のため三位一体対象外。
+# Web モニタを使わないノードでは WEB_MIRROR_ENABLE=False にすれば無効化できる。
+WEB_MIRROR_ENABLE = True
+WEB_MIRROR_IP     = "127.0.0.1"
+WEB_MIRROR_PORT   = 51002
+
+# ============================================================
+# 🔵 V1.94: 自局コールサイン / DMR ID を ini から自動取得
+# ============================================================
+# V1.83〜V1.93 は MY_CALLSIGN / MY_DMR_ID をソースに直書きしており、
+# (1) 他局が導入するとエディタでの手修正が必須、(2) 一括アップデートの
+# たびに配布デフォルト（JJ2YYK / 4402396）へ巻き戻る、(3) ダッシュボード
+# から変更できない、という不具合があった（JS1YTZ 局の報告で顕在化）。
+# 正しい値は dvs_config.sh / ダッシュボードが管理する ini に既に存在する
+# ため、起動時にそこから読む方式に変更し、真実の源を一本化した:
+#   MY_CALLSIGN ← MMDVM_Bridge.ini の Callsign
+#   MY_DMR_ID   ← Analog_Bridge.ini の gatewayDmrId
+# ini が読めない・キーが無い場合のみ従来の既定値へフォールバックし、
+# 起動ログに WARN を出す（後方互換。ただし自局判定 cs != MY_CALLSIGN が
+# 誤るとループの恐れがあるため、WARN を見たら ini を確認すること）。
+# 値の反映タイミングは bot 起動時（変更後は bot 再起動）。
+_MMDVM_INI_PATH = "/opt/MMDVM_Bridge/MMDVM_Bridge.ini"
+_ANALOG_INI_PATH = "/opt/Analog_Bridge/Analog_Bridge.ini"
+
+
+def _read_ini_value(path, key):
+    """ini から最初に現れる `key = value` の値を返す（無ければ None）。
+    dvs_config.sh / app.py の get_ini と同じ流儀: コメント行は対象外、
+    行末の `;` コメントは除去。configparser は DVSwitch ini の重複キーで
+    例外になり得るため使わない。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith((";", "#", "[")):
+                    continue
+                m = re.match(rf"^{re.escape(key)}\s*=\s*(.*)$", s)
+                if m:
+                    val = m.group(1).split(";")[0].strip()
+                    return val or None
+    except OSError:
+        pass
+    return None
+
+
+def _resolve_my_station():
+    """(callsign, dmr_id) を ini から解決する。失敗分のみ既定値で補う。"""
+    fallback_cs, fallback_id = "JJ2YYK", 4402396  # 旧 V1.83 直書き値（互換用）
+    cs = _read_ini_value(_MMDVM_INI_PATH, "Callsign")
+    raw_id = _read_ini_value(_ANALOG_INI_PATH, "gatewayDmrId")
+    dmr_id = None
+    if raw_id and raw_id.isdigit():
+        dmr_id = int(raw_id)
+    warn = []
+    if not cs:
+        cs = fallback_cs
+        warn.append(f"Callsign を {_MMDVM_INI_PATH} から取得できず既定値 {fallback_cs} を使用")
+    if dmr_id is None:
+        dmr_id = fallback_id
+        warn.append(f"gatewayDmrId を {_ANALOG_INI_PATH} から取得できず既定値 {fallback_id} を使用")
+    return cs, dmr_id, warn
+
+
+MY_CALLSIGN, MY_DMR_ID, _MY_STATION_WARNINGS = _resolve_my_station()
+# 🔴 V1.83: 送信前に SET_INFO メタデータを送るか。DVSwitch 公式クライアント
+# (pyUC) と同じ振る舞いにして、Analog_Bridge に正規経路でコールサイン/ID を
+# 通知する。False で V1.82 と同一（メタデータなし）。
+TX_METADATA_ENABLED = True
 # ============================================================
 # 🔵 V1.96: VOICEVOX CORE 統合（話者は wav_source.json から読む）
 # ============================================================
@@ -267,82 +336,6 @@ _vv_synth = Synthesizer(_vv_onnx, _vv_openjtalk)
 with VoiceModelFile.open(VOICEVOX_VVM_PATH) as _vv_model:
     _vv_synth.load_voice_model(_vv_model)
 
-from datetime import datetime, timedelta
-
-# ============================================================
-# 基本設定
-# ============================================================
-LOG_DIR = "/var/log/mmdvm"
-LOG_PATTERN = "MMDVM_Bridge-*.log"
-UDP_IP = "127.0.0.1"
-UDP_PORT = 51000
-
-# ============================================================
-# 🔵 V1.97vv: 自局コールサイン / DMR ID を ini から自動取得
-# ============================================================
-# V1.83〜V1.96vv は MY_CALLSIGN / MY_DMR_ID をソースに直書きしており、
-# (1) 他局が導入するとエディタでの手修正が必須、(2) 一括アップデートの
-# たびに配布デフォルト（JJ2YYK / 4402396）へ巻き戻る、(3) ダッシュボード
-# から変更できない、という不具合があった（JS1YTZ 局の報告で顕在化）。
-# 正しい値は dvs_config.sh / ダッシュボードが管理する ini に既に存在する
-# ため、起動時にそこから読む方式に変更し、真実の源を一本化した:
-#   MY_CALLSIGN ← MMDVM_Bridge.ini の Callsign
-#   MY_DMR_ID   ← Analog_Bridge.ini の gatewayDmrId
-# ini が読めない・キーが無い場合のみ従来の既定値へフォールバックし、
-# 起動ログに WARN を出す（後方互換。ただし自局判定 cs != MY_CALLSIGN が
-# 誤るとループの恐れがあるため、WARN を見たら ini を確認すること）。
-# 値の反映タイミングは bot 起動時（変更後は bot 再起動）。
-_MMDVM_INI_PATH = "/opt/MMDVM_Bridge/MMDVM_Bridge.ini"
-_ANALOG_INI_PATH = "/opt/Analog_Bridge/Analog_Bridge.ini"
-
-
-def _read_ini_value(path, key):
-    """ini から最初に現れる `key = value` の値を返す（無ければ None）。
-    dvs_config.sh / app.py の get_ini と同じ流儀: コメント行は対象外、
-    行末の `;` コメントは除去。configparser は DVSwitch ini の重複キーで
-    例外になり得るため使わない。"""
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                s = line.strip()
-                if s.startswith((";", "#", "[")):
-                    continue
-                m = re.match(rf"^{re.escape(key)}\s*=\s*(.*)$", s)
-                if m:
-                    val = m.group(1).split(";")[0].strip()
-                    return val or None
-    except OSError:
-        pass
-    return None
-
-
-def _resolve_my_station():
-    """(callsign, dmr_id) を ini から解決する。失敗分のみ既定値で補う。"""
-    fallback_cs, fallback_id = "JJ2YYK", 4402396  # 旧 V1.83 直書き値（互換用）
-    cs = _read_ini_value(_MMDVM_INI_PATH, "Callsign")
-    raw_id = _read_ini_value(_ANALOG_INI_PATH, "gatewayDmrId")
-    dmr_id = None
-    if raw_id and raw_id.isdigit():
-        dmr_id = int(raw_id)
-    warn = []
-    if not cs:
-        cs = fallback_cs
-        warn.append(f"Callsign を {_MMDVM_INI_PATH} から取得できず既定値 {fallback_cs} を使用")
-    if dmr_id is None:
-        dmr_id = fallback_id
-        warn.append(f"gatewayDmrId を {_ANALOG_INI_PATH} から取得できず既定値 {fallback_id} を使用")
-    return cs, dmr_id, warn
-
-
-MY_CALLSIGN, MY_DMR_ID, _MY_STATION_WARNINGS = _resolve_my_station()
-# 🔴 V1.83: 送信前に SET_INFO メタデータを送るか。DVSwitch 公式クライアント
-# (pyUC) と同じ振る舞いにして、Analog_Bridge に正規経路でコールサイン/ID を
-# 通知する。False で V1.82 と同一（メタデータなし）。
-TX_METADATA_ENABLED = True
-
-# 🔵 V1.95a: Open JTalk 用の DICT_PATH / VOICE_PATH は VOICEVOX 統合に伴い廃止。
-# 話者・モデルはファイル冒頭の VOICEVOX_STYLE_ID / VOICEVOX_VVM_PATH を参照。
-
 # 固定 WAV ファイルのパス
 BOT_DIR = "/opt/dvswitch_bot"
 FIXED_INTRO_WAV = f"{BOT_DIR}/fixed_intro.wav"
@@ -371,8 +364,6 @@ REQUIRED_KEYS = [
 # 一時ファイル(/dev/shm = RAM ディスクで SD カード保護)
 _PID = os.getpid()
 TEMP_FINAL = f"/dev/shm/reply_final_{_PID}.wav"
-# 🔵 V2.0vv: 天気付き時報の事前生成WAV（正時2分前に1本ものとして作り置く）
-WEATHER_PREBUILT_WAV = f"/dev/shm/weather_signal_{_PID}.wav"
 TEMP_48K   = f"/dev/shm/tmp_48k_{_PID}.wav"
 TEMP_8K    = f"/dev/shm/tmp_8k_{_PID}.wav"
 TEMP_INTRO_PADDED = f"/dev/shm/tmp_intro_padded_{_PID}.wav"
@@ -381,29 +372,29 @@ TEMP_INTRO_PADDED = f"/dev/shm/tmp_intro_padded_{_PID}.wav"
 EMPTY_HEADER_THRESHOLD_SEC = 0.1
 SUPPRESS_DURATION_SEC = 15.0
 PACKET_INTERVAL = 0.02
-# 🔴 V1.98vv: 75 → 85（1.5s → 1.7s）。実測（2026-07-16/17, 直 TGIF 接続）で、
-# intro 頭欠けを決めているのはトーン長ではなく「前パディング全体の長さ」だと
-# 判明した（NOISE_LEAD_PACKETS の注記を参照）。
+# 🔴 V2.05jtw: 75 → 85（1.5s → 1.7s）。VV版 V1.98vv の実測（2026-07-16/17,
+# ocv-voicevox / 直 TGIF 接続）を移植した値。intro 頭欠けを決めているのはトーンの
+# 長さではなく「前パディング全体の長さ」だと判明している（NOISE_LEAD_PACKETS の
+# 注記を参照。V1.88 のコメントは誤りだった）。
 #     前パディング 0.7s → 頭欠け（確実）
 #     前パディング 1.5s → 頭欠け（3回中2回。V1.88 以来ずっとこの状態だった）
 #     前パディング 1.7s → 頭欠けなし
 # 前後で共有される値のため、後パディングも同じ 1.7s になる（送信終端側の無音）。
-# 増やす分だけ intro 開始が遅れる（＝立ち上がりが鈍る）ので、床の 1.5〜1.7s の
-# 間を詰める余地はあるが未検証。減らす場合は必ず実機で頭欠けを確認すること。
+# 増やす分だけ intro 開始が遅れる（＝立ち上がりが鈍る）。頭欠けが出る場合は
+# 90, 95 と増やす方向で試す。1.5〜1.7s の間を詰める余地はあるが未検証。
+# ※ JT 系ノード（Open JTalk）での実波検証は未実施。減らす場合は必ず実機で確認する。
 PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
-# 🔵 V2.01vv: 起動アナウンス専用の前パディング。起動後初回TXはストリーム頭の
-# 欠落が通常より大きいため、前パディングをこの値に延長する（150×20ms=3.0s）。
-# 微小トーンのリード（NOISE_LEAD_PACKETS）は共通。頭切れが残る場合はまず
-# この値を 200（4.0s）へ、改善しなければ STARTUP_ANNOUNCE_DELAY_SEC を延ばす。
-STARTUP_PRE_PADDING_PACKETS = 150
+# 🔵 VVW: 起動アナウンス専用の前パディング（起動後初回TXは頭の欠落が大きい）。
+STARTUP_PRE_PADDING_PACKETS = 150   # 150×20ms=3.0s
 # 🔴 V1.82: 送信終端（USRP keyup=0）の送出回数。従来は1発のみで、取りこぼすと
 # Analog_Bridge がストリームを閉じられず、DMR 終端フレームの生成が遅延・不整に
 # なり得た（受信側無線機が受信状態のままスタックする一因）。
-# 🔵 V1.98vv: コメント修正。V1.82 は「複数回送って確実化」と書いていたが、既定値は
-# 1（＝従来と同じ1発）のままで、複数回送出は実際には有効になっていない。多重送出の
-# ループ自体は send_usrp_wav_with_padding() の finally 節に実装済みなので、この値を
-# 2 以上にすれば機能する。受信機のスタックが再発する場合はここを 2〜3 にして試す。
-USRP_EOT_REPEAT = 1
+# 🔵 V2.05jtw: コメント修正。V1.82 は「複数回送って確実化」と書いていたが、既定値は
+# 1（＝従来と同じ1発）のままで、多重送出は実際には有効になっていない。
+# 🔴 V2.07jtw: 1 → 3。切れ際の「ブブ／バリバリ」対策として多重化を有効にする。
+# 終端 keyup=0 は 20ms 間隔で送られ、AB は最初の1発で閉じ、残りは無害（V1.82 の
+# 設計どおり）。取りこぼし・遅延による終端フレーム不整を潰す。1 に戻せば従来動作。
+USRP_EOT_REPEAT = 3
 # 🔴 V1.84: 無音のノイズ充填（TGIF 先頭無音スキップ対策）。
 # パケットキャプチャ解析により、TGIF は先頭のデジタル完全無音（全ゼロ PCM →
 # AMBE 無音固定パターン）を転送せず、音が始まった所から配送を開始することが
@@ -423,29 +414,34 @@ NOISE_FILL_ENABLED = True
 # フェードアウトして無音への遷移ポップも防ぐ。
 NOISE_FILL_AMP = 150   # トーン振幅（150/32768 ≈ -47dBFS。AMBE 非無音判定の実証値）
 # 🔴 V1.88: ノイズは前パディングの先頭 NOISE_LEAD_PACKETS 個だけに短縮。
-# 残りはゼロ（無音）にして、ゲート開放後に聞こえるトーンの尻尾を削る。
-#
-# 🔴 V1.98vv: 65 → 5（1.3s → 0.1s）。実測（2026-07-17）。
-# 【V1.88 のコメント訂正】旧コメントは「TGIF ゲート床（実測≈1.0〜1.3s）を跨ぐ
-# 最小限とし（略）頭欠け/ハング症状が出る場合は 75（全区間ノイズ）に戻す」と
-# していたが、これは誤り。実測は逆の結果を示した:
-#     前パディング 1.5s / トーン 1.3s（＝V1.88 の設計値） → 頭欠け（3回中2回）
-#     前パディング 1.7s / トーン 0.1s（＝本設定）         → 頭欠けなし・ブーンなし
-#     前パディング 2.0s / トーン 1.8s                     → 頭欠けなし・約1秒のブーン
-# 頭欠けを決めているのは前パディング全体の長さであって、トーンの長さではない。
-# トーンはゲート床を「跨ぐ」必要がなく、先頭に僅かにあれば足りる。長くすると、
-# ゲート開放後に食われ残ったトーンがそのまま「ブーン」として耳に届く。
+# 🔴 V2.05jtw: 65 → 5（1.3s → 0.1s）。VV版 V1.98vv の実測を移植した値。
+# V1.88 の「TGIF ゲート床を跨ぐ最小限」という説明は誤りだった。実測では、
+# 頭欠けを決めているのは前パディング全体の長さであってトーンの長さではない
+# （トーン 0.1s で頭欠けなし / トーン 1.3s で頭欠けあり）。トーンを短くしたことで、
+# ゲート開放後に残るトーンの「ブーン」も消えた。
 #
 # 【5 という値の性質】5 は len(_FADE_STEPS)==5 と等しい。_lead_block() は末尾
 # len(_FADE_STEPS) 個をフェードにする仕様なので、5 では 5個すべてがフェードに
 # なり、振幅 150 の定常トーンは1ブロックも送出されない（振幅 112→82→52→30→12
 # のみ）。末尾の 12 は「AMBE 非無音判定の実証値 150」を大きく下回る。それでも
-# ゲートは開き、頭欠けもブーンも無い。
+# ゲートは開き、頭欠けもブーンも無い（VV版での実測）。
 #
 # 【未解明】V1.85 の「エネルギー積算型（音量が大きいほど早く開く）」も V1.88 の
 # 「床を跨ぐ最小限」も、この結果を説明できない。ゲートの挙動モデルは確立して
 # いない。これは理屈ではなく実測で決めた値である。5 未満は未検証。
+# ※ JT 系ノードでの実波検証は未実施。頭シャー/頭欠けが出る場合は 65 に戻す。
 NOISE_LEAD_PACKETS = 5    # 5×20ms=0.1s（_FADE_STEPS と同数のため全てフェード）
+# 🔴 V2.07jtw: 終端リード音（後パディング末尾の微小トーン）。
+# 先頭無音対策（NOISE_LEAD_PACKETS）の鏡像。後パディング（V1.86 以来 完全ゼロ）の
+# 末尾 NOISE_TAIL_PACKETS 個だけを 100Hz 微小トーンのフェードイン
+# （振幅 12→30→52→82→112 ≈ 最大 −49dBFS）にして、AB エンコーダに
+# 「長いデジタル完全無音の直後にストリームを閉じる」状況を作らせない。
+# 狙い: AB は復号側で無音/閉鎖の縁にバッファ残骸を混ぜる事象が実測されており
+# （usrp_web.py V0.12 の --diag で確定）、エンコード側の閉じ際にも同種の残骸が
+# 最終 AMBE フレームへ混入して「切れ際のブブ／バリバリ」になるという仮説への防御。
+# 位相連続な周期信号のため耳にはほぼ聞こえない（先頭リード音と同じ性質）。
+# 0 で無効（V2.06jtw と同一のゼロ後パディング）。NOISE_FILL_ENABLED=False でも無効。
+NOISE_TAIL_PACKETS = 5    # 5×20ms=0.1s（0で無効）
 # 🔴 V1.85: ゲート開放バースト。実測（V1.84: -47dBFS ノイズでスキップが
 # 3.06s→1.32s に短縮）から、TGIF のゲートはエネルギー積算型と判断。
 # 音量が大きいほど早く開く。そこでストリーム先頭の短時間だけ強めのノイズを
@@ -453,10 +449,10 @@ NOISE_LEAD_PACKETS = 5    # 5×20ms=0.1s（_FADE_STEPS と同数のため全て�
 # マイク音声が即座にゲートを開くためヘッダが通る、と同じ状態を作る）。
 # バーストはキーアップ直後の 300ms・-22dBFS の柔らかいヒスで、実用上目立たない。
 #
-# 🔵 V1.98vv: 【未実装】この2定数は定義のみで、send_usrp_wav_with_padding() からも
+# 🔵 V2.05jtw: 【未実装】この2定数は定義のみで、send_usrp_wav_with_padding() からも
 # _lead_block() からも参照されていない。値を変えても動作は一切変わらない（削除せず
 # 残しているのは、発想と実測メモを保存するため）。
-# 同じ狙いは NOISE_FILL_AMP を直接上げれば試せる。実測（2026-07-17）では
+# 同じ狙いは NOISE_FILL_AMP を直接上げれば試せる。VV版の実測（2026-07-17）では
 # NOISE_FILL_AMP=2500（-22dBFS）にすると TGIF に食われる量が 1.5〜1.8s → 0.3〜0.5s
 # へ激減した（＝ゲートが早く開く。V1.85 の見立て自体は正しい）。ただし食われ残った
 # トーンが大きな「ブーン」として聞こえるため、前パディングの大幅短縮とセットで
@@ -468,58 +464,59 @@ GAP_AFTER_INTRO_SEC = 0.5
 
 # 🔴 起動アナウンス遅延（秒）。起動後この秒数だけ待ってから送出する。
 STARTUP_ANNOUNCE_DELAY_SEC = 10.0
-# 🔵 V2.02vv: 15.0 → 10.0（実測 2026-08-18: 10 秒＋専用前パディング 3.0s で
-# 頭欠けなしを確認）。
-# 🔵 V2.01vv: 5.0 → 15.0 に延長。起動直後は TGIF ログイン／ストリーム確立が
-# 温まりきらず、初回TXの頭が通常より大きく欠ける（「こちらはJ」まで欠落する
-# 実測）。ブリッジ群が落ち着く時間を確保する。
+# 🔵 VVW実測(2026-08-18): 10s ＋ 起動専用前パディング 3.0s で頭欠けなし。
 
 # ============================================================
 # 🔵 V1.75: コールサイン応答音声のキャッシュ設定（即応答化）
 # ============================================================
-# 同一コールサインの合成結果を再利用し、生成待ちを2回目以降で消す。
+# 同一コールサインの合成結果を再利用し、生成待ち（約2秒）を2回目以降で消す。
 # ヘッダ受信時に先行生成し、終端/watchdog 判定が来た時にはキャッシュ完成済みに
 # しておくことで即送出する。ソース定数（bot_config.json には置かない）。
 # WATCHDOG_RX_MAX_SEC 等と同じ方針で、変更頻度が低くダッシュボードから触る必要の
 # ない値のため三位一体（bot/setup/dashboard）の対象外とする。
 REPLY_CACHE_ENABLED = True     # False で V1.74 と同一挙動（毎回 TEMP_FINAL に生成）
 PREWARM_ON_HEADER   = True     # ヘッダ受信時に背景で先行生成してキャッシュを温める
-CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上（SD 保護）。起動時に中身をクリアし、生成直前に存在を自己修復（V1.99vv）
-CACHE_SCHEMA = "v2"            # 読み/結合仕様の版。V1.95a: 署名項目変更（VOICEVOX）に伴い v1→v2
+CACHE_DIR    = f"/dev/shm/ocv_reply_cache_{_PID}"  # RAM 上（SD 保護）。起動時に中身をクリアし、生成直前に存在を自己修復（V1.95）
+CACHE_SCHEMA = "v1"            # 読み/結合仕様の版。仕様変更時に上げると全キャッシュ再生成
 
 # 🔴 V1.77: キャッシュ命中時の送出前ガード（RF ターンアラウンド保護）。
-# 経路が空く前に応答がキーアップするとイントロ頭が食われるため、命中時のみ
-# 送出前にこの秒数だけ待つ。ミス時は合成時間がガードを兼ねるため待たない。
-# 🔴 V1.95a: 1.0 → 2.5 に増加。VOICEVOX 統合後の直 TGIF 接続環境で、命中時
-# リード 1.0s だと受信ストリームの残処理と TX が重なり、AMBE 経路の音声が
-# 崩れる症状（もごもご/同期ずれ。ファイル自体の波形は正常）を確認した。
-# キャッシュ OFF（毎回生成 ≒ 検知から約 2.4s 後の送出）では正常だったため、
-# 命中時のリードを生成時間相当まで広げて同じ送出タイミングに揃える。
+# V1.74 まで合成に約2秒かかっており、その2秒が結果的に「相手が送信を終えてから
+# SFR 中継の RX→TX 折り返し／経路が空くまでの待ち」を兼ねていた。キャッシュ即応答で
+# その2秒が消えると、経路が空く前に応答がキーアップしてイントロ頭（「こちらは…」）が
+# 食われる。そこで命中時のみ送出前にこの秒数だけ待ち、経路が空くのを待ってから
+# キーアップする（前パディング 1.5s と合わせた総リードで頭欠けを防ぐ）。
+# ミス時は合成に約2秒かかりガードを兼ねるため待たない（従来どおり）。
 #
-# 🔴 V1.98vv: 2.5 → 0.5。実測（2026-07-17）で床を挟み込んだ:
+# 🔴 V2.05jtw: 1.0 → 0.5。VV版 V1.98vv の実測（2026-07-17）を移植した値。
+# 床を挟み込んだ結果:
 #     lead 0    → 頭欠けあり
 #     lead 0.1  → 頭欠けあり
 #     lead 0.5  → 頭欠けなし
 # V1.77 の当初の理屈（経路が空く前にキーアップすると intro 頭が食われる）は
 # 正しく、このガードは必須。定時放送（001/002・時報）は直前に受信が無いため
 # 頭欠けが起きない ── これがガードの目的が「受信の残処理待ち」であることの傍証。
-#
-# 【V1.95a の根拠は失効している】2.5 は測定値ではなく「キャッシュ OFF 時の生成
-# 時間（当時 ≒ 2.4s）に揃えた」代理値だった。V1.96 で合成が高速化し（実測 0.9s、
-# bot 自身の Precache ready ログから確認）、この前提は成り立たなくなった。
 # 0.1〜0.5 の間にさらに床がある可能性はあるが未検証。0 で無効。
+#
+# ※ この値は VOICEVOX ノード（合成 0.9s・直 TGIF 接続）での実測である。JT 系は
+#   合成が 1.5s 前後と遅いぶんキャッシュミス時の総リードは長くなる（安全側）が、
+#   命中時はこの値がそのまま効く。頭欠けが出る場合は 1.0 に戻す。
 REPLY_TX_LEAD_DELAY_SEC = 1.5
-# 🔵 V2.02vv: 0.5 → 1.5（実測 2026-08-18、ずんだもん話者）。V1.98vv の 0.5 は
-# No.7 話者・当時環境での実測値で、ずんだもん環境では頭欠けが再現した。
-# 話者や経路を変えたら必ず実機で頭欠けを再確認すること（V1.98vv の警告どおり）。
+# 🔵 VVW実測(2026-08-18, ずんだもん): 0.5 では頭欠けが再現、1.5 で解消。
+# 話者・経路を変えたら必ず実機で頭欠けを再確認すること。
 
 # ============================================================
 # ============================================================
 # 🔵 V1.80: 検出即送出化（GPIO 依存排除）
 # ============================================================
-# ケロ検出直後に即座に送出し、実音声前の無音パッドで頭欠けを防ぐ。
+# カーチャンク検出直後に即座に送出し、実音声前の無音パッドで頭欠けを防ぐ。
 # GPIO ファイルの存在・権限に依存せず、純粋なソフト制御。
-PRE_AUDIO_SILENCE_SEC = 0.0           # 実音声前の無音パッド（受信側の途中参加同期の助走）。V1.87で復活
+# 🔴 V2.05jtw: 1.5 → 0.0。VV版 V1.98vv と同じ構成にする。ストリーム内に焼き込む
+# 頭無音は TGIF のゲートに食われるため頭欠け対策として当てにならず（V1.86 の実測）、
+# 立ち上がりを 1.5s 遅らせるだけになっていた。頭欠けの防止は前パディング
+# （PRE_POST_PADDING_PACKETS）と送出前ガード（REPLY_TX_LEAD_DELAY_SEC）に一本化する。
+# ※ 本定数はキャッシュ署名（_reply_signature）に含まれるため、値を変えると既存の
+#   キャッシュは自動的に無効化される（CACHE_SCHEMA を上げる必要はない）。
+PRE_AUDIO_SILENCE_SEC = 0.0           # 実音声前の無音パッド（0=焼き込まない / V2.05jtw）
 
 # ============================================================
 # 🔴 V1.67: watchdog 擬似終端の設定（V1.65 から移植）
@@ -567,13 +564,13 @@ TX_GAIN_MAX = 5.0    # これ以下（usrpGain と同じ 0.0–5.0 レンジ。>
 # FIXED_INTRO_WAV を強制送信し、自局を識別する。セッションが続く限り繰り返す。
 QSO_ID_INTERVAL_SEC = 600.0   # 10分（アマチュア局の標準）
 
-# セッション継続とみなす無通信ギャップの上限（秒）。この秒数を超えて誰も
-# 長時間送信しなければセッション終了とみなし、次回はタイマーを 0 から再スタート
-# する。
-# 🔴 V1.95a: SUPPRESS_DURATION_SEC のエイリアスを廃止し、独立の 60 秒に変更。
-# TGIFChanger の自TG復帰判定（無音60秒）と運用基準を統一し、本ソフトウェアに
-# おける第30条セッションの定義を「通話と 60 秒以下の無音の連続」とする
-# （法解釈そのものではなく、本ソフトにおける運用上の定義）。
+# セッション継続とみなす無通信ギャップの上限（秒）。前回の Normal QSO 送信の
+# 「終了」から今回の送信の「開始」までの純粋な無音がこの秒数を超えたら、
+# セッションが途切れたとみなして積算をリセットし、次回はタイマーを 0 から
+# 再スタートする。
+# 🔴 V1.93: SUPPRESS_DURATION_SEC（15秒）のエイリアスをやめ独立定数化し、
+# 値を 60.0 に変更。既存 TGIFChanger の自TG復帰判定（無音60秒）と運用上の
+# 一貫性を優先し、本ソフト内での第30条運用定義として 60 秒を採用する。
 QSO_SESSION_GAP_SEC = 60.0
 
 # ============================================================
@@ -587,7 +584,7 @@ _reply_lock = threading.Lock()
 # コールサイン単位のビルド用ロック群（プリキャッシュと応答の競合を防ぐ）。
 _gen_lock = threading.Lock()
 # 🔴 V1.91: 送信フロー全体（生成→送出）を直列化するロック。
-# 起動アナウンス・ケロ応答・時報・ナイト・10分ID が同時に走ることによる
+# 起動アナウンス・カーチャンク応答・時報・ナイト・10分ID が同時に走ることによる
 # 二重送信／共有 TEMP_FINAL の上書き競合／UDPストリーム混線を防ぐ。
 # ロック順序は常に _tx_lock（外）→ _gen_lock（内）。プリキャッシュは
 # _gen_lock のみ取得（送信ではないため _tx_lock は取らない）。デッドロックなし。
@@ -605,154 +602,6 @@ RX_DURATION_MIN_SEC = None
 RX_DURATION_MAX_SEC = None
 ANNOUNCE_FREQ = None
 TIME_SIGNAL_MODE = None
-
-# ============================================================
-# 🔵 V2.0vv: 時報に続く「当地の天気」読み上げ（Open-Meteo）
-# ============================================================
-# WEATHER_HOURS に含まれる時刻の毎正時の時報（mode "time_signal"）に限り、
-# 「続いて当地の天気です。晴れ、気温は25度です」を時報テキストへ連結する。
-# 設計原則:
-#   (1) 時報の正確性を最優先する。取得は対象時刻の約2分前に事前実行
-#       （_weather_prefetch_loop）し、時報時はメモリ上のキャッシュを使うだけ。
-#       取得失敗・鮮度切れ（>WEATHER_FRESH_SEC）のときは天気だけ黙って省略し、
-#       時報は定刻どおり流す。時報経路でネットワークを待つことは決してない。
-#   (2) 追加依存なし。requests ではなく標準ライブラリ urllib を使用
-#       （JT版展開時に Pi Zero W へも追加インストール不要）。タイムアウト5秒。
-#   (3) 設定は bot_config.json の任意キー（未設定なら機能OFF＝従来動作）:
-#       WEATHER_ENABLED(bool) / WEATHER_LATITUDE / WEATHER_LONGITUDE(float)
-#       / WEATHER_HOURS(int配列, 0-23)。三位一体（bot_setup/app.py）の UI 対応は
-#       実波検証後に実施予定（キーを手書きすれば本版単体で動作する）。
-# API: https://api.open-meteo.com/v1/forecast （キー不要・無料）
-WEATHER_ENABLED = False
-WEATHER_LATITUDE = None
-WEATHER_LONGITUDE = None
-WEATHER_HOURS = []
-WEATHER_FRESH_SEC = 600        # キャッシュ有効期間（10分）
-WEATHER_FETCH_TIMEOUT_SEC = 5  # API タイムアウト
-WEATHER_PREFETCH_LEAD_SEC = 120  # 対象正時のこの秒数前から取得を試みる
-
-# WMO weather interpretation codes → 日本語（読み上げ用）。
-# 未知コードは None（天気語を省略し気温のみ読む）。捏造した既定語は使わない。
-_WMO_JA = {
-    0: "快晴", 1: "晴れ", 2: "くもり時々晴れ", 3: "くもり",
-    45: "霧", 48: "霧",
-    51: "霧雨", 53: "霧雨", 55: "霧雨", 56: "霧雨", 57: "霧雨",
-    61: "雨", 63: "雨", 65: "強い雨", 66: "雨", 67: "雨",
-    71: "雪", 73: "雪", 75: "大雪", 77: "雪",
-    80: "にわか雨", 81: "にわか雨", 82: "激しいにわか雨",
-    85: "にわか雪", 86: "にわか雪",
-    95: "雷雨", 96: "雷雨", 99: "雷雨",
-}
-
-# キャッシュ: {"text": 読み上げ文 or None, "at": monotonic秒, "target": "HH"}
-_weather_cache = {"text": None, "at": 0.0, "target": None,
-                  "wav_hour": None, "wav_at": 0.0}
-_weather_lock = threading.Lock()
-
-
-def _weather_fetch_text():
-    """Open-Meteo から現在の天気・気温を取得し、読み上げ文を返す。
-    失敗時は None（呼び出し側は黙って省略）。この関数は事前取得スレッド
-    専用であり、時報の送出経路からは決して呼ばない。"""
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={WEATHER_LATITUDE}&longitude={WEATHER_LONGITUDE}"
-        "&current=temperature_2m,weather_code&timezone=Asia%2FTokyo"
-    )
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "OpenCCVoice-bot"})
-        with urllib.request.urlopen(req, timeout=WEATHER_FETCH_TIMEOUT_SEC) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        cur = data["current"]
-        temp = round(float(cur["temperature_2m"]))
-        code = int(cur["weather_code"])
-    except Exception as e:
-        logger.warning(_fmt("!!", "Weather", "fetch", f"取得失敗（天気は省略）: {e}"))
-        return None
-    # 気温の読み: 負値は「氷点下N度」（「マイナス」より放送調で聞き取りやすい）
-    temp_text = f"氷点下{abs(temp)}度" if temp < 0 else f"{temp}度"
-    wx = _WMO_JA.get(code)
-    if wx:
-        return f"続いて当地の天気は、{wx}、気温は{temp_text}です"
-    logger.warning(_fmt("..", "Weather", "code", f"未知のWMOコード {code}（天気語を省略）"))
-    return f"続いて当地の気温は{temp_text}です"
-
-
-def _weather_take_prebuilt(hour):
-    """時報側から呼ぶ。この正時用に事前生成した完成WAVがあればパスを返す。
-    無い・古い(>15分)・ファイル消失なら None（呼び出し側は従来合成へ）。"""
-    if not WEATHER_ENABLED or hour not in WEATHER_HOURS:
-        return None
-    with _weather_lock:
-        okh = (_weather_cache["wav_hour"] == hour)
-        fresh = (time.monotonic() - _weather_cache["wav_at"]) <= 900
-    if okh and fresh and os.path.exists(WEATHER_PREBUILT_WAV):
-        return WEATHER_PREBUILT_WAV
-    return None
-
-
-def _weather_take_if_fresh(hour):
-    """時報側から呼ぶ。対象時のキャッシュが鮮度内なら文を返し、無ければ None。
-    ネットワークには一切触れない（メモリ参照のみ）。"""
-    if not WEATHER_ENABLED or hour not in WEATHER_HOURS:
-        return None
-    with _weather_lock:
-        fresh = (time.monotonic() - _weather_cache["at"]) <= WEATHER_FRESH_SEC
-        if _weather_cache["text"] and fresh:
-            return _weather_cache["text"]
-    logger.warning(_fmt("..", "Weather", f"{hour:02d}:00", "キャッシュ無効のため天気を省略（時報は定刻）"))
-    return None
-
-
-def _weather_prefetch_loop():
-    """対象正時の WEATHER_PREFETCH_LEAD_SEC 前になったら取得してキャッシュする
-    常駐スレッド。同一の対象時刻には成功するまで最大数回だけ再試行する。"""
-    logger.info(_fmt("..", "Weather", "prefetch", f"監視開始 hours={WEATHER_HOURS}"))
-    last_try_target = None
-    tries = 0
-    while True:
-        try:
-            now = datetime.now()
-            # 次に来る対象正時までの残り秒
-            best = None
-            for h in WEATHER_HOURS:
-                target = now.replace(hour=h, minute=0, second=0, microsecond=0)
-                if target <= now:
-                    target += timedelta(days=1)
-                remain = (target - now).total_seconds()
-                if best is None or remain < best[0]:
-                    best = (remain, target)
-            if best and best[0] <= WEATHER_PREFETCH_LEAD_SEC:
-                tkey = best[1].strftime("%d%H")
-                with _weather_lock:
-                    have = (_weather_cache["target"] == tkey and _weather_cache["text"])
-                if not have and (last_try_target != tkey or tries < 3):
-                    if last_try_target != tkey:
-                        last_try_target, tries = tkey, 0
-                    tries += 1
-                    text = _weather_fetch_text()
-                    if text:
-                        with _weather_lock:
-                            _weather_cache.update(text=text, at=time.monotonic(), target=tkey)
-                        logger.info(_fmt("..", "Weather", "prefetch",
-                                         f"取得OK for {best[1].strftime('%H:00')}: {text}"))
-                        # 🔵 V2.0vv: 正時に「再生するだけ」で済むよう、イントロ＋時報＋
-                        # 天気を 1 本の完成WAVとして事前生成しておく（合成は _gen_lock で
-                        # カーチャンク応答と直列化されるため衝突しない）。
-                        _h = best[1].hour
-                        _middle = f"{_h}時です。{text}"
-                        if _generate_hybrid(TIME_INTRO_WAV, _middle, None,
-                                            out_path=WEATHER_PREBUILT_WAV):
-                            with _weather_lock:
-                                _weather_cache.update(wav_hour=_h, wav_at=time.monotonic())
-                            logger.info(_fmt("..", "Weather", "prebuilt",
-                                             f"{_h:02d}:00 用の音声を事前生成OK"))
-                        else:
-                            logger.warning(_fmt("!!", "Weather", "prebuilt",
-                                                "事前生成失敗（正時はテキスト連結で合成にフォールバック）"))
-        except Exception as e:
-            logger.warning(_fmt("!!", "Weather", "prefetch", f"想定外エラー: {e}"))
-        time.sleep(20)
 TX_GAIN = None
 NIGHT_MODE_ENABLED = None
 NIGHT_START_HOUR = None
@@ -761,6 +610,94 @@ NIGHT_END_HOUR = None
 USE_CSTM_INTRO = None
 USE_CSTM_001 = None
 USE_CSTM_002 = None
+# 🔵 V2.04jtw: 天気の付与先（系統ごと）。任意キー・既定 True。
+# キーが無い既存設定では両方 True となり、V2.03jtw と同じ「全定時音声へ一様付与」
+# になる（後方互換）。親スイッチ WEATHER_ENABLED が False なら両方とも効かない。
+WEATHER_ON_TIME_SIGNAL = None
+WEATHER_ON_MESSAGE = None
+# 🔵 V2.03jtw: 天気読み上げは voice_make.py（vmp）へ分離した。
+# bot 本体は天気を一切知らない（取得・合成・地名は vmp の管轄）。bot は
+# スケジュール判定（何分に何を鳴らすか・ナイト抑制・001/002 交互・カスタム
+# 使用）だけを持つ「唯一の真実の源」として、各発火の約2分前に vmp を
+# ワンショット起動（丙方式）し、「本体音声＋当地天気」の1本もの WAV を
+# スロットへ事前生成させる。発火時はそのスロットを再生するだけ（合成ゼロ）。
+#
+# 設計の要点:
+#   - 天気の ON/OFF・座標は bot_config.json（WEATHER_ENABLED 等）。bot はこの
+#     フラグを「vmp に --weather を渡すか」の判断にだけ使い、取得も文生成もしない。
+#   - スロット競合は構造的に起きない: 定時発火は最短15分間隔で排他的、合成は
+#     数秒オーダー。生成が次発火に食い込むことは設計上ありえない。カーチャンク
+#     応答は bot 側で別系統生成のため vmp と競合しない。→ ロック不要・固定名でよい。
+#   - 割り切り: 発火時にスロットが無ければ鳴らさない（vmp 内で本体音声は死守
+#     されるため、鳴らないのは vmp 自体の起動/本体合成が失敗した稀な場合のみ）。
+#   - ナイトモード抑制・起動アナウンス・第30条 10分 ID・カーチャンク応答は
+#     従来どおり bot 側で処理（vmp 管轄外・天気は付かない）。
+VMP_PATH = f"{BOT_DIR}/bin/voice_make.py"
+VMP_PREFETCH_LEAD_SEC = 120      # 発火の何秒前に vmp を起動して事前生成するか（=2分前）
+VMP_SLOT_MAX_AGE_SEC = 900       # スロットWAVの鮮度上限（秒）。超えたら使わない（15分）
+# スロットは「発火の分」ごとの固定名（/dev/shm）。競合しないため PID は付けない
+# （bot 再起動後も同じ名を使うが、鮮度印 mtime で古いものは弾く）。
+def _slot_path(minute):
+    return f"/dev/shm/ocv_slot_{minute:02d}.wav"
+
+# vmp へ渡す「この発火は天気を付けるか」。
+# 🔵 V2.04jtw: V2.03jtw の一様仕様（WEATHER_ENABLED だけで全定時発火に付ける）から、
+# 系統ごとの付け分けへ拡張した。V2.03jtw のコメントで予告していた分岐点がここで、
+# 判断は bot 側のこの1箇所だけ。vmp は従来どおり --weather の有無を見るのみで、
+# 改修不要（V1.01vmp のまま使える）。
+#   kind="time_signal" / "half_hour" → 時報系   … WEATHER_ON_TIME_SIGNAL
+#   kind="message"                   → メッセージ系 … WEATHER_ON_MESSAGE
+# 親スイッチ WEATHER_ENABLED が false なら kind によらず付けない。
+# 未知の kind には付けない（安全側。将来 kind を増やしたらここも必ず更新する）。
+def _weather_wanted(kind):
+    if not WEATHER_ENABLED:
+        return False
+    if kind in ("time_signal", "half_hour"):
+        return bool(WEATHER_ON_TIME_SIGNAL)
+    if kind == "message":
+        return bool(WEATHER_ON_MESSAGE)
+    logger.warning(_fmt("!!", "weather", kind, "未知の kind のため天気を付けない"))
+    return False
+
+def _vmp_spawn(kind, minute, hour=None, base=None):
+    """vmp をワンショット起動して、minute のスロットに本体音声(+天気)を作らせる。
+    kind: "time_signal" / "half_hour" / "message"
+    hour: time_signal/half_hour で必須（読み上げる時）
+    base: message で必須（本体WAVパス: 001.wav / cstm_001.wav 等）
+    非ブロッキング（Popen で投げっぱなし）。2分前なので発火まで十分間に合う。
+    stderr は bot の stderr に流れ、journal に vmp ログとして残る。"""
+    slot = _slot_path(minute)
+    cmd = [sys.executable, VMP_PATH, "--kind", kind, "--slot", slot]
+    if hour is not None:
+        cmd += ["--hour", str(hour)]
+    if base is not None:
+        cmd += ["--base", base]
+    # 🔵 V2.04jtw: 天気を付けるかは kind（発火の系統）で決まる。
+    # ログとコマンドで判定がズレないよう、1回だけ評価して使い回す。
+    _wx = _weather_wanted(kind)
+    if _wx:
+        cmd.append("--weather")
+    try:
+        subprocess.Popen(cmd)
+        logger.info(_fmt("..", "vmp spawn", f":{minute:02d}",
+                         f"{kind}"
+                         + (f" hour={hour}" if hour is not None else "")
+                         + (f" base={os.path.basename(base)}" if base else "")
+                         + (" +weather" if _wx else "")))
+    except Exception as e:
+        logger.error(_fmt("!!", "vmp spawn", f":{minute:02d}", str(e)))
+
+def _slot_ready(minute):
+    """発火時、minute のスロットが有効（存在＋鮮度内）なら パスを返す。
+    無効なら None（bot は割り切りで鳴らさない）。使用後は呼び出し側が破棄。"""
+    slot = _slot_path(minute)
+    try:
+        if os.path.exists(slot) and (time.time() - os.path.getmtime(slot)) <= VMP_SLOT_MAX_AGE_SEC:
+            return slot
+    except OSError:
+        pass
+    return None
+
 
 # コールサイン → カナ変換テーブル
 CHAR_TO_KANA = {
@@ -814,7 +751,8 @@ def _load_config():
     global RX_DURATION_MIN_SEC, RX_DURATION_MAX_SEC, ANNOUNCE_FREQ, TIME_SIGNAL_MODE
     global TX_GAIN, NIGHT_MODE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR
     global USE_CSTM_INTRO, USE_CSTM_001, USE_CSTM_002
-    global WEATHER_ENABLED, WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_HOURS
+    global WEATHER_ENABLED, WEATHER_LATITUDE, WEATHER_LONGITUDE
+    global WEATHER_ON_TIME_SIGNAL, WEATHER_ON_MESSAGE
 
     # 1) 存在確認
     if not os.path.exists(CONFIG_PATH):
@@ -848,15 +786,6 @@ def _load_config():
             ts_mode = 1
             logger.info(_fmt("..", "Config", "TIME_SIGNAL_MODE",
                              "未設定のため既定値 1（毎正時の時報）を使用"))
-        # 🔵 V2.0vv: 天気読み上げ（任意キー群。未設定なら機能OFF＝従来動作）
-        w_enabled = bool(cfg.get("WEATHER_ENABLED", False))
-        w_lat = cfg.get("WEATHER_LATITUDE", None)
-        w_lon = cfg.get("WEATHER_LONGITUDE", None)
-        w_hours = cfg.get("WEATHER_HOURS", [12])
-        if w_enabled:
-            w_lat = float(w_lat)
-            w_lon = float(w_lon)
-            w_hours = [int(h) for h in w_hours]
         night_enabled = cfg["NIGHT_MODE_ENABLED"]
         n1 = int(cfg["NIGHT_START_HOUR"])
         n2 = int(cfg["NIGHT_END_HOUR"])
@@ -872,14 +801,6 @@ def _load_config():
         _fatal_config(f"RX_DURATION_MIN_SEC < RX_DURATION_MAX_SEC である必要があります（現在: {rx_min} / {rx_max}）")
     if ts_mode not in (0, 1, 2):
         _fatal_config(f"TIME_SIGNAL_MODE は 0 / 1 / 2 のいずれかです（現在: {ts_mode}）")
-    # 🔵 V2.0vv: 天気設定の検証（有効時のみ厳格に。無効なら検証しない）
-    if w_enabled:
-        if not (-90.0 <= w_lat <= 90.0) or not (-180.0 <= w_lon <= 180.0):
-            _fatal_config(f"WEATHER_LATITUDE/LONGITUDE が不正です（{w_lat}, {w_lon}）")
-        if not w_hours or any(not (0 <= h <= 23) for h in w_hours):
-            _fatal_config(f"WEATHER_HOURS は 0〜23 の整数の配列です（現在: {w_hours}）")
-        if ts_mode == 0:
-            _fatal_config("WEATHER_ENABLED=true には TIME_SIGNAL_MODE 1 か 2 が必要です（時報に連結するため）")
     # ANNOUNCE_FREQ の有効範囲は TIME_SIGNAL_MODE に依存する
     #   mode 0: 0/1/2/3/4   mode 1: 0/1/2/3   mode 2: 0/2
     _valid_freq = {0: (0, 1, 2, 3, 4), 1: (0, 1, 2, 3), 2: (0, 2)}[ts_mode]
@@ -918,28 +839,65 @@ def _load_config():
     # 🔵 V1.73: カスタム音声フラグ（任意キー / 既定 False）。
     # intro / 001 / 002 を個別に「カスタムを使う(True) / 標準(False)」で指定する。
     # bool 以外（未設定含む不正値）は安全側に False（標準）として扱い、起動は止めない。
-    def _as_bool(key):
-        v = cfg.get(key, False)
+    # 🔵 V2.04jtw: 既定値を引数化（従来の呼び出しは default=False のまま無影響）。
+    # WEATHER_ON_* は「キーが無ければ True」＝V2.03jtw と同じ一様付与にするために
+    # default=True で呼ぶ。
+    def _as_bool(key, default=False):
+        v = cfg.get(key, default)
         if isinstance(v, bool):
             return v
         logger.warning(_fmt("!!", key, str(v),
-                            "bool でないため False（標準音声）として扱う"))
-        return False
+                            f"bool でないため {default} として扱う"))
+        return default
     use_cstm_intro = _as_bool("USE_CSTM_INTRO")
     use_cstm_001   = _as_bool("USE_CSTM_001")
     use_cstm_002   = _as_bool("USE_CSTM_002")
+
+    # 🔵 V2.00jtw: 天気読み上げ（任意キー / 既定 OFF＝従来動作）。
+    # ON のときだけ座標を厳格検証する（誤った土地の天気を放送しないため fatal）。
+    # TIME_SIGNAL_MODE=0（時報なし）との併用は「天気を読む時報が存在しない」矛盾
+    # 設定のため起動拒否する（VV版 V2.0vv と同じ仕様）。
+    # 🔵 V2.03jtw: WEATHER_ENABLED は「vmp に --weather を渡すか」のフラグ。
+    # 取得・合成・地名は vmp が担うが、座標の妥当性は bot 側でも検証しておく
+    # （誤った土地の天気を放送しないための早期ガード）。
+    # WEATHER_HOURS（時刻絞り）は一様仕様化に伴い廃止した。
+    #
+    # 🔵 V2.04jtw: 付与先（WEATHER_ON_*）を導入。既定 True のため、キーの無い
+    # 既存設定は両方 True＝V2.03jtw と同じ一様付与になる（後方互換）。
+    # 併用不可の判定も「実際に天気を付ける先が1つも無いか」へ一般化した。
+    #   時報系   : WEATHER_ON_TIME_SIGNAL かつ ts_mode >= 1
+    #   メッセージ系: WEATHER_ON_MESSAGE     かつ freq > 0
+    # 両方 false なら、V2.03jtw の「mode0 かつ freq0」と同じく起動を拒否する
+    # （この一般化は旧条件を包含する）。
+    weather_enabled = _as_bool("WEATHER_ENABLED")
+    weather_on_ts = _as_bool("WEATHER_ON_TIME_SIGNAL", True)
+    weather_on_msg = _as_bool("WEATHER_ON_MESSAGE", True)
+    weather_lat = None
+    weather_lon = None
+    if weather_enabled:
+        _tgt_ts = weather_on_ts and ts_mode >= 1
+        _tgt_msg = weather_on_msg and freq > 0
+        if not (_tgt_ts or _tgt_msg):
+            _fatal_config(
+                "WEATHER_ENABLED=true ですが、天気を付ける音声が1つもありません"
+                f"（時報系: 付与={weather_on_ts} / TIME_SIGNAL_MODE={ts_mode}、"
+                f"メッセージ系: 付与={weather_on_msg} / ANNOUNCE_FREQ={freq}）。"
+                "付与先を有効にするか、時刻案内モード・定時メッセージを有効にしてください")
+        try:
+            weather_lat = float(cfg["WEATHER_LATITUDE"])
+            weather_lon = float(cfg["WEATHER_LONGITUDE"])
+        except (KeyError, ValueError, TypeError):
+            _fatal_config("WEATHER_ENABLED=true のとき WEATHER_LATITUDE / WEATHER_LONGITUDE "
+                          "を数値で指定してください（例: 35.2167 / 137.0333）")
+        if not (-90.0 <= weather_lat <= 90.0) or not (-180.0 <= weather_lon <= 180.0):
+            _fatal_config(f"WEATHER_LATITUDE / WEATHER_LONGITUDE が範囲外です "
+                          f"（現在: {weather_lat} / {weather_lon}）")
 
     # 5) 反映
     RX_DURATION_MIN_SEC = rx_min
     RX_DURATION_MAX_SEC = rx_max
     ANNOUNCE_FREQ = freq
     TIME_SIGNAL_MODE = ts_mode
-    # 🔵 V2.0vv: 天気設定を反映（無効時は既定のOFF状態のまま）
-    WEATHER_ENABLED = w_enabled
-    if w_enabled:
-        WEATHER_LATITUDE = w_lat
-        WEATHER_LONGITUDE = w_lon
-        WEATHER_HOURS = sorted(set(w_hours))
     TX_GAIN = tx_gain
     NIGHT_MODE_ENABLED = night_enabled
     NIGHT_START_HOUR = n1
@@ -947,6 +905,11 @@ def _load_config():
     USE_CSTM_INTRO = use_cstm_intro
     USE_CSTM_001 = use_cstm_001
     USE_CSTM_002 = use_cstm_002
+    WEATHER_ENABLED = weather_enabled
+    WEATHER_ON_TIME_SIGNAL = weather_on_ts
+    WEATHER_ON_MESSAGE = weather_on_msg
+    WEATHER_LATITUDE = weather_lat
+    WEATHER_LONGITUDE = weather_lon
 
     logger.info(_fmt("..", "Config", "loaded", CONFIG_PATH))
 
@@ -1011,6 +974,22 @@ def _lead_block(i: int, lead_total: int) -> bytes:
         return _TONE_FADES[min(i - fade_start, len(_TONE_FADES) - 1)]
     return _TONE_BLOCK
 
+
+def _tail_block(i: int, tail_total: int) -> bytes:
+    """🔴 V2.07jtw: 終端リード音。後パディング末尾領域の i 番目（0 起点）のブロック。
+    _lead_block の鏡像で、先頭 len(_FADE_STEPS) 個はフェードイン（小→大）、
+    それ以降（tail_total > 5 のとき）は定常トーン。tail_total=5（既定）では
+    全ブロックがフェードインになり、定常トーン（振幅 150）は1ブロックも出ない
+    ——NOISE_LEAD_PACKETS=5 と同じ性質。100Hz は 20ms ブロックに2周期なので
+    無音→フェードの連結でも位相は連続する。"""
+    if not _TONE_BLOCK:
+        _init_noise_blocks()
+    ramp = len(_FADE_STEPS)
+    if i < ramp:
+        # _TONE_FADES は減衰順（0.75→0.08）なので逆から使い、小→大の立ち上がりにする
+        return _TONE_FADES[ramp - 1 - i]
+    return _TONE_BLOCK
+
 def _noise_block() -> bytes:
     """互換用: リード音の基本ブロックを返す。無効時はゼロ。"""
     if not NOISE_FILL_ENABLED:
@@ -1022,13 +1001,7 @@ def _noise_block() -> bytes:
 _ZERO_320 = b"\x00" * 320
 
 def _fill_if_silent(data: bytes) -> bytes:
-    """PCM ブロックが完全ゼロなら微小ノイズに置き換える（それ以外はそのまま）。
-
-    🔵 V1.98vv: 【未使用】V1.86 で送出ループからの呼び出しが外され、以降どこからも
-    呼ばれていない（削除せず残しているのは経緯の保存のため）。仮に呼び戻しても
-    期待どおりには効かない: 判定が data == _ZERO_320 の完全一致のため、sox の
-    ディザ等で ±1 程度の値が乗った「聞こえない無音」は非ゼロ扱いになり素通りする。
-    使うなら閾値判定（RMS 等）に作り替える必要がある。"""
+    """PCM ブロックが完全ゼロなら微小ノイズに置き換える（それ以外はそのまま）。"""
     if NOISE_FILL_ENABLED and data == _ZERO_320:
         return _noise_block()
     return data
@@ -1060,19 +1033,26 @@ def _send_usrp_metadata(sock, seq: int) -> int:
     戻り値は次に使う seq。"""
     payload = _usrp_set_info_payload(MY_CALLSIGN, MY_DMR_ID)
     header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 0, 0, (2 << 24), 0, 0)
-    sock.sendto(header + payload, (UDP_IP, UDP_PORT))
+    _usrp_sendto(sock, header + payload)
     return seq + 1
 
 
-def send_usrp_wav_with_padding(wav_path, pre_packets=None):
+def _usrp_sendto(sock, packet):
+    """🔵 V2.06jtw: USRP パケットを本番(UDP_PORT)へ送り、有効なら Web モニタ
+    (WEB_MIRROR_PORT)へも複製する。ミラー送信の失敗は本番送出に影響させない
+    （握りつぶす）。送出専用で、受信・制御は一切しない。"""
+    sock.sendto(packet, (UDP_IP, UDP_PORT))
+    if WEB_MIRROR_ENABLE:
+        try:
+            sock.sendto(packet, (WEB_MIRROR_IP, WEB_MIRROR_PORT))
+        except OSError:
+            pass
+
+
+def send_usrp_wav_with_padding(wav_path, pre_packets=PRE_POST_PADDING_PACKETS):
     """WAV を USRP プロトコルで送信（前後パディング付き、絶対時刻同期）。
-    🔵 V1.98vv: docstring 修正。パディングは 1.5 秒固定ではなく
-    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。
-    🔵 V2.01vv: pre_packets で前パディングのみ呼び出し別に延長できる
-    （既定 None = PRE_POST_PADDING_PACKETS。起動アナウンスが
-    STARTUP_PRE_PADDING_PACKETS を渡す。後パディングは常に共通値）。"""
-    if pre_packets is None:
-        pre_packets = PRE_POST_PADDING_PACKETS
+    🔵 V2.05jtw: docstring 修正。パディングは 1.5 秒固定ではなく
+    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。"""
     sock = None
     wf = None
     seq = 0
@@ -1098,7 +1078,7 @@ def send_usrp_wav_with_padding(wav_path, pre_packets=None):
                 payload = _lead_block(_i, NOISE_LEAD_PACKETS)
             else:
                 payload = b"\x00" * 320
-            sock.sendto(header + payload, (UDP_IP, UDP_PORT))
+            _usrp_sendto(sock, header + payload)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
@@ -1112,16 +1092,25 @@ def send_usrp_wav_with_padding(wav_path, pre_packets=None):
             # 🔵 V1.86: WAV 内の無音は置換しない（ゲート開放後の無音は正常に転送される
             # ことが実測で確認済み。真の無音のままにして耳障りなノイズを排除）
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
-            sock.sendto(header + data, (UDP_IP, UDP_PORT))
+            _usrp_sendto(sock, header + data)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
 
-        for _ in range(PRE_POST_PADDING_PACKETS):
+        # 🔵 V1.86: 後パディングはゼロ（真の無音）。ゲートは既に開いており
+        # 無音でも転送されるため、終端側のノイズ音を排除できる。
+        # 🔴 V2.07jtw: ただし末尾 NOISE_TAIL_PACKETS 個だけは 100Hz 微小トーンの
+        # フェードイン（終端リード音）にして、完全無音のまま閉じさせない。
+        # 切れ際の「ブブ／バリバリ」（AB エンコード終端の残骸混入仮説）への防御。
+        # NOISE_TAIL_PACKETS=0 で V2.06jtw と同一（全ゼロ）に戻る。
+        _tail_start = PRE_POST_PADDING_PACKETS - min(NOISE_TAIL_PACKETS, PRE_POST_PADDING_PACKETS)
+        for _i in range(PRE_POST_PADDING_PACKETS):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
-            # 🔵 V1.86: 後パディングはゼロ（真の無音）に戻す。ゲートは既に開いており
-            # 無音でも転送されるため、終端側のノイズ音を排除できる。
-            sock.sendto(header + b"\x00" * 320, (UDP_IP, UDP_PORT))
+            if NOISE_FILL_ENABLED and NOISE_TAIL_PACKETS > 0 and _i >= _tail_start:
+                payload = _tail_block(_i - _tail_start, NOISE_TAIL_PACKETS)
+            else:
+                payload = b"\x00" * 320
+            _usrp_sendto(sock, header + payload)
             seq += 1
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
@@ -1140,7 +1129,7 @@ def send_usrp_wav_with_padding(wav_path, pre_packets=None):
             try:
                 for _ in range(max(1, USRP_EOT_REPEAT)):
                     header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 0, 0, 0, 0, 0)
-                    sock.sendto(header + b"\x00" * 320, (UDP_IP, UDP_PORT))
+                    _usrp_sendto(sock, header + b"\x00" * 320)
                     seq += 1
                     time.sleep(PACKET_INTERVAL)
             except OSError:
@@ -1148,6 +1137,28 @@ def send_usrp_wav_with_padding(wav_path, pre_packets=None):
             sock.close()
         if wf:
             wf.close()
+
+
+# ============================================================
+# 🔵 V2.03jtw: スロット再生（送信時 TX_GAIN 制御）
+# ============================================================
+# vmp が作ったスロット WAV（素の音量）を送出する。TX_GAIN は「送信の属性」と
+# して、生成側（vmp）ではなく送出の瞬間に bot がかける。こうすると (1) 音量変更が
+# スロット作り直しなしで即反映され、(2) カーチャンク応答（bot 生成）と定時系
+# （vmp 生成）で音量制御のかかり方が「送出時に一元」で揃う。
+def _send_with_gain(wav_path):
+    """wav_path を送出する。TX_GAIN が等倍以外なら vol をかけた一時ファイルを
+    作ってから送る（fixed_file の従来手法と同一）。gain 適用に失敗しても素の
+    ファイルで送出は続ける（無音化・送出停止を避ける）。"""
+    play_path = wav_path
+    if TX_GAIN is not None and TX_GAIN != 1.0:
+        try:
+            subprocess.run(["sox", wav_path, TEMP_FINAL, "vol", f"{TX_GAIN}"], check=True)
+            play_path = TEMP_FINAL
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error(_fmt("!!", "Gain failed", os.path.basename(wav_path), str(e)))
+            play_path = wav_path
+    send_usrp_wav_with_padding(play_path)
 
 
 # ============================================================
@@ -1200,74 +1211,100 @@ def _get_trigger_minutes():
     return table.get(ANNOUNCE_FREQ, [])
 
 
+def _all_trigger_minutes():
+    """この設定で音声が出る全ての「分」を、種別つきで返す。
+    返り値: dict {minute: (kind, hourly)} 。kind は "time_signal"/"half_hour"/
+    "message"。message は 001/002 交互のため、発火順を保つよう昇順で扱う。
+    - time_signal(:00) と half_hour(:30) は TIME_SIGNAL_MODE による。
+    - message の分は _get_trigger_minutes()（時刻案内が占有する分は除かれている）。
+    """
+    out = {}
+    if TIME_SIGNAL_MODE >= 1:
+        out[0] = ("time_signal", None)
+    if TIME_SIGNAL_MODE == 2:
+        out[30] = ("half_hour", None)
+    for mm in _get_trigger_minutes():
+        out[mm] = ("message", None)
+    return out
+
+
+def _msg_base_for(msg_index):
+    """001/002 交互の本体WAVパスを返す（cstm 解決込み）。号令時に bot が決めて
+    vmp に渡す（cstm 判定は bot の一元管理・vmp は知らない）。"""
+    idx = msg_index % len(MSG_FILES)
+    use_cstm = USE_CSTM_001 if idx == 0 else USE_CSTM_002
+    return _resolve_wav(use_cstm, CSTM_MSG_FILES[idx], MSG_FILES[idx],
+                        os.path.basename(MSG_FILES[idx]))
+
+
+def _night_suppressed_for(kind, hour):
+    """種別ごとのナイト抑制判定。time_signal は N1 時のみ出す（突入告知）。
+    half_hour / message は N1 時台から抑制。"""
+    if kind == "time_signal":
+        return _is_night_suppressed(hour)
+    return _is_night_suppressed_message(hour)
+
+
 def _announcement_scheduler():
-    fired_signal_key = None       # 直近に発火した時刻案内の境界キー (date, hour, minute)
-    fired_message_minute = None
-    msg_index = 0
+    """🔵 V2.03jtw: 各発火の「約2分前」に vmp を号令してスロットを事前生成させ、
+    発火時刻の直前（lead）にスロットを再生する2フェーズ構成。
+
+    - スケジュール判定（何分に何を鳴らすか・ナイト抑制・001/002 交互・cstm）は
+      すべてこの scheduler が持つ「唯一の真実の源」。vmp はスケジュールを知らない。
+    - 号令フェーズ: 各発火分の VMP_PREFETCH_LEAD_SEC 秒前に一度だけ vmp を起動。
+      抑制対象の分は号令しない（＝スロットが作られず、発火時も鳴らない）。
+    - 発火フェーズ: 発火分の TIME_SIGNAL_LEAD_SEC 秒前に、スロットを再生。
+    """
+    spawned_key = None        # 直近に号令した (date, hour, minute)
+    fired_key = None          # 直近に発火した (date, hour, minute)
+    msg_index = 0             # 001/002 交互カウンタ（message を号令するたびに進める）
 
     logger.info(_fmt("..", "Scheduler", "started"))
+    triggers = _all_trigger_minutes()
+    logger.info(_fmt("..", "Scheduler", "triggers",
+                     "分=" + ",".join(f"{mm:02d}({k})" for mm, (k, _) in sorted(triggers.items()))))
 
     while not should_exit:
         now = datetime.now()
 
-        # ---- 時刻案内（time_signal :00 / half_hour_signal :30）----
-        # lead 秒前に発火。mode1=:00 のみ、mode2=:00 と :30。
-        if TIME_SIGNAL_MODE >= 1:
-            boundary_minutes = [0] if TIME_SIGNAL_MODE == 1 else [0, 30]
-            for bmin in boundary_minutes:
-                cand = now.replace(minute=bmin, second=0, microsecond=0)
-                if cand <= now:
-                    cand += timedelta(hours=1)
-                secs = (cand - now).total_seconds()
-                if 0 < secs <= TIME_SIGNAL_LEAD_SEC:
-                    key = (cand.date(), cand.hour, bmin)
-                    if fired_signal_key != key:
-                        fired_signal_key = key
-                        target_hour = cand.hour
-                        if bmin == 0:
-                            # 時報: N1 時は送出（突入アナウンスのため）
-                            if _is_night_suppressed(target_hour):
-                                logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:00",
-                                                 "time_signal suppressed (night mode)"))
-                            else:
-                                logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:00",
-                                                 f"time_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
-                                _start_worker("time_signal", target_hour)
-                        else:
-                            # 30分案内: 定時メッセージと同じ抑制窓（N1時〜N2時）を使う。
-                            # → N1:00 の突入アナウンス後に N1:30 が鳴らないようにするため。
-                            if _is_night_suppressed_message(target_hour):
-                                logger.info(_fmt("..", "NightSkip", f"{target_hour:02d}:30",
-                                                 "half_hour_signal suppressed (night mode)"))
-                            else:
-                                logger.info(_fmt("..", "Trigger", f"{target_hour:02d}:30",
-                                                 f"half_hour_signal (lead {TIME_SIGNAL_LEAD_SEC}s)"))
-                                _start_worker("half_hour_signal", target_hour)
+        for minute, (kind, _) in triggers.items():
+            cand = now.replace(minute=minute, second=0, microsecond=0)
+            if cand <= now:
+                cand += timedelta(hours=1)
+            secs = (cand - now).total_seconds()
+            hour = cand.hour
+            key = (cand.date(), cand.hour, minute)
 
-        # ---- 定時メッセージ（001/002 交互）----
-        # トリガー分ちょうどに発火（リード無し）。:00 は TIME_SIGNAL_MODE==0 のときのみ
-        # _get_trigger_minutes() に含まれる（mode1/2 では時刻案内が占有）。
-        m = now.minute
-        if m in _get_trigger_minutes():
-            current_minute_key = (now.hour, m)
-            if fired_message_minute != current_minute_key:
-                fired_message_minute = current_minute_key
-                if _is_night_suppressed_message(now.hour):
-                    logger.info(_fmt("..", "NightSkip",
-                                     f"{now.hour:02d}:{m:02d}",
-                                     "scheduled_message suppressed (night mode)"))
+            # ---- 号令フェーズ（約2分前に1回）----
+            # lead より前、かつ prefetch 窓に入ったら vmp を起動。
+            if (TIME_SIGNAL_LEAD_SEC < secs <= VMP_PREFETCH_LEAD_SEC
+                    and spawned_key != key):
+                spawned_key = key
+                if _night_suppressed_for(kind, hour):
+                    logger.info(_fmt("..", "NightSkip", f"{hour:02d}:{minute:02d}",
+                                     f"{kind} suppressed (no vmp spawn)"))
                 else:
-                    # 🔵 V1.73: 001/002 を個別に cstm 解決（欠落時は標準へフォールバック）。
-                    _idx = msg_index % len(MSG_FILES)
-                    _use_cstm = USE_CSTM_001 if _idx == 0 else USE_CSTM_002
-                    target = _resolve_wav(
-                        _use_cstm, CSTM_MSG_FILES[_idx], MSG_FILES[_idx],
-                        os.path.basename(MSG_FILES[_idx]))
-                    logger.info(_fmt("..", "Trigger",
-                                     os.path.basename(target),
-                                     "scheduled_message"))
-                    _start_worker("fixed_file", target)
-                    msg_index += 1
+                    if kind == "message":
+                        base = _msg_base_for(msg_index)
+                        _vmp_spawn("message", minute, base=base)
+                        msg_index += 1
+                    elif kind == "time_signal":
+                        _vmp_spawn("time_signal", minute, hour=hour)
+                    else:  # half_hour
+                        _vmp_spawn("half_hour", minute, hour=hour)
+
+            # ---- 発火フェーズ（lead 秒前に1回）----
+            if 0 < secs <= TIME_SIGNAL_LEAD_SEC and fired_key != key:
+                fired_key = key
+                if _night_suppressed_for(kind, hour):
+                    # 号令もしていないので何もしない（ログは号令フェーズで既出）
+                    pass
+                else:
+                    label = f"{hour:02d}:{minute:02d}"
+                    logger.info(_fmt("..", "Trigger", label, f"{kind} (lead {TIME_SIGNAL_LEAD_SEC}s)"))
+                    # 発火ワーカーには「分」を渡してスロットを再生させる。
+                    _start_worker(kind if kind != "half_hour" else "half_hour_signal",
+                                  minute, extra=label)
 
         time.sleep(1)
 
@@ -1329,7 +1366,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
 
     # 🔴 V1.90: 他局の受信が終わった直後に自局アイデンティティを再主張。
     # AB の「最後に聞いた局」状態（JJ2ZAR 等）を JJ2YYK に上書きし、
-    # 応答の Talker Alias がケロした局のコールサインを引きずるのを防ぐ。
+    # 応答の Talker Alias がカーチャンクした局のコールサインを引きずるのを防ぐ。
     if cs != MY_CALLSIGN:
         _assert_identity()
 
@@ -1349,8 +1386,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
         logger.info(f"process:suppress start ({SUPPRESS_DURATION_SEC:.1f}s)　{cs}")
         # 🔴 V1.74: 無線局運用規則 第30条対応。カーチャンクではなく Normal QSO
         # （長時間送信）のみをセッション判定・10分カウントの対象とする。
-        # 🔴 V1.95a: dur（今回送信の長さ）も渡し、無音ギャップ判定を送信の
-        # 「開始」時刻基準に補正する（_handle_qso_session 内のコメント参照）。
+        # 🔴 V1.93: 今回の送信時間 dur を渡し、ギャップ判定を純粋な無音時間で行う。
         _handle_qso_session(now, dur)
     else:
         logger.info(f"receive:Too short, ignored{tag}: {cs} ({dur:.1f}s, min={RX_DURATION_MIN_SEC}s)")
@@ -1362,6 +1398,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
 def _handle_qso_session(now, dur=0.0):
     """Normal QSO（長時間送信）が検知されるたびに呼ばれる。
 
+    前回の Normal QSO 送信の「終了」から今回の送信の「開始」までの純粋な
     無通信ギャップが QSO_SESSION_GAP_SEC（60秒）以内で連続している間は
     同一の「長時間通信セッション」とみなし、セッション開始からの経過時間を
     積算する。経過時間が QSO_ID_INTERVAL_SEC（10分）の倍数を新たに跨ぐたびに、
@@ -1369,12 +1406,13 @@ def _handle_qso_session(now, dur=0.0):
     FIXED_INTRO_WAV を強制送信して自局を識別する。セッションが続く限り
     10分おきに繰り返す（無線局運用規則 第30条）。
 
-    🔴 V1.95a: ギャップ判定は「前回送信の終了」から「今回送信の開始」までの
-    純粋な無通信時間で行う。now は今回送信の終了時刻なので、dur を引いて
-    開始時刻を近似する（tx_start = now - dur）。旧実装は now（終了時刻）を
-    そのまま前回終了時刻と比較していたため、実際の無音が短くても今回の通話が
-    長いとギャップが「無音 + 通話時間」として誤って大きく計算され、継続中の
-    セッションが不当にリセットされる不具合があった。
+    🔴 V1.93: ギャップ判定バグ修正。now は今回送信の「終了」時刻なので、
+    従来の (now - qso_session_last_end) は「無音＋今回の通話時間」となり、
+    無音が短くても通話が長いだけで誤ってセッションがリセットされていた。
+    今回の送信時間 dur を受け取り、tx_start = now - dur（今回送信の開始時刻の
+    近似）を求め、(tx_start - qso_session_last_end) で純粋な無音時間を評価する。
+    セッション開始時刻も tx_start に合わせ、最初の送信の通話時間も経過時間に
+    含める（経過時間の起点をギャップ判定の起点と一致させる）。
 
     識別信号の内容を法的に保証するため、USE_CSTM_INTRO の設定に関わらず
     必ず正規の FIXED_INTRO_WAV を送信する（カスタム音声には差し替えない）。
@@ -1386,14 +1424,15 @@ def _handle_qso_session(now, dur=0.0):
     """
     global qso_session_start, qso_session_last_end, qso_session_id_count
 
-    # 🔴 V1.95a: 今回送信の開始時刻（近似）。ギャップは「前回終了 → 今回開始」。
+    # 🔴 V1.93: 今回送信の開始時刻の近似（now は終了時刻）。
     tx_start = now - dur
 
     if qso_session_last_end is None or (tx_start - qso_session_last_end) > QSO_SESSION_GAP_SEC:
-        # 前回の Normal QSO 終了から今回の送信開始までが QSO_SESSION_GAP_SEC 超
-        # （無通信で区切りがついた）、または今回が初回 → 新しいセッションとして
-        # 0 から開始。
-        qso_session_start = now
+        # 前回の Normal QSO の終了から今回の送信開始までの純粋な無音が
+        # QSO_SESSION_GAP_SEC 超（無通信で区切りがついた）、または今回が初回 →
+        # 新しいセッションとして 0 から開始。セッション開始は今回送信の開始時刻に
+        # 合わせ、最初の送信の通話時間も経過時間に含める。
+        qso_session_start = tx_start
         qso_session_id_count = 0
         logger.info(_fmt("..", "QSO session", "start",
                          f"long-transmission session began (10-min ID every {QSO_ID_INTERVAL_SEC/60:.0f}min)"))
@@ -1453,8 +1492,7 @@ NIGHT_ANN_GAP_SEC = 1.0
 def _send_night_mode_announcement():
     started_at = time.monotonic()
     resume_hour = (NIGHT_END_HOUR + 1) % 24
-    # 🔵 V2.01vv: 「ただいまより」は VOICEVOX のイントネーションが不自然なため
-    # 漢字表記「只今より」に変更（読みが安定する）。
+    # 🔵 VVW: 「ただいまより」は VOICEVOX のイントネーションが不安定なため漢字表記。
     middle_text = f"只今より、このデジピーターは、みょうちょう{resume_hour}時まで、ナイトモードに入ります。"
     label = f"N1={NIGHT_START_HOUR:02d}"
 
@@ -1476,8 +1514,8 @@ def _send_night_mode_announcement():
 # ============================================================
 # 置き場所は /dev/shm（RAM）。プロセス再起動で自動クリアされ、設定は起動時のみ
 # 読むため、キャッシュは常に現在の設定と整合する。さらに intro（cstm 差し替え
-# 含む）/ outro / GAP / TX_GAIN / VOICEVOX 話者・モデル / スキーマ版のシグネチャを
-# .sig に併存させ、変化したら自動再生成する（cstm 音声の無再起動差し替えにも追従）。
+# 含む）/ outro / GAP / TX_GAIN / 音声モデル / スキーマ版のシグネチャを .sig に
+# 併存させ、変化したら自動再生成する（cstm 音声の無再起動差し替えにも追従）。
 
 def _safe_remove(path):
     try:
@@ -1507,10 +1545,7 @@ def _mtime(path):
 def _reply_signature():
     """キャッシュ整合性の署名。cs 非依存（intro/outro/ゲイン等のみに依存）。
     解決後 intro の実体（cstm 差し替え含む）・各 WAV の mtime・GAP・TX_GAIN・
-    頭無音・VOICEVOX 話者/モデル・スキーマ版が変われば署名が変わり、再生成が走る。
-    🔴 V1.95a: 旧 Open JTalk の VOICE_PATH に代えて VOICEVOX_STYLE_ID と
-    VOICEVOX_VVM_PATH（+mtime）を含める。話者やモデルの変更で自動的に
-    キャッシュが無効化される。"""
+    頭無音・音声モデル・スキーマ版が変われば署名が変わり、再生成が走る。"""
     intro = _resolve_wav(USE_CSTM_INTRO, CSTM_INTRO_WAV, FIXED_INTRO_WAV, "intro")
     return "|".join([
         CACHE_SCHEMA,
@@ -1553,11 +1588,11 @@ def _ensure_cached(cs):
                               head_silence=PRE_AUDIO_SILENCE_SEC)
         return (TEMP_FINAL, False) if ok else (None, False)
 
-    # 🔴 V1.99vv: CACHE_DIR の存在を生成直前に毎回確認・再作成する（自己修復）。
+    # 🔴 V1.95: CACHE_DIR の存在を生成直前に毎回確認・再作成する（自己修復）。
     # systemd-logind の RemoveIPC=yes（Debian 既定）により、実行ユーザーの最後の
     # ログインセッションが閉じた時点で /dev/shm 配下の当ユーザー所有物（POSIX 共有
-    # メモリ扱い）が一掃される事象が JT版実機で発生した（2026-07-20, ocv-uhf。
-    # 詳細は docs/incident_20260720_removeipc.md）。本質対策はホスト側の
+    # メモリ扱い）が一掃される事象が実機で発生した（2026-07-20, ocv-uhf。詳細は
+    # docs/incident_20260720_removeipc.md）。本質対策はホスト側の
     # `loginctl enable-linger <user>` だが、外部要因による /dev/shm 消失一般への
     # 防御として、書き込み前の再作成を恒久化する（tmpfs への makedirs は
     # 存在確認のみで済むためコストは無視できる）。
@@ -1596,11 +1631,7 @@ def _ensure_cached(cs):
         # path は _cache_path により必ず .wav 終わりなので、それを基に .wav の
         # 一時名を作り、完成後に os.replace で原子的に本名へ差し替える。
         # 🔴 V1.80: 頭無音（PRE_AUDIO_SILENCE_SEC）もここで焼き込む（送出時の再パッド不要）。
-        # 🔴 V1.95a: 一時名にプロセスID+スレッドIDを付与してユニーク化。
-        # 万一 per-CS ロックを迂回する経路が生じても、書きかけ同士が同じ
-        # ファイルを奪い合わないようにする保険（半端なファイルの送出防止）。
-        _base = path[:-4] if path.endswith(".wav") else path
-        tmp = f"{_base}.building.{_PID}.{threading.get_ident()}.wav"
+        tmp = f"{path[:-4]}.building.wav" if path.endswith(".wav") else f"{path}.building.wav"
         if _generate_hybrid(intro, middle, FIXED_OUTRO_WAV, out_path=tmp,
                             head_silence=PRE_AUDIO_SILENCE_SEC):
             try:
@@ -1636,9 +1667,6 @@ def _prewarm_reply(cs):
             logger.info(_fmt("..", "Precache", cs, "ready"))
 
     threading.Thread(target=_worker, daemon=True).start()
-    # 🔵 V2.0vv: 天気の事前取得スレッド（有効時のみ）
-    if WEATHER_ENABLED:
-        threading.Thread(target=_weather_prefetch_loop, daemon=True).start()
 
 
 def _init_reply_cache():
@@ -1660,7 +1688,7 @@ def _reply_executor(mode, val, extra=None):
     global is_talking, suppress_until
     started_at = time.monotonic()
     # 🔴 V1.91: 送信フロー全体を直列化（二重送信・ストリーム破壊の防止）。
-    # 起動アナウンス・ケロ応答・時報・ナイト等が同時に走ると、UDP ストリームが
+    # 起動アナウンス・カーチャンク応答・時報・ナイト等が同時に走ると、UDP ストリームが
     # 混ざる／共有 TEMP_FINAL を上書きし合う。ここで一本化する。
     if not _tx_lock.acquire(blocking=False):
         logger.info(_fmt("..", "TX queue", str(val), "waiting for current TX"))
@@ -1677,8 +1705,7 @@ def _reply_executor(mode, val, extra=None):
                 # 🔴 V1.86: SFR 折り返し保護を V1.77 実証方式（送出前の実時間待ち）に回帰。
                 # ストリーム内の無音（焼き込み頭無音）は TGIF に食われる／ノイズ充填は
                 # 耳障り、と実測で判明したため、音に一切影響しない wall-clock 待ちで
-                # 折り返しを保護する。命中時のみ待つ（ミス時は合成がガードを兼ねる）。
-                # 🔴 V1.95a: 待ち時間は 2.5s に拡大（定数コメント参照）。
+                # 折り返しを保護する。命中時のみ待つ（ミス時は合成約2秒がガードを兼ねる）。
                 if was_hit and REPLY_TX_LEAD_DELAY_SEC > 0:
                     logger.info(_fmt("..", "TX lead", val, f"{REPLY_TX_LEAD_DELAY_SEC:.1f}s"))
                     time.sleep(REPLY_TX_LEAD_DELAY_SEC)
@@ -1691,76 +1718,32 @@ def _reply_executor(mode, val, extra=None):
             else:
                 logger.error(_fmt("!!", "Gen failed", val, "hybrid audio"))
 
-        elif mode == "time_signal":
-            target_str = f"{val:02d}:00"
-            # 🔵 V2.0vv: 事前生成済みの「天気付き時報1本もの」があれば合成せず即送出
-            # （正時の遅延ゼロ）。無ければ従来どおりその場合成（テキストの天気連結は
-            # 二段目のフォールバック。どちらも失敗しても時報自体は必ず流す設計）。
-            _pre = _weather_take_prebuilt(val)
-            if _pre:
-                logger.info(_fmt("TX", "Sending", target_str, "time_signal+weather (prebuilt)"))
-                send_usrp_wav_with_padding(_pre)
+        elif mode in ("time_signal", "half_hour_signal", "message"):
+            # 🔵 V2.03jtw: 定時系はすべて「vmp が 2 分前に作ったスロットを再生」に
+            # 統一した。val は発火の「分」(minute)。extra は表示用ラベル。
+            # スロット有 → 送信時 TX_GAIN をかけて送出（使用後に破棄）。
+            # スロット無/古い → 割り切りで鳴らさない（vmp 内で本体音声は死守される
+            # ため、鳴らないのは vmp 起動失敗・本体合成失敗の稀な場合のみ）。
+            minute = val
+            label = extra or f":{minute:02d}"
+            slot = _slot_ready(minute)
+            if slot:
+                logger.info(_fmt("TX", "Sending", label, f"{mode} (slot)"))
+                _send_with_gain(slot)
+                _safe_remove(slot)
                 elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "TimeSignal", target_str, f"{elapsed:.1f}s (prebuilt)"))
-                try:
-                    os.remove(WEATHER_PREBUILT_WAV)
-                except OSError:
-                    pass
-                if NIGHT_MODE_ENABLED and val == NIGHT_START_HOUR:
-                    _send_night_mode_announcement()
-                return
-            middle = f"{val}時です"
-            _wx = _weather_take_if_fresh(val)
-            if _wx:
-                middle = f"{middle}。{_wx}"
-            logger.info(_fmt("TX", "Generate", target_str, "time_signal"))
-            if _generate_hybrid(TIME_INTRO_WAV, middle, None):
-                logger.info(_fmt("TX", "Sending", target_str, "time_signal"))
-                send_usrp_wav_with_padding(TEMP_FINAL)
-                elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "TimeSignal", target_str, f"{elapsed:.1f}s"))
-
-                if NIGHT_MODE_ENABLED and val == NIGHT_START_HOUR:
-                    _send_night_mode_announcement()
-            else:
-                logger.error(_fmt("!!", "Gen failed", target_str, "time_signal"))
-
-        elif mode == "half_hour_signal":
-            middle = f"{val}時30分です"
-            target_str = f"{val:02d}:30"
-            logger.info(_fmt("TX", "Generate", target_str, "half_hour_signal"))
-            if _generate_hybrid(TIME_INTRO_WAV, middle, None):
-                logger.info(_fmt("TX", "Sending", target_str, "half_hour_signal"))
-                send_usrp_wav_with_padding(TEMP_FINAL)
-                elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "HalfHour", target_str, f"{elapsed:.1f}s"))
-            else:
-                logger.error(_fmt("!!", "Gen failed", target_str, "half_hour_signal"))
-
-        elif mode == "fixed_file":
-            basename = os.path.basename(val)
-            if os.path.exists(val):
-                # 🔴 V1.68: 固定再生（001/002）にも同じ送出音量ゲインを適用する。
-                # fixed_file は _generate_hybrid を通らないため、ここで個別に vol を
-                # かけた一時ファイルを作って送出する。失敗時は素のファイルで送る
-                # （音量調整に失敗しても無音化・送出停止は避ける）。
-                play_path = val
-                if TX_GAIN is not None and TX_GAIN != 1.0:
+                logger.info(_fmt("TX", "Slot", label, f"{elapsed:.1f}s"))
+                # 時報が N1 時ちょうどならナイトモード突入告知（従来どおり bot 生成）
+                if mode == "time_signal" and NIGHT_MODE_ENABLED:
                     try:
-                        subprocess.run(
-                            ["sox", val, TEMP_FINAL, "vol", f"{TX_GAIN}"],
-                            check=True,
-                        )
-                        play_path = TEMP_FINAL
-                    except subprocess.CalledProcessError as e:
-                        logger.error(_fmt("!!", "Gain failed", basename, f"rc={e.returncode}"))
-                        play_path = val
-                logger.info(_fmt("TX", "Sending", basename, "scheduled"))
-                send_usrp_wav_with_padding(play_path)
-                elapsed = time.monotonic() - started_at
-                logger.info(_fmt("TX", "Scheduled", basename, f"{elapsed:.1f}s"))
+                        hour_now = datetime.now().hour
+                    except Exception:
+                        hour_now = -1
+                    if hour_now == NIGHT_START_HOUR:
+                        _send_night_mode_announcement()
             else:
-                logger.error(_fmt("!!", "File missing", basename, val))
+                logger.warning(_fmt("!!", "Slot missing", label,
+                                    f"{mode}: vmp 未生成/期限切れのため送出せず（割り切り）"))
 
         elif mode == "regulatory_id":
             # 🔴 V1.74: 無線局運用規則 第30条対応の識別信号強制送信。
@@ -1806,17 +1789,14 @@ def _reply_executor(mode, val, extra=None):
 def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silence=0.0):
     # 🔵 V1.75: 合成パイプラインは共有一時ファイル(TEMP_48K/8K/INTRO_PADDED)を
     # 使うため、プリキャッシュ・スレッドと応答スレッドが同時に走っても壊れないよう
-    # _gen_lock で直列化する。
+    # _gen_lock で直列化する（Pi では合成が CPU 律速で並列化の利得も薄い）。
     # out_path を追加し、キャッシュ用に任意の出力先へ結合できるようにした
     # （既定 TEMP_FINAL のため、時報など既存呼び出しは挙動不変）。
-    # 🔵 V1.95a: 音声合成は VOICEVOX CORE（同一プロセス内ライブラリ）に置き換え。
-    # 🔵 V1.96: query.output_sampling_rate=48000 のハードコードを撤去。VOICEVOX は
-    # ネイティブ（24kHz）で出力し、8kHz へのダウンサンプルは後段の sox に一本化する
-    # （48k 固定を挟まない分、変換段が素直になる）。結合パイプラインは従来と互換。
-    # ※ 後段 sox は入力レートを WAV ヘッダから読むため、変数名 TEMP_48K のままでも
-    #   24kHz 入力を正しく 8kHz へ変換する（名前は歴史的経緯で据え置き）。
     with _gen_lock:
         try:
+            # 🔵 VVW: 音声合成は VOICEVOX CORE（同一プロセス内・起動時ロード済み話者）。
+            # ネイティブSR（24kHz）で出力し、8kHz 変換は後段 sox に一本化
+            # （変数名 TEMP_48K は歴史的経緯。sox はヘッダから実SRを読むため問題ない）。
             try:
                 query = _vv_synth.create_audio_query(middle_text, style_id=VOICEVOX_STYLE_ID)
                 wav_bytes = _vv_synth.synthesis(query, style_id=VOICEVOX_STYLE_ID)
@@ -1876,10 +1856,11 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
 # ============================================================
 def _log_startup_info():
     logger.info("=" * 70)
-    # 🔵 V1.95a: 表示は __version__ を参照（版上げ時の二重管理を解消）
-    logger.info(f"DVSwitch Bot {__version__} (daemon, VOICEVOX) starting up (PID: {_PID})")
+    # 🔵 V2.04jtw: 起動バナーの版をベタ書きから __version__ 参照へ変更
+    # （VV版 V1.95a と同じ整理。版上げ時の二重管理・更新漏れを解消する）。
+    logger.info(f"DVSwitch Bot {__version__} (daemon, 定時音声を vmp へ分離 / JTW版) starting up (PID: {_PID})")
     logger.info(f"  My callsign       : {MY_CALLSIGN}")
-    # 🔵 V1.97vv: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
+    # 🔵 V1.94: DMR ID と取得元も表示。ini から読めなかった項目は WARN を出す。
     logger.info(f"  My DMR ID         : {MY_DMR_ID}  (source: ini 自動取得)")
     for _w in _MY_STATION_WARNINGS:
         logger.warning(f"  [station] {_w} — ini を確認してください（自局判定の誤りはループの恐れ）")
@@ -1890,9 +1871,6 @@ def _log_startup_info():
     logger.info(f"  RX duration       : min={RX_DURATION_MIN_SEC}s / max={RX_DURATION_MAX_SEC}s")
     logger.info(f"  Suppress duration : {SUPPRESS_DURATION_SEC}s")
     logger.info(f"  Gap after intro   : {GAP_AFTER_INTRO_SEC}s")
-    # 🔵 V1.95a: VOICEVOX の話者・モデルを表示
-    logger.info(f"  Voice engine      : VOICEVOX CORE (style_id={VOICEVOX_STYLE_ID}, "
-                f"model={os.path.basename(VOICEVOX_VVM_PATH)})")
     # 🔴 V1.68: 送出音量ゲインの状態
     if TX_GAIN == 1.0:
         logger.info(f"  TX gain           : {TX_GAIN} (等倍 / 音量変更なし)")
@@ -1903,11 +1881,23 @@ def _log_startup_info():
     logger.info(f"  Announce freq     : {ANNOUNCE_FREQ} (at minutes {_get_trigger_minutes()})")
     _ts_desc = {0: "なし", 1: "毎正時 :00", 2: "毎正時 :00 + 毎30分 :30"}.get(TIME_SIGNAL_MODE, "?")
     logger.info(f"  Time signal mode  : {TIME_SIGNAL_MODE} ({_ts_desc}, lead {TIME_SIGNAL_LEAD_SEC}s)")
+    # 🔵 V2.03jtw: 天気読み上げの状態（実処理は voice_make.py が担当）
     if WEATHER_ENABLED:
-        logger.info(f"  Weather readout   : ON  hours={WEATHER_HOURS} "
-                    f"({WEATHER_LATITUDE},{WEATHER_LONGITUDE}) via Open-Meteo")
+        # 🔵 V2.04jtw: 実際に天気が付く系統を明示する（設定ミスの早期発見のため、
+        # 付与先の指定と、その系統が有効かどうかの両方を反映して表示する）。
+        _wx_tgt = []
+        if WEATHER_ON_TIME_SIGNAL and TIME_SIGNAL_MODE >= 1:
+            _wx_tgt.append(":00" + ("/:30" if TIME_SIGNAL_MODE == 2 else ""))
+        if WEATHER_ON_MESSAGE and ANNOUNCE_FREQ > 0:
+            _wx_tgt.append("001/002")
+        logger.info(f"  Weather readout   : ON  ({WEATHER_LATITUDE},{WEATHER_LONGITUDE}) "
+                    f"via voice_make.py (発火{VMP_PREFETCH_LEAD_SEC}s前に事前生成 / "
+                    f"付与先: {' + '.join(_wx_tgt) if _wx_tgt else 'なし'})")
+        logger.info(f"  vmp path          : {VMP_PATH}")
+        if not os.path.exists(VMP_PATH):
+            logger.warning(f"  [vmp] {VMP_PATH} が見つかりません — 天気付き定時音声が生成されません")
     else:
-        logger.info(f"  Weather readout   : OFF")
+        logger.info(f"  Weather readout   : OFF (定時音声は天気なし)")
     # 🔴 V1.67: watchdog 擬似終端の状態を表示
     if WATCHDOG_PSEUDO_END_ENABLED:
         logger.info(f"  Watchdog rescue   : ON  (watchdog を擬似終端として拾う / "
@@ -1916,7 +1906,7 @@ def _log_startup_info():
                     f"(watchdog 専用上限 / end は {RX_DURATION_MAX_SEC}s)")
     else:
         logger.info(f"  Watchdog rescue   : OFF (end of voice transmission のみで判定)")
-    # 🔴 V1.74: 無線局運用規則 第30条対応（識別信号強制送信）の状態を表示
+    # 🔴 V1.74/V1.93: 無線局運用規則 第30条対応（識別信号強制送信）の状態を表示
     logger.info(f"  Regulatory ID     : ON  (rule 30 / interval={QSO_ID_INTERVAL_SEC/60:.0f}min, "
                 f"session gap={QSO_SESSION_GAP_SEC:.0f}s, always uses {os.path.basename(FIXED_INTRO_WAV)})")
     # 🔵 V1.75: コールサイン応答音声キャッシュ（即応答化）の状態を表示
@@ -2038,6 +2028,8 @@ def monitor_and_reply():
 
     scheduler_thread = threading.Thread(target=_announcement_scheduler, daemon=True)
     scheduler_thread.start()
+    # 🔵 V2.03jtw: 天気の事前取得・事前生成は scheduler が発火2分前に voice_make.py
+    # （vmp）をワンショット起動して行う（専用スレッドは持たない）。
 
     start_pattern = re.compile(r"received network voice header from ([A-Z0-9/\-]+)")
     end_pattern = re.compile(r"received network end of voice transmission")
