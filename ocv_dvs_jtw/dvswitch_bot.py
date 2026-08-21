@@ -3,7 +3,7 @@
 """
 ================================================================================
  DVSwitch ログ監視・自動音声応答システム（デーモン版 / config-driven）
- — JJ2YYK デジピーター自動応答システム  V2.08jtw（JTW版）—
+ — JJ2YYK デジピーター自動応答システム  V2.10jtw（JTW版）—
 
  本ファイルは常駐デーモンとして、カーチャンク自動応答・毎正時の時報・定時アナウンス・
  ナイトモードを提供する。判定・法令対応（無線局運用規則第30条）・watchdog 擬似終端・
@@ -13,6 +13,35 @@
  バージョンごとの詳細な変更履歴（V1.60〜V1.93）は本ファイルには含めず、リポジトリ直下の
  Changelog.md に分離した（V1.92 でこの整理を実施）。改修時は Changelog.md を参照のこと。
  
+ 【V2.10jtw の要点（V2.09jtw からの変更）】
+  送出タイミングの実測総見直し（2026-08-20/21, ocv-uhf, RF+DroidStar ログ+45日1390サンプル）。
+  頭切れの真因は3つ（素材WAVの助走欠如 / ノイズフロアの段差 / ストリーム先頭の SET_INFO）
+  と判明し、いずれも解消。パディングは「音の間」から「プロトコル上の最小限」へ縮小した。
+    1. PRE_PADDING_PACKETS 85→25（0.50s）。役目はヘッダ(VoiceLCHeader)保護に縮小。
+       0 だとヘッダが中継で失われ受信側が幽霊ストリーム化する（実測）。
+    2. POST_PADDING_PACKETS 85→6（0.12s）。切れ際の無音は WAV 側の終わりの助走へ移動。
+    3. USRP_EOT_REPEAT 3→1（V1.87 実測に回帰）。0 は禁止・max(1,…) で保証。
+    4. REPLY_TX_LEAD_DELAY_SEC 1.5→0.0。無送信待ちを廃し fixed_intro の助走 2.0s へ移動。
+    5. REPLY_TAIL_SEC=1.0 新設。bot 生成音声にフェードアウト＋終わりの助走を付与。
+    6. TX_METADATA_BEFORE_VOICE=False 新設。ストリーム先頭の SET_INFO は語頭を欠く（実測）。
+    7. ASSERT_IDENTITY_ON_RX_END=False 新設。TA 主張は応答送出直前に一本化。
+  【素材側の前提】fixed_intro.wav は先頭 2.0s、time_intro/001/002 は先頭 0.5s の無音助走
+  ＋20ms フェードイン（ノイズフロア対策）を焼き込むこと。素材に助走が無いと頭切れが再発する。
+  【巻き戻し】頭欠け→REPLY_TX_LEAD_DELAY_SEC を 0.5〜1.5 へ／TA が他局を引きずる→
+  ASSERT_IDENTITY_ON_RX_END=True／切れ際異音→POST_PADDING_PACKETS を 20〜50 へ。
+
+ 【V2.09jtw の要点（V2.08jtw からの変更）】
+  前後パディングの定数分離（リファクタのみ・既定値据え置き＝挙動不変）。
+  従来 PRE_POST_PADDING_PACKETS 1個を前後で共有していたため、頭欠け対策で前を
+  動かすと後（切れ際対策）まで必ず一緒に動いてしまい、独立に詰められなかった。
+    1. PRE_PADDING_PACKETS（新設・既定85=1.7s）… 前パディング。頭欠け対策の実測確定値。
+    2. POST_PADDING_PACKETS（新設・既定85=1.7s）… 後パディング。切れ際対策。長さは未検証。
+    3. PRE_POST_PADDING_PACKETS は廃止（履歴記述を除きコードから参照を除去）。
+    4. send_usrp_wav_with_padding() に post_packets 引数を追加。あわせて JTW にも
+       pre_packets 引数を移植し、VVW と同一シグネチャに揃えた（従来 JTW は引数なし）。
+  既定値は前後とも 85 のままなので、この版だけでは電波に出る音は1サンプルも変わらない。
+  値の実測はこの版を入れた後に、前・後をそれぞれ独立に行う。
+
  【V2.08jtw の要点（V2.07jtw からの変更）】
   カーチャンク応答の頭欠け対策（実測確定のみ・機能変更なし）:
   REPLY_TX_LEAD_DELAY_SEC 0.5 → 1.5。ocv-uhf 実測（2026-08-19）で 0.5 では
@@ -75,7 +104,7 @@
     - 経路が違う（直 TGIF 接続か、SFR 中継を挟むか）。
   配置後は必ず実機で「intro の頭欠け」「頭のブーン」の有無を確認すること。
 
-  【巻き戻し】頭欠けが出たら PRE_POST_PADDING_PACKETS を 85 → 90 と増やす方向で
+  【巻き戻し】頭欠けが出たら PRE_PADDING_PACKETS を 85 → 90 と増やす方向で
   試す（VV版の実測では頭欠けを決めるのは前パディング全体の長さ）。それでも直らない
   場合は4定数すべてを V2.04jtw の値（75 / 65 / 1.0 / 1.5）へ戻せば従来動作に復帰する。
   コードは変えていないため、定数を戻すだけで完全に元へ戻る。
@@ -127,7 +156,13 @@
   1) sudo python3 /opt/dvswitch_bot/bin/bot_setup.py     # 先に設定ファイルを作成
   2) python3 /opt/dvswitch_bot/bin/dvswitch_bot.py       # または systemd で常駐
 
- Document Version: V2.08jtw (daemon, V2.07jtw + カーチャンク応答頭欠け対策 REPLY_TX_LEAD 1.5s。旧: 送信切れ際のブブ/バリバリ対策。EOT 3発化＋
+ Document Version: V2.10jtw (daemon, 送出タイミング実測総見直し。前後パディング縮小
+                          〔前0.5s/後0.12s〕・TX lead 廃止・終わりの助走・SET_INFO 整理。
+                          素材 WAV への助走焼き込みが前提)
+ 　（V2.09jtw: 前後パディングを PRE_PADDING_PACKETS /
+                          POST_PADDING_PACKETS へ分離〔既定値据え置き・挙動不変〕。
+                          送出関数に post_packets 引数を追加し JTW/VVW のシグネチャを統一)
+ 　（V2.08jtw: カーチャンク応答頭欠け対策 REPLY_TX_LEAD 1.5s。旧: 送信切れ際のブブ/バリバリ対策。EOT 3発化＋
                           後パディング末尾の微小トーン化〔終端リード音〕。定数で巻き戻し可)
  　（V2.06jtw: 応答音声を Web モニタ usrp_web.py へミラー送出。
                           送出ロジック不変。WEB_MIRROR_* 追加と _usrp_sendto 経由化のみ）
@@ -142,7 +177,7 @@
  　（V1.94: V1.93 + 自局コールサイン/DMR ID の ini 自動取得）
  　（V1.93: V1.92 + 第30条セッションのギャップ判定バグ修正・
                           QSO_SESSION_GAP_SEC を独立定数化し 60 秒へ変更)
- Last Updated: 2026-07-20
+ Last Updated: 2026-08-21
 ================================================================================
 """
 
@@ -152,7 +187,7 @@
 # この行はファイル冒頭付近に固定で置く。docstring（人間向けの "Document Version:"）
 # が長くなっても、ダッシュボードはこの __version__ を確実に拾える。
 # 版を上げるときは下の文字列も必ず更新すること（docstring と一致させる）。
-__version__ = "V2.08jtw"
+__version__ = "V2.10jtw"
 
 import os
 import sys
@@ -255,6 +290,16 @@ MY_CALLSIGN, MY_DMR_ID, _MY_STATION_WARNINGS = _resolve_my_station()
 # (pyUC) と同じ振る舞いにして、Analog_Bridge に正規経路でコールサイン/ID を
 # 通知する。False で V1.82 と同一（メタデータなし）。
 TX_METADATA_ENABLED = True
+# 🔴 V2.10jtw: SET_INFO を音声ストリームの先頭（送出関数内）でも送るか。
+# False（既定）にした理由: keyup=0 の SET_INFO の 20ms 後に音声ストリームが始まる
+# 構成は、受信側で語頭が欠けることが RF 実測で確定（2026-08-20）。自局 TA の主張は
+# 起動時と応答送出直前（_reply_executor 内・別ソケット）が担うため、ここは不要。
+TX_METADATA_BEFORE_VOICE = False
+# 🔴 V2.10jtw: 他局の受信終端のたびに SET_INFO を送るか（V1.90 の三重主張の (2)）。
+# False（既定）にした理由: 応答しない受信（抑制中・Normal QSO）でも SET_INFO が飛び、
+# ネットワーク側（DroidStar 等）に自局コールサインが単独で一瞬表示される。
+# TA の維持は応答送出直前の主張で足りている。表示が他局を引きずる場合は True に戻す。
+ASSERT_IDENTITY_ON_RX_END = False
 DICT_PATH = "/var/lib/mecab/dic/open-jtalk/naist-jdic"
 VOICE_PATH = "/usr/share/hts-voice/mei/mei_normal.htsvoice"
 
@@ -294,18 +339,43 @@ TEMP_INTRO_PADDED = f"/dev/shm/tmp_intro_padded_{_PID}.wav"
 EMPTY_HEADER_THRESHOLD_SEC = 0.1
 SUPPRESS_DURATION_SEC = 15.0
 PACKET_INTERVAL = 0.02
-# 🔴 V2.05jtw: 75 → 85（1.5s → 1.7s）。VV版 V1.98vv の実測（2026-07-16/17,
-# ocv-voicevox / 直 TGIF 接続）を移植した値。intro 頭欠けを決めているのはトーンの
-# 長さではなく「前パディング全体の長さ」だと判明している（NOISE_LEAD_PACKETS の
-# 注記を参照。V1.88 のコメントは誤りだった）。
+# ============================================================
+# 🔴 V2.09jtw: 前後パディングの分離（値は据え置き＝挙動は V2.08jtw/V2.07vvw と同一）
+# ============================================================
+# 従来は PRE_POST_PADDING_PACKETS ただ1個を前後で共有していた。しかし 85 という値は
+# 「前パディングの実測」だけで決まったもので、後パディングはその巻き添えである
+# （旧コメント: 「前後で共有される値のため、後パディングも同じ 1.7s になる」）。
+# 後パディング側で長さを検証した記録はコード・Changelog のどこにも無い。
+# 頭切れを詰める作業で前だけを独立に動かせるようにするため、2定数へ分離する。
+#
+# 【前パディングの実測根拠】VV版 V1.98vv（2026-07-16/17, ocv-voicevox / 直 TGIF 接続）
 #     前パディング 0.7s → 頭欠け（確実）
 #     前パディング 1.5s → 頭欠け（3回中2回。V1.88 以来ずっとこの状態だった）
 #     前パディング 1.7s → 頭欠けなし
-# 前後で共有される値のため、後パディングも同じ 1.7s になる（送信終端側の無音）。
+# intro 頭欠けを決めているのはトーンの長さではなく「前パディング全体の長さ」だと
+# 判明している（NOISE_LEAD_PACKETS の注記を参照。V1.88 のコメントは誤りだった）。
 # 増やす分だけ intro 開始が遅れる（＝立ち上がりが鈍る）。頭欠けが出る場合は
 # 90, 95 と増やす方向で試す。1.5〜1.7s の間を詰める余地はあるが未検証。
 # ※ JT 系ノード（Open JTalk）での実波検証は未実施。減らす場合は必ず実機で確認する。
-PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
+PRE_PADDING_PACKETS = 25    # 25×20ms=0.50s（トーン0.10+無音0.40 / ヘッダ保護・実測確定値）
+# 🔴 V2.10jtw: 85(1.7s) → 25(0.5s)。素材 WAV 側に助走（語頭前の無音）を焼き込んだため、
+# 前パディングの役目は「TGIF ゲート対策の長い無音」から「VoiceLCHeader を通すための
+# 非無音の先頭」に縮小した。0 にしてはならない（2026-08-21 実測: 前パディング 0 では
+# 先頭トーンが消えて VoiceLCHeader が中継で失われ、受信側は送信開始を検出できず
+# 終端信号だけで状態を反転させる＝数十秒の幽霊ストリーム化。25 で送信長が
+# bot 実測と受信側記録で一致することを DroidStar ログで確認済み）。
+#
+# 【後パディング】目的は頭欠けではなく「送信の切れ際のブブ／バリバリ」対策である
+# （V1.86 で完全ゼロ化 → V2.07jtw / V2.07vvw で末尾 NOISE_TAIL_PACKETS のみ微小トーン化）。
+# 1.7s という長さ自体に実測の裏付けは無く、前パディングからの巻き添えで決まっていた。
+# 短縮すれば送信占有時間がその分縮む（法令上も無駄な占有は短い方が良い）。ただし
+# 切れ際の異音が復活しないか実機で耳確認してから決めること。未検証領域。
+#     例) 40 → 0.8s、25 → 0.5s。NOISE_TAIL_PACKETS(=5) より小さくしないこと。
+POST_PADDING_PACKETS = 6    # 6×20ms=0.12s（無音0.02+終端トーン0.10 / 終端フラッシュ）
+# 🔴 V2.10jtw: 85(1.7s) → 6(0.12s)。切れ際の無音は vmp/_generate_hybrid が WAV 側に
+# 付ける「終わりの助走」(1.0s) へ移した。残す 0.12s は DMR スーパーフレーム1個分の
+# フラッシュで、末尾 NOISE_TAIL_PACKETS(5) のトーンが「長い完全無音の直後に閉じる」
+# 状況を防ぐ（V2.07jtw の狙いを維持）。NOISE_TAIL_PACKETS より小さくしないこと。
 # 🔴 V1.82: 送信終端（USRP keyup=0）の送出回数。従来は1発のみで、取りこぼすと
 # Analog_Bridge がストリームを閉じられず、DMR 終端フレームの生成が遅延・不整に
 # なり得た（受信側無線機が受信状態のままスタックする一因）。
@@ -314,7 +384,11 @@ PRE_POST_PADDING_PACKETS = 85   # 85×20ms=1.7s（前・後それぞれ）
 # 🔴 V2.07jtw: 1 → 3。切れ際の「ブブ／バリバリ」対策として多重化を有効にする。
 # 終端 keyup=0 は 20ms 間隔で送られ、AB は最初の1発で閉じ、残りは無害（V1.82 の
 # 設計どおり）。取りこぼし・遅延による終端フレーム不整を潰す。1 に戻せば従来動作。
-USRP_EOT_REPEAT = 3
+USRP_EOT_REPEAT = 1
+# 🔴 V2.10jtw: 3 → 1。V1.87 のキャプチャ実測（OCV のみ TerminatorLC が3個流れる・
+# 通常局は1個・終端の多重が受信機の終端処理を乱す疑い）に従い単発へ戻す。
+# 0 は禁止（送出ループの max(1,…) が下限を保証）: 2026-08-21 実測で、EOT を送らないと
+# Analog_Bridge がストリームを閉じられず、受信側で数十秒の幽霊ストリームが観測された。
 # 🔴 V1.84: 無音のノイズ充填（TGIF 先頭無音スキップ対策）。
 # パケットキャプチャ解析により、TGIF は先頭のデジタル完全無音（全ゼロ PCM →
 # AMBE 無音固定パターン）を転送せず、音が始まった所から配送を開始することが
@@ -419,7 +493,15 @@ CACHE_SCHEMA = "v1"            # 読み/結合仕様の版。仕様変更時に�
 # ※ この値は VOICEVOX ノード（合成 0.9s・直 TGIF 接続）での実測である。JT 系は
 #   合成が 1.5s 前後と遅いぶんキャッシュミス時の総リードは長くなる（安全側）が、
 #   命中時はこの値がそのまま効く。頭欠けが出る場合は 1.0 に戻す。
-REPLY_TX_LEAD_DELAY_SEC = 1.5
+REPLY_TX_LEAD_DELAY_SEC = 0.0
+# 🔴 V2.10jtw: 1.5 → 0.0（廃止・定数は巻き戻し用に残置）。送出前の無送信待ちをやめ、
+# 相当する時間は fixed_intro.wav 先頭の助走（2.0s・素材焼き込み）へ移した。
+# キャリア断の直後に送信を開始しても応答の頭が欠けないことを RF 実測で確認済み
+# （2026-08-21, ocv-uhf, JJ2ZAR 多数回）。頭欠けが出る環境では 0.5〜1.5 に戻すこと。
+# 🔵 V2.10jtw: bot 生成音声（応答・起動・ナイト）の「終わりの助走」。_generate_hybrid が
+# 結合後に 20ms のフェードアウト＋この秒数の無音を付ける。切れ際のバリバリ対策の本体は
+# 終端の形（フラッシュ＋EOT 単発）で、これは音声とストリーム終端の間の緩衝。0 で無効。
+REPLY_TAIL_SEC = 1.0
 # 🔵 V2.08jtw: 0.5 → 1.5（実測 2026-08-19, ocv-uhf）。0.5 ではカーチャンク応答の
 # 頭欠けが顕著だった（VVW/ずんだもんで確定した 1.5 と同値に統一）。JTW/VVW とも
 # 1.5。話者・経路を変えたら必ず実機で頭欠けを再確認すること。
@@ -433,7 +515,7 @@ REPLY_TX_LEAD_DELAY_SEC = 1.5
 # 🔴 V2.05jtw: 1.5 → 0.0。VV版 V1.98vv と同じ構成にする。ストリーム内に焼き込む
 # 頭無音は TGIF のゲートに食われるため頭欠け対策として当てにならず（V1.86 の実測）、
 # 立ち上がりを 1.5s 遅らせるだけになっていた。頭欠けの防止は前パディング
-# （PRE_POST_PADDING_PACKETS）と送出前ガード（REPLY_TX_LEAD_DELAY_SEC）に一本化する。
+# （PRE_PADDING_PACKETS）と送出前ガード（REPLY_TX_LEAD_DELAY_SEC）に一本化する。
 # ※ 本定数はキャッシュ署名（_reply_signature）に含まれるため、値を変えると既存の
 #   キャッシュは自動的に無効化される（CACHE_SCHEMA を上げる必要はない）。
 PRE_AUDIO_SILENCE_SEC = 0.0           # 実音声前の無音パッド（0=焼き込まない / V2.05jtw）
@@ -969,10 +1051,13 @@ def _usrp_sendto(sock, packet):
             pass
 
 
-def send_usrp_wav_with_padding(wav_path):
+def send_usrp_wav_with_padding(wav_path, pre_packets=PRE_PADDING_PACKETS,
+                               post_packets=POST_PADDING_PACKETS):
     """WAV を USRP プロトコルで送信（前後パディング付き、絶対時刻同期）。
     🔵 V2.05jtw: docstring 修正。パディングは 1.5 秒固定ではなく
-    PRE_POST_PADDING_PACKETS × PACKET_INTERVAL（現在 85×20ms = 1.7 秒）。"""
+    🔴 V2.09jtw: 前後パディングは PRE_PADDING_PACKETS / POST_PADDING_PACKETS の
+    2定数に分離した（既定はどちらも 85 × 20ms = 1.7 秒で従来と同一）。
+    pre_packets / post_packets 引数で呼び出し単位に上書きできる。"""
     sock = None
     wf = None
     seq = 0
@@ -985,12 +1070,12 @@ def send_usrp_wav_with_padding(wav_path):
         # 🔴 V1.83: 送信前に SET_INFO メタデータ（コールサイン/DMR ID）を送る。
         # 正規 USRP クライアント（pyUC/DVSwitch Mobile）と同じ振る舞いにして、
         # Analog_Bridge が正規経路でメタデータを組み立てられるようにする。
-        if TX_METADATA_ENABLED:
+        if TX_METADATA_ENABLED and TX_METADATA_BEFORE_VOICE:
             seq = _send_usrp_metadata(sock, seq)
             next_send_time += PACKET_INTERVAL
             time.sleep(max(0, next_send_time - time.monotonic()))
 
-        for _i in range(PRE_POST_PADDING_PACKETS):
+        for _i in range(pre_packets):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
             # 🔴 V1.88/V1.89: 前パディングの先頭 NOISE_LEAD_PACKETS 個のみ
             # 100Hz 微小トーン（末尾フェード付き）。残りはゼロ。
@@ -1023,8 +1108,8 @@ def send_usrp_wav_with_padding(wav_path):
         # フェードイン（終端リード音）にして、完全無音のまま閉じさせない。
         # 切れ際の「ブブ／バリバリ」（AB エンコード終端の残骸混入仮説）への防御。
         # NOISE_TAIL_PACKETS=0 で V2.06jtw と同一（全ゼロ）に戻る。
-        _tail_start = PRE_POST_PADDING_PACKETS - min(NOISE_TAIL_PACKETS, PRE_POST_PADDING_PACKETS)
-        for _i in range(PRE_POST_PADDING_PACKETS):
+        _tail_start = post_packets - min(NOISE_TAIL_PACKETS, post_packets)
+        for _i in range(post_packets):
             header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 1, 0, 0, 0, 0)
             if NOISE_FILL_ENABLED and NOISE_TAIL_PACKETS > 0 and _i >= _tail_start:
                 payload = _tail_block(_i - _tail_start, NOISE_TAIL_PACKETS)
@@ -1047,6 +1132,7 @@ def send_usrp_wav_with_padding(wav_path):
             # 送る（送信ループのペーシングが直前の間隔を確保済み）。
             # Analog_Bridge は最初の keyup=0 でストリームを閉じ、残りは無害。
             try:
+                # 下限1は撤去禁止（8/21 実測: 0 だと AB がストリームを閉じられず幽霊化）
                 for _ in range(max(1, USRP_EOT_REPEAT)):
                     header = struct.pack("!4sIIIIIII", b"USRP", seq, 0, 0, 0, 0, 0, 0)
                     _usrp_sendto(sock, header + b"\x00" * 320)
@@ -1287,7 +1373,7 @@ def _handle_rx_duration(cs, dur, source="eot"):
     # 🔴 V1.90: 他局の受信が終わった直後に自局アイデンティティを再主張。
     # AB の「最後に聞いた局」状態（JJ2ZAR 等）を JJ2YYK に上書きし、
     # 応答の Talker Alias がカーチャンクした局のコールサインを引きずるのを防ぐ。
-    if cs != MY_CALLSIGN:
+    if ASSERT_IDENTITY_ON_RX_END and cs != MY_CALLSIGN:
         _assert_identity()
 
     # カーチャンク上限を経路で選び分ける（end は据え置き / watchdog は専用値）
@@ -1471,6 +1557,7 @@ def _reply_signature():
         FIXED_OUTRO_WAV, _mtime(FIXED_OUTRO_WAV),
         f"{GAP_AFTER_INTRO_SEC}",
         f"{PRE_AUDIO_SILENCE_SEC}",
+        f"{REPLY_TAIL_SEC}",
         f"{TX_GAIN}",
         VOICE_PATH,
     ])
@@ -1626,6 +1713,9 @@ def _reply_executor(mode, val, extra=None):
                 if was_hit and REPLY_TX_LEAD_DELAY_SEC > 0:
                     logger.info(_fmt("..", "TX lead", val, f"{REPLY_TX_LEAD_DELAY_SEC:.1f}s"))
                     time.sleep(REPLY_TX_LEAD_DELAY_SEC)
+                # 🔴 V2.10jtw: TA 主張は「送出の直前」に一本化。別ソケットで SET_INFO を
+                # 1発送ってから音声ストリームを開始する（受信終端ごとの主張は廃止）。
+                _assert_identity()
                 logger.info(_fmt("TX", "Sending", val))
                 send_usrp_wav_with_padding(path)
                 elapsed = time.monotonic() - started_at
@@ -1742,6 +1832,11 @@ def _generate_hybrid(intro, middle_text, outro, out_path=TEMP_FINAL, head_silenc
             # 結合後の出力全体（intro + 合成音 + outro）に一律で効く。
             if TX_GAIN is not None and TX_GAIN != 1.0:
                 concat_cmd += ["vol", f"{TX_GAIN}"]
+            # 🔴 V2.10jtw: 終端を 20ms でフェードアウトし、REPLY_TAIL_SEC の無音を付ける
+            # （終わりの助走）。素材のノイズフロアが切れ際で段差にならないようにする。
+            if REPLY_TAIL_SEC > 0:
+                concat_cmd += ["fade", "t", "0.001", "0", "0.02",
+                               "pad", "0", f"{REPLY_TAIL_SEC}"]
             subprocess.run(concat_cmd, check=True)
 
             return True
