@@ -54,7 +54,9 @@
   bot と vmp で取り決めた固定パス（/dev/shm 上）。原子的差し替え（.building →
   os.replace）で書くため、書きかけを bot が再生することはない。
 
- Document Version: V1.02vmp（JTW版・本体と天気の間に WEATHER_GAP_SEC のワンテンポを追加）
+ Document Version: V1.03vmp（JTW版・スロット先頭リード廃止〔素材WAVの助走へ移行〕＋
+ 　　　　　　　　　　　　　終わりの助走 SLOT_TAIL_SEC=1.0 を新設）
+ 　（V1.02vmp: 本体と天気の間に WEATHER_GAP_SEC のワンテンポを追加）
  　（V1.02vmp: スロット先頭に LEAD_BEFORE_INTRO_SEC=0.5s の無音を追加し
  　 時報/定時の頭欠けを解消。実測 2026-08-19・両ノード）
  　（V1.00vmp: JTW版・初版）
@@ -62,7 +64,7 @@
 ================================================================================
 """
 
-__version__ = "V1.02vmp"
+__version__ = "V1.03vmp"
 
 import os
 import sys
@@ -90,7 +92,14 @@ GAP_AFTER_INTRO_SEC = 0.5
 # （「こちらは」の「こ」）が食われて半文字〜1/4文字欠ける症状があった。
 # カーチャンク応答が平気なのは先頭の無音マージンが大きいため。スロット先頭に
 # この無音リードを足して語頭を保護する（両ノード実測で 0.5 秒に確定）。
-LEAD_BEFORE_INTRO_SEC = 0.5
+LEAD_BEFORE_INTRO_SEC = 0.0
+# 🔴 V1.03vmp: 0.5 → 0.0（廃止・定数は巻き戻し用に残置）。語頭前の無音は
+# 素材 WAV 側（time_intro/001/002 の先頭 0.5s 助走＋20ms フェードイン）へ焼き込む
+# 方式に変更した。素材が助走を持たない環境では 0.5 に戻すこと。
+# 🔵 V1.03vmp: スロットの「終わりの助走」（秒）。結合後のスロット末尾を 20ms で
+# フェードアウトし、この秒数の無音を付ける。bot 側の後パディング縮小（1.7s→0.12s）
+# とセットで、切れ際の緩衝は送信側ではなく WAV 側が持つ。0 で無効。
+SLOT_TAIL_SEC = 1.0
 # 🔵 V1.01vmp: 本体（時報/001 等）と天気の間に置くワンテンポの無音（秒）。
 # 「12時です」→（間）→「尾張旭の天気は…」のように、本体と天気の切れ目に
 # 一拍おいて聞きやすくする。intro↔本文の間隔とは目的が別なので独立定数にする。
@@ -285,6 +294,14 @@ def _build_slot(base_kind, base_text, base_wav, weather_text, slot_path):
         else:
             if not _sox(parts + [building]):
                 return False
+
+        # 🔴 V1.03vmp: 終端整形（フェードアウト 20ms ＋ 終わりの助走）
+        if SLOT_TAIL_SEC > 0:
+            _tail = building + ".tail.wav"
+            cleanup.append(_tail)
+            if _sox([building, _tail, "fade", "t", "0.001", "0", "0.02",
+                     "pad", "0", f"{SLOT_TAIL_SEC}"]):
+                os.replace(_tail, building)
 
         os.replace(building, slot_path)
         return True
