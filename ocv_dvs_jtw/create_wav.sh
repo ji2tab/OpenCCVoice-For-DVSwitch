@@ -2,9 +2,9 @@
 
 # ==============================================================================
 # DVSwitch bot 固定WAVファイル 対話式作成スクリプト
-#   Version: V1.21 （🔴 chown_owner の引数順バグ修正。V1.1 の「chown 汎用化」は
-#            引数順が逆で chown が常に失敗しており、生成物が root 所有のまま
-#            だった。V1.2 の --regen・V1.0 の記録/プリフィルを含む）
+#   Version: V1.3 （🔴 JTW V2.10jtw 対応。素材WAVに「語頭前の助走」を焼き込む
+#            apply_leads を新設。V1.21 の chown 引数順修正・V1.2 の --regen・
+#            V1.0 の記録/プリフィルを含む）
 #   配置: /opt/dvswitch_bot/bin/create_wav.sh
 #   出力: /opt/dvswitch_bot/ 直下（fixed_intro/outro, time_intro, 001, 002 ほか）
 #
@@ -21,6 +21,14 @@
 #           対話モードとファイル単位で厳密に同一。texts は不変とし generated_at
 #           のみ更新する（VV版 create_wav.sh V1.3 の do_regen と同方針。jtalk は
 #           話者が1つのため voice は扱わない点だけが差）。
+#     V1.3  🔴 JTW V2.10jtw 対応。生成した素材WAVの「語頭の前」に無音の助走を焼き込む
+#           （apply_leads）。V2.10jtw で bot 側の前パディングを 1.7s→0.5s に縮めた
+#           ため、頭欠け防止の無音は素材WAV側が持つ設計に変わった。これが無いと
+#           時報・定時・カーチャンク応答の語頭が欠ける（2026-08-21 実機で確定）。
+#             fixed_intro : pad 1.78（自然な頭 ≈0.22s と合わせ語頭まで ≈2.0s）
+#             time_intro/001/002 : fade 20ms ＋ pad 0.5（語頭まで ≈0.52s。20ms の
+#               フェードインは録音WAVのノイズフロア段差〔±255〕による境目音を消す）
+#           ※本改修で JTW 版 create_wav.sh は JT版・VV版と内容が分岐する。
 #     V1.21 🔴 chown_owner の引数順バグ修正（機能追加なし）。
 #           V1.1 で導入した chown_owner は `chown "$@" "${OWNER_USER}:"` と
 #           対象パスを先に渡していたため、chown がそれをユーザー名と解釈して
@@ -65,7 +73,7 @@
 # ==============================================================================
 
 # 🔵 機械可読バージョン（固定行）。版を上げるときはヘッダーの Version 表記と一致させる。
-SCRIPT_VERSION="V1.21"
+SCRIPT_VERSION="V1.3"
 
 # 定数定義 (Open JTalkの設定)
 DIC_DIR="/var/lib/mecab/dic/open-jtalk/naist-jdic"
@@ -113,6 +121,45 @@ chown_owner() {
   [ -n "$OWNER_USER" ] || return 0
   chown "${OWNER_USER}:" "$@" || echo "   [WARN] 所有者を ${OWNER_USER} に変更できませんでした: $*" >&2
 }
+
+# ------------------------------------------------------------------------------
+# 🔴 V1.3: 生成済み素材WAVに「語頭前の助走」を焼き込む（JTW V2.10jtw 頭欠け対策）
+# ------------------------------------------------------------------------------
+# 対話生成・--regen の両方で、全WAV生成の最後に呼ぶ。両経路で同一処理であること
+# （合成パイプラインは経路間で厳密に一致させる、という本スクリプトの原則に従う）。
+# 冪等ではない（pad は加算される）ため、WAV生成の直後に1回だけ呼ぶこと。
+apply_leads() {
+  local t="${TMP_DIR}/_lead_tmp.wav" f
+  # fixed_intro: 自然な頭に無音を前置（fade なし。ノイズフロアが低いWAVのため）
+  if [ -f "${OUT_DIR}/fixed_intro.wav" ]; then
+    if sox "${OUT_DIR}/fixed_intro.wav" "$t" pad "${LEAD_FIXED_INTRO_PAD_SEC}" 0; then
+      mv "$t" "${OUT_DIR}/fixed_intro.wav"; chown_owner "${OUT_DIR}/fixed_intro.wav"
+      echo " [OK] fixed_intro.wav ← 助走 pad ${LEAD_FIXED_INTRO_PAD_SEC}s"
+    else
+      echo " [WARN] fixed_intro.wav の助走付与に失敗（元のまま）" >&2
+    fi
+  fi
+  # time_intro / 001 / 002: 20ms フェードイン ＋ 無音前置（ノイズフロア段差を消す）
+  for f in time_intro 001 002; do
+    if [ -f "${OUT_DIR}/${f}.wav" ]; then
+      if sox "${OUT_DIR}/${f}.wav" "$t" fade t "${LEAD_SLOT_FADE_SEC}" 0 pad "${LEAD_SLOT_PAD_SEC}" 0; then
+        mv "$t" "${OUT_DIR}/${f}.wav"; chown_owner "${OUT_DIR}/${f}.wav"
+        echo " [OK] ${f}.wav ← fade ${LEAD_SLOT_FADE_SEC}s ＋ 助走 pad ${LEAD_SLOT_PAD_SEC}s"
+      else
+        echo " [WARN] ${f}.wav の助走付与に失敗（元のまま）" >&2
+      fi
+    fi
+  done
+}
+
+# 🔴 V1.3: 素材WAVに焼き込む「語頭前の助走」（秒）。JTW V2.10jtw の頭欠け対策。
+# bot 側の前パディング縮小（1.7s→0.5s）に伴い、語頭を守る無音は素材WAVが持つ。
+#   fixed_intro（カーチャンク応答・起動）: 自然な頭 ≈0.22s ＋ この pad ＝ 語頭 ≈2.0s
+#     （TX lead 待ち廃止分を素材へ移した値。詰めるならこの値を下げる）
+#   time_intro/001/002（時報・定時）: fade ＋ pad ＝ 語頭 ≈0.52s
+LEAD_FIXED_INTRO_PAD_SEC="1.78"   # fixed_intro に前置する無音（fadeなし）
+LEAD_SLOT_PAD_SEC="0.5"           # time_intro/001/002 に前置する無音
+LEAD_SLOT_FADE_SEC="0.02"         # 上記3つの先頭フェードイン（ノイズフロア段差対策）
 
 # 管理対象の WAV（バックアップ／復元の対象。time_outro は未使用だが拾う）
 WAV_FILES=(fixed_intro.wav fixed_outro.wav time_intro.wav 001.wav 002.wav time_outro.wav)
@@ -456,6 +503,9 @@ PYEOF
     && sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav" \
     && echo " [OK] time_outro.wav" || { echo " [NG] time_outro.wav"; exit 1; }
 
+  # 🔴 V1.3: 素材WAVに語頭前の助走を焼き込む（JTW V2.10jtw 頭欠け対策）
+  apply_leads
+
   # generated_at のみ更新（texts は不変）
   python3 - "$SRC_JSON" <<'PYEOF'
 import json, os, sys
@@ -663,6 +713,9 @@ echo " [OK] 002.wav"
 echo "です。" | open_jtalk -x "$DIC_DIR" -m "$VOICE_MODEL" -ow "${TMP_DIR}/time_outro.wav"
 sox "${TMP_DIR}/time_outro.wav" -r 8000 -c 1 -b 16 "${OUT_DIR}/time_outro.wav"
 echo " [OK] time_outro.wav"
+
+# 🔴 V1.3: 素材WAVに語頭前の助走を焼き込む（JTW V2.10jtw 頭欠け対策）
+apply_leads
 
 # ------------------------------------------------------------------------------
 # 🔵 改修: 入力内容を wav_source.json へ保存（次回起動時のプリフィル元になる）
