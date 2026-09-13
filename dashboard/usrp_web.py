@@ -3,7 +3,7 @@
 r"""
 ================================================================================
  OpenCCVoice for DVSwitch  —  Web USRP クライアント
- usrp_web.py  V0.17  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS / 版情報パネル / 輻輳catch-up）
+ usrp_web.py  V0.18  （フェーズ1: RX モニタのみ / bot 非干渉 / HTTPS / 版情報パネル / 輻輳catch-up / 自動再接続）
 
  目的:
    Analog_Bridge が復号した受信音声（USRP 音声パケット）を UDP で受け、
@@ -146,24 +146,45 @@ r"""
          (2) こもり軽減: 1次ハイシェルフ相当の高域ブースト（差分加算, HF_BOOST=0.8,
          カットオフ約1.2kHz）を追加。8kHz 音源の帯域は増やせないが、体感の明瞭度を
          改善する。HF_BOOST=0 で原音に戻せる。worklet/フォールバック両対応。
- V0.16: 版情報パネルを追加。ページ冒頭に本モニタ・bot・voice_make・dashboard の
+   V0.16 🔵 版情報パネルを追加。ページ冒頭に本モニタ・bot・voice_make・dashboard の
          現在版を表示する（/status の "versions" と、ページ読込時の1回取得で描画）。
          版はノード上の実ファイル（bin/dvswitch_bot.py 等）から起動時＋60秒TTLで
          読み直すため、bot を更新すればリロードで新版が映る。音声経路は不変更。
+   V0.17 🔵 輻輳時の遅延累積対策（catch-up）。到着が束で遅れるとリングに音が溜まり、
+         律儀に全部再生して遅延が最大8秒まで積み上がっていた（受信音がゆっくり／
+         数秒遅れて聞こえる症状）。滞留が maxLag(0.6s) を超えたら読み位置を
+         最新-targetLag(0.24s) へ飛ばし、実時間に追いつく。
+   V0.18 🔵 保守改修（判定ロジック・定数は無変更）。
+         (1) catch-up ジャンプ時にエンベロープを 0 に落として 10ms フェードインで
+             復帰させる。V0.17 はフェード無しで位置を飛ばしていたため、V0.7 で
+             潰した段差クリックが輻輳時にだけ再発していた。
+         (2) 統計表示 updateStat() を受信パケット毎(50回/秒)の DOM 書換から
+             250ms 間隔に間引き。あわせて catch-up 発生回数を表示（worklet から
+             メインスレッドへ通知）し、輻輳の有無を数値で見られるようにする。
+         (3) WebSocket が切れたら 2 秒後に自動再接続（AudioContext/worklet は維持し
+             WS だけ張り直す）。サービス再起動や PC スリープ復帰のたびに「切断」の
+             まま止まり手で押し直していたのを解消。「切断」ボタンで止めた時は再接続
+             しない。
+         (4) worklet の {cmd:'flush'} を削除。V0.17 で入れたがメインスレッドから
+             一度も送っておらず（サーバは音声 bytes しか送らない）死にコードだった。
+             仮に配線しても readPos=writeCount＋primed=false は「送信末尾 240ms の
+             破棄＋次回の再プリバッファ」＝V0.15 で廃止した挙動の復活になるため、
+             配線せず削除が正しい。
+         (5) 壊れリピート判定・診断出力の array+byteswap を struct.unpack("<Nh") に
+             置換（USRP 音声は LE 固定。動作同一、アーキ依存の分岐を排除）。
+             ヘッダ整数は int.from_bytes。未使用 import(deque) 削除。
 ================================================================================
 """
 
-__version__ = "V0.17"
+__version__ = "V0.18"
 
 import argparse
-import array
 import asyncio
 import ssl
 import re
 import struct
 import sys
 import time
-from collections import deque
 
 try:
     from aiohttp import web, WSMsgType
@@ -251,6 +272,8 @@ LEAD_SKIP = {"rx": 3, "priority": 8}   # role ごとの先頭スキップ数（�
 DUP_HEAD_BYTES = 8
 DUP_MIN_PEAK   = 5000
 _SILENCE_HEAD = b"\x00" * DUP_HEAD_BYTES   # 先頭が無音のフレームは正常として通す
+# 🔵 V0.18: 先頭 DUP_HEAD_BYTES を int16 LE として一撃で展開する書式（USRP は LE 固定）
+_DUP_HEAD_FMT = "<%dh" % (DUP_HEAD_BYTES // 2)
 
 # --verbose 時のコンソール出力
 VERBOSE = False
@@ -314,12 +337,10 @@ class AudioHub:
         # 大振幅サンプルを含む」。先頭4サンプルの固定壊れパターンを狙い撃ちしつつ、
         # 大振幅条件で正常音声の静音部での偶然一致を除外する。
         head = audio[:DUP_HEAD_BYTES]
-        if head == self._last_audio.get(role) and head != _SILENCE_HEAD:
-            hs = array.array("h")
-            hs.frombytes(head)
-            if sys.byteorder == "big":
-                hs.byteswap()
-            if hs and max(abs(x) for x in hs) > DUP_MIN_PEAK:
+        if head == self._last_audio.get(role) and head != _SILENCE_HEAD \
+                and len(head) == DUP_HEAD_BYTES:
+            hs = struct.unpack(_DUP_HEAD_FMT, head)   # 🔵 V0.18: LE 固定で一撃展開
+            if max(abs(x) for x in hs) > DUP_MIN_PEAK:
                 self._dup_count[role] = self._dup_count.get(role, 0) + 1
                 if self._dup_count[role] in (1, 50, 250, 1000):   # 抑制ぎみにログ
                     vlog(f"[dup:{role}] duplicated frame dropped (x{self._dup_count[role]})")
@@ -377,10 +398,10 @@ class USRPReceiver(asyncio.DatagramProtocol):
             return
         if data[:4] != USRP_MAGIC:
             return
-        ptype = struct.unpack(">I", data[20:24])[0]
+        ptype = int.from_bytes(data[20:24], "big")
         if ptype != USRP_TYPE_VOICE:
             return
-        keyup = struct.unpack(">I", data[12:16])[0]
+        keyup = int.from_bytes(data[12:16], "big")
         audio = data[USRP_HDR_LEN:]
         if not audio:
             return
@@ -400,20 +421,17 @@ class USRPReceiver(asyncio.DatagramProtocol):
         magic = data[:4] == USRP_MAGIC
         ptype = keyup = -1
         if n >= USRP_HDR_LEN:
-            ptype = struct.unpack(">I", data[20:24])[0]
-            keyup = struct.unpack(">I", data[12:16])[0]
+            ptype = int.from_bytes(data[20:24], "big")
+            keyup = int.from_bytes(data[12:16], "big")
         audio = data[USRP_HDR_LEN:] if n >= USRP_HDR_LEN else b""
         alen = len(audio)
         peak = 0
         head = []
-        if alen >= 2:
-            samp = array.array("h")
-            samp.frombytes(audio[:(alen // 2) * 2])
-            if sys.byteorder == "big":
-                samp.byteswap()  # USRP 音声は 16bit LE
-            if samp:
-                peak = max(abs(x) for x in samp)
-                head = list(samp[:6])
+        ns = alen // 2
+        if ns > 0:
+            samp = struct.unpack("<%dh" % ns, audio[:ns * 2])   # 🔵 V0.18: USRP 音声は 16bit LE
+            peak = max(abs(x) for x in samp)
+            head = list(samp[:6])
         vlog(f"[diag:{self.role}] #{k:2d} src={addr[1]} len={n} audio={alen} "
              f"magic={int(magic)} type={ptype} keyup={keyup} peak={peak} head={head}")
 
@@ -487,6 +505,7 @@ INDEX_HTML = """<!DOCTYPE html>
   .pill{font-size:12px;padding:3px 10px;border-radius:12px;background:#ddd;color:#333;}
   .pill.live{background:#12AD2A;color:#fff;}
   .pill.busy{background:#b44010;color:#fff;}
+  .pill.wait{background:#e0a020;color:#fff;}
   label{font-size:12px;color:#444;}
   input[type=range]{vertical-align:middle;}
   .stat{font-size:11px;color:#666;margin-top:12px;line-height:1.6;}
@@ -511,7 +530,7 @@ INDEX_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="stat" id="stat">
-    受信パケット: 0 ／ ジッタバッファ: 240ms<br>
+    受信パケット: 0 ／ ジッタバッファ: 240ms ／ catch-up: 0<br>
     <span style="color:#999;">※ 初回は「接続」ボタン押下（ブラウザの自動再生制限のため）</span>
   </div>
 </div>
@@ -533,8 +552,14 @@ const RING_CAP = SR * 8;         // リング容量 8 秒ぶん（フォール�
 // 🔵 V0.15: 高域ブースト量（こもり軽減）。0=無効(原音), 0.8=既定。
 // 効きすぎ（シャリつく）なら 0.5、物足りなければ 1.2 程度まで。
 const HF_BOOST = 0.8;
+// 🔵 V0.17: catch-up の閾値（滞留が MAX_LAG を超えたら TARGET_LAG まで飛ぶ）
+const MAX_LAG_SEC = 0.6, TARGET_LAG_SEC = 0.24;
+// 🔵 V0.18: 自動再接続の待ち時間と統計表示の間引き間隔
+const RECONNECT_MS = 2000;
+const STAT_INTERVAL_MS = 250;
 
-let ac=null, ws=null, gain=null, node=null, running=false, pkts=0;
+let ac=null, ws=null, gain=null, node=null, running=false, pkts=0, catchups=0;
+let reconnectTimer=null, statTimer=null;
 // フォールバック(ScriptProcessor)用の状態
 let ring=null, writeCount=0, readPos=0, primed=false;
 
@@ -597,9 +622,9 @@ class USRPPlayer extends AudioWorkletProcessor {
     const fc = 1200;
     this.lpA = Math.exp(-2 * Math.PI * fc / sampleRate);
     this.lpState = 0;
+    // 🔵 V0.18: flush コマンドは削除（未配線の死にコード。配線しても V0.15 で
+    // 廃止した再プリバッファの復活になるため不要）。受け取るのは PCM のみ。
     this.port.onmessage = (e)=>{
-      // 🔵 V0.17: {cmd:'flush'} で位置同期リセット（ストリーム終了時の残渣破棄）。
-      if(e.data && e.data.cmd === 'flush'){ this.readPos = this.writeCount; this.primed = false; return; }
       const i16 = new Int16Array(e.data);
       let w = this.writeCount;
       for(let i=0;i<i16.length;i++){ this.ring[w % this.cap] = i16[i] / 32768; w++; }
@@ -619,7 +644,15 @@ class USRPPlayer extends AudioWorkletProcessor {
     }
     {
       const lag = this.writeCount - this.readPos;
-      if(lag > this.maxLagSamp){ this.readPos = this.writeCount - this.targetLagSamp; this.catchupCount++; }
+      if(lag > this.maxLagSamp){
+        // 🔵 V0.18: 位置を飛ばす＝波形が不連続になるので、エンベロープを 0 に
+        // 落として 10ms フェードインで復帰させる（V0.17 は無フェードで段差
+        // クリックが出ていた）。回数はメインスレッドへ通知して統計に出す。
+        this.readPos = this.writeCount - this.targetLagSamp;
+        this.env = 0;
+        this.catchupCount++;
+        this.port.postMessage({catchup: this.catchupCount});
+      }
     }
     for(let i=0;i<out.length;i++){
       const avail = this.writeCount - this.readPos;
@@ -652,7 +685,9 @@ class USRPPlayer extends AudioWorkletProcessor {
 registerProcessor('usrp-player', USRPPlayer);
 `;
 
-async function connect(){
+// 🔵 V0.18: 音声経路の初期化（AudioContext / worklet）。接続ごとに1回。
+// 再接続では呼ばず、WS だけ張り直す（リングとフェード状態を維持する）。
+async function setupAudio(){
   ac = new (window.AudioContext||window.webkitAudioContext)();
   await ac.resume();
   gain = ac.createGain();
@@ -668,8 +703,11 @@ async function connect(){
       URL.revokeObjectURL(url);
       node = new AudioWorkletNode(ac, 'usrp-player', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
-        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST, maxLagSec: 0.6, targetLagSec: 0.24 }
+        processorOptions: { sr: SR, prebufSec: PREBUFFER_SEC, hfBoost: HF_BOOST,
+                            maxLagSec: MAX_LAG_SEC, targetLagSec: TARGET_LAG_SEC }
       });
+      // 🔵 V0.18: worklet からの catch-up 回数通知
+      node.port.onmessage = (e)=>{ if(e.data && typeof e.data.catchup === 'number'){ catchups = e.data.catchup; } };
       node.connect(gain);
     }catch(err){
       console.warn('AudioWorklet 初期化失敗、ScriptProcessor へフォールバック:', err);
@@ -685,8 +723,7 @@ async function connect(){
     const fadeInInc  = 1 / (0.010 * ac.sampleRate);
     const fadeOutInc = 1 / (0.005 * ac.sampleRate);
     const prebufSamples = PREBUFFER_SEC * SR;
-    const HF_BOOST = 0.8;
-    const maxLagSamp = 0.6 * SR, targetLagSamp = 0.24 * SR;  // 🔵 V0.17: catch-up
+    const maxLagSamp = MAX_LAG_SEC * SR, targetLagSamp = TARGET_LAG_SEC * SR;  // 🔵 V0.17: catch-up
     const lpA = Math.exp(-2 * Math.PI * 1200 / ac.sampleRate);
     node.onaudioprocess = (e)=>{
       const out = e.outputBuffer.getChannelData(0);
@@ -694,7 +731,9 @@ async function connect(){
         if((writeCount - readPos) >= prebufSamples){ primed = true; }
         else { out.fill(0); return; }
       }
-      if((writeCount - readPos) > maxLagSamp){ readPos = writeCount - targetLagSamp; }  // 🔵 V0.17
+      if((writeCount - readPos) > maxLagSamp){   // 🔵 V0.17 catch-up ＋ V0.18 フェード
+        readPos = writeCount - targetLagSamp; env = 0; catchups++;
+      }
       for(let i=0;i<out.length;i++){
         const avail = writeCount - readPos;
         let raw;
@@ -717,13 +756,21 @@ async function connect(){
     };
     node.connect(gain);
   }
+}
 
+// 🔵 V0.18: WebSocket を張る。切れたら running のあいだ RECONNECT_MS 後に張り直す。
+function openWs(){
   const proto = location.protocol==='https:' ? 'wss' : 'ws';
   ws = new WebSocket(proto+'://'+location.host+'/ws');
   ws.binaryType = 'arraybuffer';
-  ws.onopen  = ()=>{ running=true; btn.textContent='切断'; btn.className=''; setState('接続中','live'); };
-  ws.onclose = ()=>{ if(running){ setState('切断','busy'); } };
-  ws.onerror = ()=>{ setState('エラー','busy'); };
+  ws.onopen  = ()=>{ setState('接続中','live'); };
+  ws.onerror = ()=>{ /* onclose が続けて呼ばれるのでそちらで扱う */ };
+  ws.onclose = ()=>{
+    ws = null;
+    if(!running) return;                       // 「切断」ボタンで止めた
+    setState('再接続待ち','wait');
+    reconnectTimer = setTimeout(()=>{ reconnectTimer=null; if(running) openWs(); }, RECONNECT_MS);
+  };
   ws.onmessage = ev=>{
     pkts++;
     if(node && node.port){
@@ -733,18 +780,30 @@ async function connect(){
       // フォールバック: メインスレッドのリングへ書く
       enqueue(ev.data);
     }
-    updateStat();
   };
+}
+
+async function connect(){
+  await setupAudio();
+  running = true;
+  btn.textContent='切断'; btn.className='';
+  setState('接続中…','wait');
+  openWs();
+  // 🔵 V0.18: 統計表示はパケット毎(50回/秒)ではなく一定間隔で更新する
+  statTimer = setInterval(updateStat, STAT_INTERVAL_MS);
 }
 
 function disconnect(){
   running=false;
-  if(ws){ ws.close(); ws=null; }
+  if(reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer=null; }
+  if(statTimer){ clearInterval(statTimer); statTimer=null; }
+  if(ws){ ws.onclose=null; ws.close(); ws=null; }
   if(node){ try{ node.disconnect(); }catch(e){} node=null; }
   if(ac){ ac.close(); ac=null; }
   ring=null; primed=false;
   btn.textContent='接続'; btn.className='off';
   setState('未接続','');
+  updateStat();
 }
 
 // フォールバック時のみ使用: 届いた 16bit PCM をメインスレッドのリングへ
@@ -754,7 +813,7 @@ function enqueue(arrbuf){
 }
 
 function updateStat(){
-  stat.innerHTML = '受信パケット: '+pkts+' ／ ジッタバッファ: 240ms';
+  stat.textContent = '受信パケット: '+pkts+' ／ ジッタバッファ: '+Math.round(PREBUFFER_SEC*1000)+'ms ／ catch-up: '+catchups;
 }
 </script>
 </body>
