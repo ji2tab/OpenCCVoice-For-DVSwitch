@@ -97,6 +97,25 @@ Open JTalk から VOICEVOX へ換装した（`DICT_PATH` / `VOICE_PATH` → `VV_
 
 ---
 
+## V2.11jtw (2026-10-01)  ※JTW版（Open JTalk + 天気）
+
+V2.11jtw: PRE_PADDING_PACKETS 25→98。素材助走不足とTGIF網状態による
+音声ID頭切れを前パディングで吸収（実測確定・他局再現）。NOISE_LEAD_PACKETS は
+頭切れに無効のため5据え置き。
+
+- **原因**: TGIF網変化ではなく素材 `fixed_intro.wav` の先頭助走不足。`soxi -D` 実測で
+  元 6.170s / 先頭無音除去後 5.956s ＝ 助走わずか 0.214s（V2.10jtw の前提「先頭助走 2.0s」を
+  満たしていなかった）。`create_wav` / regen は未実行で、素材は元からこの状態。
+- `PRE_PADDING_PACKETS`: 25（0.5s）→ 98（約2.0s）。当家 TGIF:44833/245 系で頭切れ解消を実機確認。
+  他局（7N2BMI, 別TGIF）でも同値 98 で再現・解消。TGIF網の状態に依存するため余裕側の 98 を
+  安定値とする。素材に十分な助走が焼ける環境では縮小可。0 は禁止（VoiceLCHeader 保護・
+  幽霊ストリーム化）。
+- `NOISE_LEAD_PACKETS`: 5 据え置き（頭切れに効くのはトーン長でなく前パディング総長）。
+- 両定数とも `_reply_signature()` 非依存のため、キャッシュ再生成は不要。bot 再起動のみで反映。
+- VVW版は本版では未対応（別途対応予定）。
+
+---
+
 ## V2.07vvw (2026-08-19)  ※VVW版（VOICEVOX + 天気）
 
 VVW版 bot の作り方そのものを変更した版。**内蔵方式の V2.02vvw を廃し**、JTW版 V2.07jtw を
