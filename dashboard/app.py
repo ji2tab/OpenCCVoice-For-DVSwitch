@@ -108,6 +108,7 @@
 __version__ = "V3.21"
 
 import os, json, re, subprocess, glob, time, wave, contextlib
+from urllib.parse import urlparse
 from datetime import datetime
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 
@@ -191,6 +192,36 @@ def jtw_available():
     return "jtw" in (get_bot_version() or "").lower()
 
 app = Flask(__name__)
+
+
+# 🔴 CSRF 対策（セキュリティ監査 2026-10 指摘）
+# 本ダッシュボードは認証を持たない（README 記載どおり LAN / VPN 限定運用）。
+# ただし「LAN 限定」は CSRF を防げない。運用者のブラウザが外部の悪意ある
+# ページを開くと、そのブラウザから LAN 内の本サーバへ POST が飛ぶため、
+#   - /test_send      → 意図しない電波発射
+#   - /service/stop   → bot 停止（無人運用の停止）
+#   - /dvs_config     → 設定上書き
+# を踏まされる。そこで POST は「同一オリジンのブラウザ操作」または
+# 「ブラウザ以外のクライアント（curl 等）」のみ受け付ける。
+# 画面操作・既存の curl 運用はいずれも影響を受けない。
+@app.before_request
+def _reject_cross_site_post():
+    if request.method != "POST":
+        return None
+    # 現行ブラウザは Sec-Fetch-Site を必ず送る。
+    #   same-origin … 本画面のフォーム送信（許可）
+    #   none        … アドレスバー直打ち等（許可）
+    #   same-site / cross-site … 別サイトからの誘導（拒否）
+    site = request.headers.get("Sec-Fetch-Site")
+    if site is not None:
+        if site in ("same-origin", "none"):
+            return None
+        return ("cross-site request denied", 403)
+    # Sec-Fetch-Site 非対応の古いブラウザ向けフォールバック。
+    origin = request.headers.get("Origin")
+    if origin is not None and urlparse(origin).netloc != request.host:
+        return ("cross-origin request denied", 403)
+    return None
 
 # リダイレクト後に1回だけ表示するメッセージ（URLに乗せない）
 _flash = {"msg": "", "err": ""}
@@ -459,7 +490,11 @@ def get_dvs_values():
     return {
         "callsign": get_ini_value(MMDVM_INI, "Callsign"),
         "mmdvm_id": get_ini_value(MMDVM_INI, "Id"),
-        "password": get_ini_value(MMDVM_INI, "Password"),
+        # 🔴 TGIF パスワードは HTML に出さない（監査 2026-10 指摘）。
+        # type="password" でも value は HTML ソースに残り、
+        # `curl http://<host>:8081/ | grep password` で読めてしまうため。
+        # 空欄で描画し、保存時に空欄なら既存値を維持する。
+        "password": "",
         "txtg":     get_ini_value(ANALOG_INI, "txTg"),
     }
 
@@ -979,7 +1014,9 @@ def dvs_config_save():
 
         set_ini_value(MMDVM_INI, "Callsign", callsign)
         set_ini_value(MMDVM_INI, "Id", full_id)
-        set_ini_value(MMDVM_INI, "Password", password)
+        # 空欄なら既存のパスワードを維持する（HTML に値を出さないため）
+        if password:
+            set_ini_value(MMDVM_INI, "Password", password)
         set_ini_value(MMDVM_INI, "Enable", "1", "[DMR]")
         set_ini_value(MMDVM_INI, "Enable", "1", "[DMR Network]")
         set_ini_value(MMDVM_INI, "Address", "tgif.network", "[DMR Network]")
@@ -1054,7 +1091,9 @@ def save_all():
         full_id  = dmrid + essid
         set_ini_value(MMDVM_INI, "Callsign", callsign)
         set_ini_value(MMDVM_INI, "Id", full_id)
-        set_ini_value(MMDVM_INI, "Password", password)
+        # 空欄なら既存のパスワードを維持する（HTML に値を出さないため）
+        if password:
+            set_ini_value(MMDVM_INI, "Password", password)
         set_ini_value(MMDVM_INI, "Enable", "1", "[DMR]")
         set_ini_value(MMDVM_INI, "Enable", "1", "[DMR Network]")
         set_ini_value(MMDVM_INI, "Address", "tgif.network", "[DMR Network]")
@@ -1543,7 +1582,8 @@ margin-bottom:6px;border-left:4px solid;
         </div>
         <div class="field">
           <label>TGIF Password</label>
-          <input type="password" name="password" value="{{ dvs.password }}">
+          <input type="password" name="password" value="" autocomplete="new-password"
+            placeholder="変更するときだけ入力（空欄＝現在の設定を維持）">
         </div>
         <div class="section-title">ルーティング (Analog_Bridge.ini)</div>
         <div class="field">

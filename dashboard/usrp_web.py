@@ -443,6 +443,19 @@ class USRPReceiver(asyncio.DatagramProtocol):
 # WebSocket ハンドラ（サーバ→ブラウザへ音声 bytes を送り続ける）
 # ----------------------------------------------------------------------------
 async def ws_handler(request: web.Request):
+    # 🔴 CSWSH 対策（セキュリティ監査 2026-10 指摘）
+    # WebSocket は同一オリジンポリシーの対象外で、CORS も効かない。
+    # 認証も Origin 検証も無いと、運用者が外部の悪意あるページを開いた
+    # だけで、そのページから本ノードの /ws に双方向接続され、
+    # （--tx 有効時）マイク相当の PCM を流し込まれて連続送信させられる。
+    # ブラウザは WebSocket でも必ず Origin を送るため、自ノード以外は拒否。
+    # Origin が無い＝非ブラウザのクライアント（test_send 等）は素通しする。
+    _origin = request.headers.get("Origin")
+    if _origin is not None:
+        from urllib.parse import urlparse as _urlparse
+        if _urlparse(_origin).netloc != request.host:
+            vlog(f"[ws] cross-origin 拒否: Origin={_origin}")
+            raise web.HTTPForbidden(text="cross-origin websocket denied")
     hub: AudioHub = request.app["hub"]
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
