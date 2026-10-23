@@ -8,7 +8,14 @@ on:
 
 jobs:
   claude:
-    if: contains(github.event.comment.body, '@claude')
+    # 公開リポジトリのため、@claude と書けるのは誰でもである。
+    # claude-code-action 側でも権限チェックが入るが、多層防御として
+    # リポジトリ所有者/コラボレータ以外ではジョブ自体を起動させない。
+    if: |
+      contains(github.event.comment.body, '@claude') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
     runs-on: ubuntu-latest
     permissions:
       contents: write
